@@ -525,22 +525,20 @@ class AdsPowerUIController:
         "referral bonus", "active", "employee", "overview",
     }
 
-    @staticmethod
-    def _name_fragment(name: str) -> str:
-        """The distinctive part of a temp name for a 'Name contains' search, with
-        no stray separators: 'Snapchat: Pending' -> 'Pending', 'Snapchat:' ->
-        'Snapchat'. A trailing ':' must not survive — AdsPower offers a different
-        (worse) set of suggestions for a value that ends in punctuation."""
-        parts = [p.strip() for p in str(name or "").split(":") if p.strip()]
-        return parts[-1] if parts else str(name or "").strip()
-
     def _rows_for_name(self, name: str):
-        """Filter the list by 'Name contains <fragment>' and return rows whose
-        full name matches ``name`` exactly. Robust under concurrent creators —
-        it filters server-side instead of scanning a fast-moving page 1."""
+        """Filter the list by 'Name contains <exact temp name>' and return rows
+        whose full name matches ``name`` exactly.
+
+        ``name`` is the exact temporary profile name configured in the Nyxify
+        dashboard/settings (``temporary_profile_name``, e.g. 'Snapchat:'). It is
+        used verbatim — AdsPower offers 'Name contains <value>' even for values
+        ending in ':' — so the just-created profile is matched precisely instead
+        of by a broad fragment. AdsPower lists newest-first, so the new row lands
+        on page 1 even with a large library; the caller pairs this with a serial
+        watermark to stay correct under concurrent creators."""
         target = name.strip().lower()
         for attempt in range(2):
-            self._search_by(self._name_fragment(name), field="Name", operator="contains")
+            self._search_by(name.strip(), field="Name", operator="contains")
             rows = [r for r in self._scan_rows() if r[2].strip().lower() == target and r[1]]
             if rows:
                 return rows
