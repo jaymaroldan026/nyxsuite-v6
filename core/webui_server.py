@@ -182,7 +182,6 @@ class WebDashboardServer:
                             "bot": snap.get("bot"),
                             "adspower_usage": snap.get("adspower_usage"),
                             "adspower_health": snap.get("adspower_health"),
-                            "license": snap.get("license"),
                             "rows": changed,
                             "removed": removed,
                         })

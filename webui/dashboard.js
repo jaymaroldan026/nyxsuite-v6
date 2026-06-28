@@ -48,7 +48,7 @@ const PRODUCTS = {
 const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
   nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, advancedVisible: false },
-  version: "", license: {},
+  version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [] },
 };
 let active = "nyx";
@@ -67,7 +67,6 @@ function applyProductSnapshot(p, snap) {
   state[p].usage = snap.adspower_usage || null;
   state[p].health = snap.adspower_health || null;
   if (snap.config) state[p].config = snap.config;
-  if (snap.license) state.license = snap.license;
 }
 
 function applyUpdate(ev) {
@@ -79,7 +78,6 @@ function applyUpdate(ev) {
   if (ev.bot) state[p].bot = ev.bot;
   if (ev.adspower_usage !== undefined && ev.adspower_usage !== null) state[p].usage = ev.adspower_usage;
   if (ev.adspower_health !== undefined) state[p].health = ev.adspower_health;
-  if (ev.license) state.license = ev.license;
 }
 
 function onMessage(data) {
@@ -140,69 +138,12 @@ async function callBridge(action, payload) {
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
-function licenseActivated() {
-  const l = state.license || {};
-  if (l.activated === true || l.is_activated === true || l.active === true) return true;
-  if (l.activated === false || l.is_activated === false || l.active === false) return false;
-  return null;
-}
-
 function render() {
   el("version").textContent = state.version ? ("v" + state.version) : "v…";
-  const a = licenseActivated();
-  el("license").textContent = a === true ? "activated" : (a === false ? "not activated" : "license …");
-  el("license").className = "pill " + (a === true ? "pill-ok" : (a === false ? "pill-bad" : "pill-muted"));
-  renderGate(a);
   renderAdsPowerBanner();
   if (active === "nyx" || active === "nyxify") renderPanel(active);
   // Settings is rendered once on tab open (see setActive); re-rendering on every
   // SSE tick would clobber in-progress edits in the config form.
-}
-
-function renderGate(activated) {
-  const gate = el("activation-gate");
-  if (!gate) return;
-  if (activated === null) {
-    gate.style.display = "flex";
-    gate.querySelector(".activation-modal").innerHTML = "<h2>Checking license…</h2>";
-    document.body.classList.remove("locked");
-    return;
-  }
-  if (activated === true) {
-    gate.style.display = "none";
-    document.body.classList.remove("locked");
-    return;
-  }
-  // Not activated — show gate
-  gate.style.display = "flex";
-  document.body.classList.add("locked");
-  // Restore gate content (it might have been replaced by the "Checking" state)
-  const modal = gate.querySelector(".activation-modal");
-  if (!modal.querySelector("#gate-request-code")) {
-    modal.innerHTML = `
-      <h2>Nyx Suite is locked</h2>
-      <p>Request an activation code from <strong>Jaymar</strong>, or purchase one below.</p>
-      <div class="act-row">
-        <label class="act-label">Request Code</label>
-        <div class="act-copy-row">
-          <input id="gate-request-code" class="input" readonly>
-          <button id="gate-copy-code" class="btn" type="button" title="Copy to clipboard">Copy</button>
-        </div>
-      </div>
-      <div class="act-row">
-        <label class="act-label">Activation Code</label>
-        <input id="gate-activate-input" class="input" placeholder="NYX1....">
-      </div>
-      <div class="act-btn-row">
-        <button id="gate-activate-btn" class="btn primary" type="button">Activate</button>
-        <button id="gate-pricing-btn" class="btn btn-ghost" type="button">View pricing / Pay</button>
-      </div>
-      <span id="gate-feedback" class="feedback"></span>`;
-  }
-  // Populate request code from license status
-  const lic = state.license || {};
-  const rcEl = el("gate-request-code");
-  if (rcEl) rcEl.value = lic.request_code || "";
 }
 
 function sortRows(rows, field, dir) {
@@ -463,12 +404,6 @@ function setActive(p) {
 
 // ---------- Settings panel ----------
 async function renderSettings() {
-  const lic = await callBridge("license_status");
-  const licData = lic.ok ? (lic.license || {}) : {};
-  el("license-status").textContent = licData.activated ? "Activated" : (licData.expired ? "Expired" : "Not activated");
-  if (licData.days_remaining != null) el("license-status").textContent += " — " + licData.days_remaining + " day(s) remaining";
-  el("license-request-code").value = licData.request_code || "";
-
   const autostart = await callBridge("autostart");
   const asEl = el("autostart-toggle");
   if (autostart.ok) asEl.checked = autostart.enabled;
@@ -603,36 +538,6 @@ function renderNyxifyAdvanced() {
     <button id="ncfg-save-btn" class="btn primary" type="button">Save Config</button>
   `;
 }
-
-async function doActivate(inputId, feedbackId) {
-  const code = el(inputId).value.trim();
-  if (!code) { el(feedbackId).textContent = "Enter an activation code."; return; }
-  const r = await callBridge("license_activate", { code });
-  el(feedbackId).textContent = r.ok ? (r.message || "Activated.") : (r.error || "Activation failed.");
-  if (r.ok) {
-    // Refresh license status
-    const lic = await callBridge("license_status");
-    if (lic.ok) state.license = lic.license || {};
-    render();
-    if (active === "settings") renderSettings();
-  }
-}
-
-el("license-activate-btn").addEventListener("click", () => doActivate("license-activate-input", "license-feedback"));
-
-// Activation gate button handlers
-document.addEventListener("click", async (e) => {
-  if (e.target.id === "gate-activate-btn") {
-    doActivate("gate-activate-input", "gate-feedback");
-  }
-  if (e.target.id === "gate-copy-code") {
-    const val = el("gate-request-code").value;
-    if (val) { await navigator.clipboard.writeText(val); el("gate-feedback").textContent = "Copied!"; }
-  }
-  if (e.target.id === "gate-pricing-btn") {
-    window.open("prices.html", "_blank");
-  }
-});
 
 el("autostart-toggle").addEventListener("change", async () => {
   const enabled = el("autostart-toggle").checked;

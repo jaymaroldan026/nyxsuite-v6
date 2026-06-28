@@ -18,7 +18,6 @@
     </div>
     <div class="meta">
       <button id="update-indicator" class="pill pill-update" type="button" style="display:none" title="An update is available — open Settings">update ready</button>
-      <span id="license" class="pill pill-muted">license …</span>
       <span id="version" class="pill pill-muted">v…</span>
       <span id="conn" class="pill pill-bad">connecting…</span>
     </div>
@@ -145,21 +144,6 @@
     <section class="panel hidden" id="panel-settings">
       <div class="settings-grid-2col">
         <div class="settings-card">
-          <h2>License</h2>
-          <div id="license-status" class="setting-value">Loading…</div>
-          <div class="setting-row">
-            <label class="label" for="license-request-code">Request Code</label>
-            <input id="license-request-code" class="input" readonly>
-          </div>
-          <div class="setting-row">
-            <label class="label" for="license-activate-input">Activation Code</label>
-            <input id="license-activate-input" class="input" placeholder="NYX1....">
-          </div>
-          <button id="license-activate-btn" class="btn primary" type="button">Activate</button>
-          <span id="license-feedback" class="feedback"></span>
-        </div>
-
-        <div class="settings-card">
           <h2>Updates</h2>
           <div class="setting-row">
             <span class="setting-label">Installed</span>
@@ -206,30 +190,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-
-  <!-- Activation gate overlay -->
-  <div id="activation-gate" class="activation-gate" style="display:none">
-    <div class="activation-modal">
-      <h2>Nyx Suite is locked</h2>
-      <p>Request an activation code from <strong>Jaymar</strong>, or purchase one below.</p>
-      <div class="act-row">
-        <label class="act-label">Request Code</label>
-        <div class="act-copy-row">
-          <input id="gate-request-code" class="input" readonly>
-          <button id="gate-copy-code" class="btn" type="button" title="Copy to clipboard">Copy</button>
-        </div>
-      </div>
-      <div class="act-row">
-        <label class="act-label">Activation Code</label>
-        <input id="gate-activate-input" class="input" placeholder="NYX1....">
-      </div>
-      <div class="act-btn-row">
-        <button id="gate-activate-btn" class="btn primary" type="button">Activate</button>
-        <button id="gate-pricing-btn" class="btn btn-ghost" type="button">View pricing / Pay</button>
-      </div>
-      <span id="gate-feedback" class="feedback"></span>
-    </div>
-  </div>
 
   <script src="dashboard.js"></script>
 </body>

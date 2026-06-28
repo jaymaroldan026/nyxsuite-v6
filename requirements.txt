@@ -5,6 +5,7 @@ certifi
 python-dotenv
 pystray
 pillow
+pynput            # global Ctrl+F8 pause/resume hotkey (Windows + macOS + Linux)
 
 # No-API AdsPower GUI automation — Windows only.
 # These drive the AdsPower desktop app when the Local API is permission-gated

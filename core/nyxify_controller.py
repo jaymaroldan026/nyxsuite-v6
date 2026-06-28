@@ -7,9 +7,6 @@ dependency. Reuses NyxifyTaskStore, AdsPowerManager, nyxify_runtime_config,
 ``runner_flags`` and the :class:`~core.runner_supervisor.RunnerSupervisor`.
 Account-creation/signup automation is untouched; this only orchestrates the
 runner process and answers queue/status queries.
-
-Heavy/optional imports are lazy so the module stays importable in a bare
-checkout lacking runtime deps or the git-ignored license secret.
 """
 
 import threading
@@ -44,15 +41,6 @@ def _load_config() -> dict:
         from core.nyxify_runtime_config import load_nyxify_config
 
         return load_nyxify_config() or {}
-    except Exception:
-        return {}
-
-
-def _license_summary() -> dict:
-    try:
-        from core.license_manager import get_activation_summary
-
-        return get_activation_summary() or {}
     except Exception:
         return {}
 
@@ -156,7 +144,6 @@ class NyxifyController:
             "bot": {"state": state, "detail": detail, "pid": pid if pid else None},
             "adspower_usage": {"used": used_profiles, "error": usage_error},
             "config": _load_config(),
-            "license": _license_summary(),
         }
 
     # ---------------------------------------------------------- action handlers

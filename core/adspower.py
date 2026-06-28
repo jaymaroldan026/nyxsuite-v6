@@ -470,7 +470,13 @@ class AdsPowerManager:
         first that answers so every later call auto-targets the right endpoint.
         No API key is required on localhost. ``/status`` is not rate-limited and
         not permission-gated, unlike ``/user/list``, so it never falsely blocks a
-        working setup. Returns:
+        working setup.
+
+        If the Local API port (50325) is completely unreachable but the AdsPower
+        desktop app HTTP server (port 20725) is answering (the user is running
+        AdsPower with the Local API disabled — no permission toggled on), the
+        check passes anyway: the runner will open/create/close profiles via the
+        GUI fallback (``core/adspower_ui.py``). Returns:
             {"ok": bool, "code": "ok"|"adspower_permission"|"adspower_unreachable",
              "message": <actionable text>}
         """
@@ -509,6 +515,27 @@ class AdsPowerManager:
                     }
                 # code 0 (or any non-permission response) means we're connected.
                 return {"ok": True, "code": "ok", "message": "Connected to AdsPower Local API."}
+
+            # Local API port (50325) is unreachable. Fall back to probing the
+            # AdsPower desktop app HTTP server on port 20725 — if it answers,
+            # AdsPower is running; the runner will drive it via the GUI fallback.
+            _FALLBACK_PORT = 20725
+            for host in self._iter_hosts():
+                url = f"http://{host}:{_FALLBACK_PORT}/"
+                try:
+                    response = self.session.get(url, timeout=5)
+                except Exception:
+                    continue
+                if response.status_code == 200:
+                    logger.info(
+                        f"AdsPower desktop app is running (port {_FALLBACK_PORT}); "
+                        f"Local API on port {self.port} is not available — will use GUI fallback."
+                    )
+                    return {
+                        "ok": True,
+                        "code": "ok",
+                        "message": f"AdsPower app OK (GUI-fallback mode; Local API port {self.port} unreachable).",
+                    }
 
             return {
                 "ok": False,
@@ -615,10 +642,13 @@ class AdsPowerManager:
             )
             return endpoint
 
-        # Not already open. If the server is up but permission-gated (not a full
-        # outage), drive the AdsPower GUI to open the profile (search by id ->
-        # click Open), then attach over CDP — fully hands-off, no API needed.
-        if self.ui_fallback_enabled and not isinstance(api_error, AdsPowerUnreachableError):
+        # Not already open. Drive the AdsPower GUI to open the profile (search
+        # by id -> click Open), then attach over CDP — fully hands-off, no API
+        # needed.  This runs whether the Local API is permission-gated (9110) or
+        # completely unreachable (port 50325 not listening), as long as the
+        # AdsPower desktop app window is still available — the UI automation
+        # talks to the app window, not the API.
+        if self.ui_fallback_enabled:
             try:
                 endpoint = self._ui_controller().open_profile_by_id(profile_id)
             except Exception as ui_error:
@@ -2261,14 +2291,15 @@ class AdsPowerManager:
         extension_category_reference="",
     ):
         """Create a profile via the Local API. If the API is permission-gated
-        (9110) and the GUI fallback is enabled, drive the AdsPower desktop app
-        instead (no-API mode) — same return shape so callers are unaffected."""
+        (9110) or unreachable (Local API not running) and the GUI fallback is
+        enabled, drive the AdsPower desktop app instead (no-API mode) — same
+        return shape so callers are unaffected."""
         try:
             return self._create_profile_via_api(
                 name, proxy_value, group_reference, tags,
                 user_proxy_config, extension_category_reference,
             )
-        except AdsPowerPermissionError as api_error:
+        except AdsPowerError as api_error:
             if not self.ui_fallback_enabled:
                 raise
             return self._create_profile_via_ui(

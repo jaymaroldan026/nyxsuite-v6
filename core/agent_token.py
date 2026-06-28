@@ -2,8 +2,8 @@
 
 A random token generated once and stored under the app-data dir. It is required
 on state-changing endpoints so that arbitrary websites — which *can* issue
-cross-origin POSTs to 127.0.0.1 — cannot control the agent, trigger updates, or
-submit a license. CORS alone does not stop side-effecting POSTs, so the token is
+cross-origin POSTs to 127.0.0.1 — cannot control the agent or trigger updates.
+CORS alone does not stop side-effecting POSTs, so the token is
 the real guard.
 
 Distribution:

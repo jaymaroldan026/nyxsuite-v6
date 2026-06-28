@@ -39,20 +39,39 @@ def _is_manual_browser_close(exc):
     )
     return any(token in msg for token in tokens)
 
-BITMOJI_TRANSITION_PHASE_CONCURRENCY = max(
-    1,
-    int(os.getenv("BITMOJI_TRANSITION_PHASE_CONCURRENCY", "3")),
-)
 # Same loop-binding fix as core/task_runner.py — lazily build per running loop.
 _bitmoji_transition_phase_semaphore: "asyncio.Semaphore | None" = None
 _bitmoji_transition_phase_loop = None
+
+
+def _effective_transition_concurrency():
+    """Return the number of concurrent transition-phase slots.
+
+    Priority:
+    1. ``BITMOJI_TRANSITION_PHASE_CONCURRENCY`` env var (explicit override).
+    2. ``max_parallel_profiles`` from the Nyx runtime config (matches whatever
+       the user set in the dashboard — works for any parallelism level).
+    3. Fallback: 999 (effectively unlimited) so the semaphore never becomes a
+       bottleneck when neither source is available.
+    """
+    env_val = os.getenv("BITMOJI_TRANSITION_PHASE_CONCURRENCY", "").strip()
+    if env_val:
+        try:
+            return max(1, int(env_val))
+        except (ValueError, TypeError):
+            pass
+    try:
+        config = load_nyx_config()
+        return max(1, int(config.get("max_parallel_profiles", 999) or 999))
+    except Exception:
+        return 999
 
 
 def _transition_phase_semaphore():
     global _bitmoji_transition_phase_semaphore, _bitmoji_transition_phase_loop
     loop = asyncio.get_running_loop()
     if _bitmoji_transition_phase_loop is not loop:
-        _bitmoji_transition_phase_semaphore = asyncio.Semaphore(BITMOJI_TRANSITION_PHASE_CONCURRENCY)
+        _bitmoji_transition_phase_semaphore = asyncio.Semaphore(_effective_transition_concurrency())
         _bitmoji_transition_phase_loop = loop
     return _bitmoji_transition_phase_semaphore
 

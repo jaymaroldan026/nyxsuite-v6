@@ -280,19 +280,6 @@ tr.group-header td{background:rgba(99,102,241,.08);font-weight:600;font-size:13p
 .ext-reload-banner .btn{font-size:11px;padding:4px 10px;color:var(--warn);border-color:rgba(245,158,11,.3);background:transparent}
 .ext-reload-banner .btn:hover{background:rgba(245,158,11,.12)}
 
-/* ---------------- Activation gate ---------------- */
-.activation-gate{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:rgba(8,12,23,.92);backdrop-filter:blur(10px)}
-.activation-modal{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--accent);border-radius:var(--r-lg);padding:32px;max-width:460px;width:90%;box-shadow:0 0 60px rgba(99,102,241,.2);animation:gateIn 360ms var(--ease-out) both}
-.activation-modal h2{margin:0 0 8px;font-size:18px;color:var(--text)}
-.activation-modal p{margin:0 0 18px;font-size:13px;color:var(--muted);line-height:1.5}
-.act-row{margin:10px 0}
-.act-label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600}
-.act-copy-row{display:flex;gap:6px}
-.act-copy-row .input{flex:1}
-.act-btn-row{display:flex;gap:8px;margin-top:14px}
-@keyframes gateIn{from{opacity:0;transform:translateY(16px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
-body.locked main{filter:blur(6px);pointer-events:none;user-select:none}
-
 /* ---------------- Responsive ---------------- */
 /* Allow the sticky table to use more of the viewport on shorter screens. */
 @media(max-height:760px){
@@ -341,9 +328,6 @@ body.locked main{filter:blur(6px);pointer-events:none;user-select:none}
   table.queue tbody td{max-width:160px;padding:9px 12px}
   table.queue thead th{padding:10px 12px}
   .toast{left:12px;right:12px;bottom:12px;max-width:none}
-  .activation-modal{padding:22px}
-  .act-btn-row{flex-direction:column}
-  .act-btn-row .btn{width:100%}
 }
 
 /* Narrow phone: single-column tiles, give the table room to breathe. */

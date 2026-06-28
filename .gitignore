@@ -42,6 +42,7 @@ NyxMacRelease/
 .claude/
 .agents/
 .opencode/
+.playwright-mcp/
 skills-lock.json
 .DS_Store
 Thumbs.db

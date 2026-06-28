@@ -3,15 +3,10 @@
 Supplies the ``status_provider`` and ``action_handlers`` that
 :class:`core.nyx_local_api.NyxLocalApiServer` consumes, with **no tkinter
 dependency**. It reuses the same building blocks ``ui_nyx.py`` uses — TaskStore,
-AdsPowerManager, nyx_runtime_config, the license summary, ``runner_flags`` and
+AdsPowerManager, nyx_runtime_config, ``runner_flags`` and
 the :class:`~core.runner_supervisor.RunnerSupervisor` — so behaviour matches the
 desktop app. Per-task automation (Bitmoji creation) is untouched; this only
 orchestrates the runner process and answers queue/status queries.
-
-Heavy/optional imports (TaskStore, AdsPowerManager, license_manager) are lazy so
-this module stays importable in a bare checkout that lacks runtime deps. License
-verification uses the committed public key (``core/license_public_key.py``) and
-needs no local secret; only code *generation* needs the git-ignored signing key.
 """
 
 import threading
@@ -51,15 +46,6 @@ def _load_config() -> dict:
         from core.nyx_runtime_config import load_nyx_config
 
         return load_nyx_config() or {}
-    except Exception:
-        return {}
-
-
-def _license_summary() -> dict:
-    try:
-        from core.license_manager import get_activation_summary
-
-        return get_activation_summary() or {}
     except Exception:
         return {}
 
@@ -181,7 +167,6 @@ class NyxController:
             "bot": {"state": state, "detail": detail, "pid": pid},
             "adspower_health": health,
             "config": config,
-            "license": _license_summary(),
         }
 
     # ---------------------------------------------------------- action handlers

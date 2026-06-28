@@ -168,6 +168,15 @@ async def main():
         store = get_queue_store()
         adspower = AdsPowerManager()
 
+        # Global Ctrl+F8 pauses/resumes THIS (Nyx) runner, with a tone. The
+        # Bitmoji flow polls the pause flag mid-run, so it pauses the current
+        # account too — not just the next one. (core/hotkeys.py)
+        try:
+            from core.hotkeys import start_pause_hotkey
+            start_pause_hotkey("nyx")
+        except Exception as exc:
+            logger.warning(f"Nyx pause hotkey unavailable: {exc}")
+
         while True:
             try:
                 if os.path.exists(PAUSE_FILE):

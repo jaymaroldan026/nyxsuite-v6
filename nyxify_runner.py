@@ -1305,6 +1305,14 @@ async def main():
         store = NyxifyTaskStore(db_path=TASK_DB_PATH)
         adspower = AdsPowerManager()
 
+        # Global Ctrl+F8 pauses/resumes THIS (Nyxify) runner, with a tone.
+        # (core/hotkeys.py)
+        try:
+            from core.hotkeys import start_pause_hotkey
+            start_pause_hotkey("nyxify")
+        except Exception as exc:
+            logger.warning(f"Nyxify pause hotkey unavailable: {exc}")
+
         # Orphan recovery: any row still RUNNING at startup belongs to a previous
         # run that crashed/stopped (the RunnerLock guarantees no live runner owns
         # it). Without this it would sit RUNNING forever — claim_pending_tasks only

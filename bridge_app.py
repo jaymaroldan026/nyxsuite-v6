@@ -100,12 +100,7 @@ class BridgeApp:
         self.adspower = AdsPowerManager()
         self.nyx = NyxController(self.supervisor, adspower=self.adspower)
         self.nyxify = NyxifyController(self.supervisor, adspower=self.adspower)
-        try:
-            from core.license_manager import is_activated
-
-            log("License: activated." if is_activated() else "License: NOT activated (runners will refuse to start).")
-        except Exception:
-            pass
+        pass
 
     def start_servers(self):
         from core.nyx_local_api import NyxLocalApiServer
@@ -151,6 +146,10 @@ class BridgeApp:
         )
         self.dashboard.start()
         log(f"Dashboard on {DASHBOARD_URL}")
+        # NOTE: the Ctrl+F8 pause/resume hotkey is started inside each runner
+        # process (main.py / nyxify_runner.py), not here — the listener belongs in
+        # the process doing the work so it pauses the *current* run, and so the
+        # two runners toggle their own pause flags without cancelling each other.
 
     def _bridge_actions(self) -> dict:
         return {
@@ -158,9 +157,7 @@ class BridgeApp:
             "apply_update": self._action_apply_update,
             "rollback": self._action_rollback,
             "list_backups": self._action_list_backups,
-            "license_status": self._action_license_status,
-            "license_request_code": self._action_license_request_code,
-            "license_activate": self._action_license_activate,
+
             "autostart": self._action_autostart,
             "set_autostart": self._action_set_autostart,
             "install_deps": self._action_install_deps,
@@ -294,34 +291,6 @@ class BridgeApp:
             return {"ok": True, "backups": list_backups()}
         except Exception as exc:
             return {"ok": False, "backups": [], "message": str(exc)}
-
-    def _action_license_status(self, payload=None) -> dict:
-        try:
-            from core.license_manager import get_activation_summary
-
-            return {"ok": True, "license": get_activation_summary()}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
-
-    def _action_license_request_code(self, payload=None) -> dict:
-        try:
-            from core.license_manager import get_request_code
-
-            return {"ok": True, "request_code": get_request_code()}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
-
-    def _action_license_activate(self, payload=None) -> dict:
-        code = (payload or {}).get("code", "").strip()
-        if not code:
-            return {"ok": False, "error": "Activation code is required."}
-        try:
-            from core.license_manager import save_activation_code, get_activation_summary
-
-            save_activation_code(code)
-            return {"ok": True, "license": get_activation_summary(), "message": "License activated."}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
 
     def _action_autostart(self, payload=None) -> dict:
         try:

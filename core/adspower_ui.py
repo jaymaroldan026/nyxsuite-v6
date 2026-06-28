@@ -98,6 +98,98 @@ def _serialized(fn):
             return fn(self, *args, **kwargs)
     return wrapper
 
+
+# ---------------------------------------------------------------------------
+# GUI batcher — coalesce concurrent opens/closes into ONE bulk search
+# ---------------------------------------------------------------------------
+class _BatchResult:
+    """Per-id result slot the batch leader signals once it has done the row
+    action (or failed) for that id. ``value`` carries an action return (e.g. the
+    bool a close produces); opens leave it ``None``."""
+    __slots__ = ("event", "ok", "error", "value")
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.ok = False
+        self.error = None
+        self.value = None
+
+
+class _GuiBatcher:
+    """Coalesce concurrent profile row-actions (within one process) into a single
+    bulk ``Profile ID is <id1> <id2> ...`` search — used for both **open** and
+    **close** so whenever more than one profile needs opening/closing at once it
+    is one search instead of one per profile.
+
+    The win: each open/close used to run its own full search under the global GUI
+    lock (Reset -> paste -> dropdown-match -> list-settle, several seconds). When
+    the runner opens/closes many profiles at once they queued behind that lock
+    and each one paid for its own search. Here, whichever caller holds the GUI
+    lock drains every other waiting caller and searches them ALL in one query,
+    then does each row's action. Coalescing is driven by lock contention (no
+    fixed timer), so a lone action still runs immediately as a one-id 'batch'.
+
+    Per-process only: Nyx and Nyxify run as separate processes and serialise via
+    the named mutex, so a cross-process pair won't share a search — but the
+    parallel work that matters happens inside one runner (``max_parallel``)."""
+
+    _GRACE = 0.3        # after taking the GUI lock, let a few stragglers register
+    _MAX_BATCH = 12     # one page of AdsPower results
+
+    def __init__(self, action: str, verb: str):
+        self._action = action            # controller method name, e.g. "_bulk_open_locked"
+        self._verb = verb                # human word for logs, e.g. "open" / "close"
+        self._lock = threading.Lock()    # guards _pending (short holds only)
+        self._pending = {}               # profile_id -> _BatchResult
+
+    def submit(self, controller, profile_id: str):
+        """Register ``profile_id`` and block until its row action has run (or
+        failed). Returns the action's value (e.g. close's bool); raises
+        ``AdsPowerUIError`` on failure."""
+        with self._lock:
+            res = self._pending.get(profile_id)
+            if res is None or res.event.is_set():
+                res = _BatchResult()
+                self._pending[profile_id] = res
+        self._drive(controller, profile_id)
+        res.event.wait()
+        if not res.ok:
+            raise res.error or AdsPowerUIError(
+                f"Could not {self._verb} profile {profile_id}.")
+        return res.value
+
+    def _drive(self, controller, my_id: str):
+        """Become the batch leader under the GUI lock and process all pending ids
+        in one search. If our id was already handled by a previous leader while we
+        waited for the lock, return immediately (our event is/becomes set)."""
+        with _GUI_LOCK:
+            with self._lock:
+                if my_id not in self._pending:
+                    return                       # already handled by a prior leader
+            time.sleep(self._GRACE)              # OUTSIDE _lock so stragglers can join
+            with self._lock:
+                batch = list(self._pending.items())[: self._MAX_BATCH]
+                for pid, _res in batch:
+                    self._pending.pop(pid, None)
+            ids = [pid for pid, _res in batch]
+            results = {pid: res for pid, res in batch}
+            try:
+                getattr(controller, self._action)(ids, results)
+            except Exception as exc:             # whole-batch failure (e.g. no search bar)
+                logger.warning(f"Bulk {self._verb} batch failed: {exc}")
+            finally:
+                for _pid, res in batch:          # never leave a caller blocked
+                    if not res.event.is_set():
+                        res.ok = False
+                        res.error = res.error or AdsPowerUIError(
+                            f"Bulk {self._verb} did not complete for {_pid}.")
+                        res.event.set()
+
+
+_OPEN_BATCHER = _GuiBatcher("_bulk_open_locked", "open")
+_CLOSE_BATCHER = _GuiBatcher("_bulk_close_locked", "close")
+
+
 try:
     from pywinauto import Application
     _PYWINAUTO = True
@@ -148,7 +240,9 @@ class AdsPowerUIConfig:
 def _pg():
     import pyautogui
     pyautogui.FAILSAFE = False
-    pyautogui.PAUSE = 0.02
+    # No implicit per-call pause — every place that needs the UI to react places
+    # its own explicit (and now much shorter) wait, so this just added latency.
+    pyautogui.PAUSE = 0.0
     return pyautogui
 
 
@@ -297,11 +391,11 @@ class AdsPowerUIController:
             except Exception:
                 pass
         _pg().click(*self._center(rect))
-        time.sleep(0.25)
+        time.sleep(0.08)
 
     def _click_xy(self, x: int, y: int):
         _pg().click(x, y)
-        time.sleep(0.25)
+        time.sleep(0.08)
 
     def _click_vision(self, template_name: str) -> bool:
         m = ui_vision.locate(template_name)
@@ -315,18 +409,16 @@ class AdsPowerUIController:
         """Focus an edit (by rect), clear it (text + any filter chips), paste."""
         pg = _pg()
         pg.click(*self._center(rect))
-        time.sleep(0.15)
+        time.sleep(0.08)
         pg.hotkey("ctrl", "a")
-        time.sleep(0.05)
         pg.press("delete")
-        time.sleep(0.05)
         for _ in range(3):              # backspace clears leftover filter chips
             pg.press("backspace")
         if text:
             _set_clipboard(text)
-            time.sleep(0.05)
+            time.sleep(0.03)
             pg.hotkey("ctrl", "v")
-            time.sleep(0.2)
+            time.sleep(0.12)            # let the search dropdown react to the paste
 
     def _type_rect(self, rect, text: str, interval: float = 0.06):
         pg = _pg()
@@ -611,9 +703,16 @@ class AdsPowerUIController:
         names = []     # (top, left, str)
         for t in win.descendants(control_type="Text"):
             try:
-                if not t.is_visible():
-                    continue
-                s = (t.window_text() or "").strip()
+                # Read the *name* first (a single, relatively cheap property) and
+                # classify on it; only fetch the rectangle for the handful of
+                # elements that are actually a serial / id / name cell. Every UIA
+                # property read is a slow cross-process round-trip on AdsPower's
+                # huge CEF tree, so skipping rectangle() (and is_visible()) for the
+                # ~80% of Text nodes that aren't rows is a big speedup. Using
+                # ``element_info`` reads instead of the wrapper methods is ~2x
+                # faster again.
+                info = t.element_info
+                s = (info.name or "").strip()
                 if not s:
                     continue
                 low = s.lower()
@@ -621,14 +720,19 @@ class AdsPowerUIController:
                     continue
                 if low.startswith("profile id is") or "filter" in low:
                     continue
-                r = t.rectangle()
+                is_serial = s.isdigit() and len(s) >= 5
+                is_id = (not is_serial) and bool(_PROFILE_ID_RE.match(s))
+                is_name = (not is_serial and not is_id) and low.startswith("snapchat:")
+                if not (is_serial or is_id or is_name):
+                    continue
+                r = info.rectangle
                 if r.width() <= 0:
                     continue
-                if s.isdigit() and len(s) >= 5:
+                if is_serial:
                     serials.append((r.top, r.left, int(s)))
-                elif _PROFILE_ID_RE.match(s):
+                elif is_id:
                     ids.append((r.top, r.left, s))
-                elif low.startswith("snapchat:"):
+                else:
                     names.append((r.top, r.left, s))
             except Exception:
                 continue
@@ -687,8 +791,8 @@ class AdsPowerUIController:
         try:
             r = ctrl.rectangle()
             self._click_rect(r)
-            time.sleep(1.0)              # let the unfiltered list reload
             self._connect()
+            self._wait_list_settled()   # return as soon as the unfiltered list renders
         except Exception:
             pass
 
@@ -712,24 +816,43 @@ class AdsPowerUIController:
         # seconds. Enter is only a last resort: it applies AdsPower's default top
         # suggestion, which is order-dependent and usually the WRONG field
         # ('Profile No./ID is' instead of 'Name contains').
+        # For a Profile-ID search, AdsPower's default top suggestion — what Enter
+        # applies — is exactly 'Profile ID is <value>', so skip the slow
+        # dropdown-match loop and submit directly. That loop re-scans the whole
+        # (huge) accessibility tree every ~0.15s and, for ID searches, always
+        # ended up pressing Enter anyway. Name searches still need the dropdown
+        # (Enter would pick the wrong default field there).
+        is_id_search = field.strip().lower().startswith("profile")
         clicked = False
-        deadline = time.time() + 4.5
-        while time.time() < deadline:
-            time.sleep(0.4)
-            self._connect()
-            if self._click_dropdown_row(field, operator, below_top=below, left_min=left_min):
-                clicked = True
-                break
+        if not is_id_search:
+            deadline = time.time() + 4.5
+            while time.time() < deadline:
+                self._connect()
+                if self._click_dropdown_row(field, operator, below_top=below, left_min=left_min):
+                    clicked = True
+                    break
+                time.sleep(0.15)            # poll fast; the dropdown can render late
+            if not clicked:
+                logger.warning(
+                    f"Dropdown row {field!r}/{operator!r} not found after retries; pressing Enter "
+                    f"(may apply the wrong default filter).")
         if not clicked:
-            logger.warning(
-                f"Dropdown row {field!r}/{operator!r} not found after retries; pressing Enter "
-                f"(may apply the wrong default filter).")
             _pg().press("enter")
-        time.sleep(1.0)
+        time.sleep(0.4)
         self._foreground()
-        time.sleep(0.3)
+        time.sleep(0.15)
         self._connect()
         self._wait_list_settled()
+
+    def _search_by_ids(self, ids):
+        """Bulk ``Profile ID is <id1> <id2> ...`` search. AdsPower matches every
+        space-separated id and shows them on one page, so a whole batch of opens
+        shares ONE search instead of one (slow) search per profile. A single id
+        is just a one-element bulk search — same path as a plain id search."""
+        query = " ".join(str(i).strip() for i in ids if str(i).strip())
+        if not query:
+            raise AdsPowerUIError("_search_by_ids requires at least one profile id.")
+        self._search_by(query, field="Profile ID", operator="is")
 
     def _click_dropdown_row(self, field: str, operator: str, below_top: int,
                             left_min: int = 460) -> bool:
@@ -784,7 +907,7 @@ class AdsPowerUIController:
             blob = self._visible_text_blob().lower()
             if "no data" in blob or "total: 0" in blob:
                 return
-            time.sleep(0.5)
+            time.sleep(0.2)
 
     def open_profile_by_id(self, profile_id: str) -> str:
         """Open the profile in the AdsPower GUI via the search bar, then return a
@@ -809,7 +932,10 @@ class AdsPowerUIController:
             logger.info(f"Profile {profile_id} already open: {endpoint}")
             return endpoint
 
-        self._gui_click_open(profile_id)
+        # Coalesce with any other concurrent opens into ONE bulk search (the
+        # batcher holds the GUI lock for the locked half); the CDP-resolve wait
+        # below stays unlocked so browsers still launch in parallel.
+        _OPEN_BATCHER.submit(self, profile_id)
 
         deadline = time.time() + self.config.open_cdp_timeout
         while time.time() < deadline:
@@ -822,18 +948,96 @@ class AdsPowerUIController:
             f"Opened profile {profile_id} in the GUI but could not resolve its CDP "
             f"endpoint. Is the browser still launching?")
 
-    @_serialized
-    def _gui_click_open(self, profile_id: str):
-        """The locked GUI half of an open: search by id and click the row's Open."""
+    def _bulk_open_locked(self, ids, results):
+        """Leader path (the GUI lock is already held by ``_OPEN_BATCHER``): ONE
+        bulk ``Profile ID is <id...>`` search for the whole batch, then click each
+        row's Open. Per-id failures are isolated so one bad id can't sink the
+        batch."""
         self._connect()
         self._goto_profiles()
-        # user requirement: first remove the current search, then search the id
-        self._search_by(profile_id, field="Profile ID", operator="is")
-        self._click_open_for_id(profile_id)
+        # user requirement: first remove the current search, then search the id(s)
+        self._search_by_ids(ids)
+        if len(ids) > 1:
+            logger.info(f"AdsPower UI: one bulk search served {len(ids)} open(s): "
+                        f"{' '.join(ids)}")
+        for pid in ids:
+            res = results.get(pid)
+            if res is None or res.event.is_set():
+                continue
+            try:
+                self._open_one_in_batch(pid)
+                res.ok = True
+            except Exception as exc:
+                res.ok, res.error = False, exc
+                logger.warning(f"Bulk open: {pid} failed: {exc}")
+            finally:
+                res.event.set()
+
+    def _open_one_in_batch(self, profile_id: str):
+        """Click Open on ``profile_id``'s row within the bulk-search results.
+        Confirms the row is present first so a missing/invalid id fails fast
+        instead of clicking the wrong row, and tolerates the rare 'already open'
+        race (row shows Close) by treating it as success."""
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            self._connect()
+            if self._row_has_button(profile_id, "Open"):
+                self._click_open_for_id(profile_id)
+                return
+            if self._row_has_button(profile_id, "Close"):
+                logger.info(f"Profile {profile_id} already open during bulk batch; "
+                            f"no Open click needed.")
+                return
+            time.sleep(0.3)
+        raise AdsPowerUIError(
+            f"Profile {profile_id} not present in the bulk search results.")
 
     def _click_open_for_id(self, profile_id: str):
         """Click the Action-column 'Open' button on the id's row."""
         self._click_row_action(profile_id, "Open", template_name="open_btn")
+
+    def _bulk_close_locked(self, ids, results):
+        """Leader path (the GUI lock is already held by ``_CLOSE_BATCHER``): ONE
+        bulk ``Profile ID is <id...>`` search for the whole batch, then click each
+        running row's red Close. Per-id failures are isolated. Each result's
+        ``value`` is the close bool (True once the row reverts to Open / wasn't
+        running)."""
+        self._connect()
+        self._goto_profiles()
+        # user requirement: first remove the current search, then search the id(s)
+        self._search_by_ids(ids)
+        if len(ids) > 1:
+            logger.info(f"AdsPower UI: one bulk search served {len(ids)} close(s): "
+                        f"{' '.join(ids)}")
+        for pid in ids:
+            res = results.get(pid)
+            if res is None or res.event.is_set():
+                continue
+            try:
+                res.value = self._close_one_in_batch(pid)
+                res.ok = True
+            except Exception as exc:
+                res.ok, res.error = False, exc
+                logger.warning(f"Bulk close: {pid} failed: {exc}")
+            finally:
+                res.event.set()
+
+    def _close_one_in_batch(self, profile_id: str, wait_timeout: float = 12.0) -> bool:
+        """Close ``profile_id``'s row within the bulk-search results. Returns True
+        once the row's action reverts to Open (or it wasn't running)."""
+        self._connect()
+        if not self._row_has_button(profile_id, "Close"):
+            logger.info(f"Profile {profile_id} is not running (no Close button); "
+                        f"nothing to close.")
+            return True
+        self._click_row_action(profile_id, "Close", template_name="close_btn")
+        # closing is immediate in AdsPower (no confirm), but accept one if it appears
+        self._maybe_confirm(("OK", "Confirm", "Yes"), timeout=0.8)
+        if self._wait_row_button(profile_id, "Open", timeout=wait_timeout):
+            logger.info(f"Profile {profile_id} closed via GUI.")
+            return True
+        logger.warning(f"Clicked Close for {profile_id} but could not confirm it closed.")
+        return False
 
     # ------------------------------------------------------------------
     # row helpers shared by open / close / rename / delete
@@ -972,29 +1176,18 @@ class AdsPowerUIController:
     # CLOSE
     # ------------------------------------------------------------------
 
-    @_serialized
     def close_profile_by_id(self, profile_id: str, wait_timeout: float = 12.0) -> bool:
         """Close a running profile via the GUI (search id -> click the row's red
-        'Close' button). Returns True once the row's action reverts to 'Open'."""
+        'Close' button). Returns True once the row's action reverts to 'Open'.
+
+        Coalesced with any other concurrent closes into ONE bulk search by
+        ``_CLOSE_BATCHER`` (the batcher holds the GUI lock and runs
+        ``_bulk_close_locked``), so closing several profiles at once is one search
+        instead of one per profile."""
         profile_id = str(profile_id or "").strip()
         if not profile_id:
             raise AdsPowerUIError("close_profile_by_id requires a profile id.")
-        self._connect()
-        self._goto_profiles()
-        self._search_by(profile_id, field="Profile ID", operator="is")
-        self._connect()
-        if not self._row_has_button(profile_id, "Close"):
-            # already closed (shows 'Open') or row not running
-            logger.info(f"Profile {profile_id} is not running (no Close button); nothing to close.")
-            return True
-        self._click_row_action(profile_id, "Close", template_name="close_btn")
-        # closing is immediate in AdsPower (no confirm), but accept one if it appears
-        self._maybe_confirm(("OK", "Confirm", "Yes"), timeout=0.8)
-        if self._wait_row_button(profile_id, "Open", timeout=wait_timeout):
-            logger.info(f"Profile {profile_id} closed via GUI.")
-            return True
-        logger.warning(f"Clicked Close for {profile_id} but could not confirm it closed.")
-        return False
+        return bool(_CLOSE_BATCHER.submit(self, profile_id))
 
     # ------------------------------------------------------------------
     # RENAME

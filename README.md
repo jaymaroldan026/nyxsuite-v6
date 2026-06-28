@@ -83,12 +83,16 @@ of the API — no API key or admin permission required:
   concurrent profile creators (serial watermark + `Name contains` filter).
 - **Open** it via the search bar (clear search → `Profile ID is <id>` → row
   **Open**), then attach Playwright over CDP (`core/adspower_cdp.py`). The
-  Bitmoji/signup flow then runs unchanged over the CDP endpoint.
+  Bitmoji/signup flow then runs unchanged over the CDP endpoint. When more than
+  one profile is opened (or closed) at once, they are **coalesced into one bulk
+  search** (`Profile ID is <id1> <id2> …`, space-separated) and each row's
+  **Open**/**Close** is clicked from that single result — one search instead of
+  one per profile (`core/adspower_ui.py` `_GuiBatcher` / `_search_by_ids`).
 - **Rename** after a successful signup (Name edit-pencil → type → OK), the same
   step the API path did via `/user/update`.
 - **Close** when a run finishes (the row's **Close** button) so browser windows
   don't pile up — both the Bitmoji runner and Nyxify completion close their
-  profile.
+  profile. Concurrent closes share one bulk search the same way opens do.
 - **Delete + re-create** on the signup retry path: a failed account's profile is
   closed, deleted (select row → trash → confirm), and the proxy is rotated via
   SnapBoard (unchanged) before the row retries.
@@ -120,6 +124,29 @@ Controls:
 - Full lifecycle test: `python tools/test_adspower_ui_profile.py --lifecycle`
   (create → open → rename → close → delete). Single ops: `--rename ID:Name`,
   `--close ID`, `--delete ID`.
+
+## Keyboard shortcut — pause / resume
+
+Press **Ctrl+F8** anywhere (a global hotkey — it works even while the AdsPower
+window is focused) to pause/resume the running bot. It toggles the same pause
+flags the dashboard/tray use, so the dashboard state stays in sync, and it plays
+a distinct built-in tone for each action (a low descending double-beep for
+**pause**, a higher rising one for **resume**) so you know the key was caught.
+
+The listener runs **inside each runner process** (`core/hotkeys.py`, started by
+`main.py` for Nyx and `nyxify_runner.py` for Nyxify) — so only a *running* bot
+responds, and pressing the key pauses whatever is running. Effect by runner:
+
+- **Nyx (Bitmoji):** pauses the **current** account mid-run — the flow checks the
+  pause flag at each step (`wait_if_paused`).
+- **Nyxify (signup):** pauses **between accounts** — the in-flight signup runs to
+  completion, then no new ones start until you resume.
+
+> **macOS:** global hotkeys require the host app (Terminal, or the bundled Nyx
+> Suite app) to have **Accessibility** permission — grant it under *System
+> Settings → Privacy & Security → Accessibility*. Without it the suite still
+> runs; only the Ctrl+F8 shortcut is inactive (the dashboard pause buttons work
+> regardless).
 
 ## Browser extension host (optional)
 

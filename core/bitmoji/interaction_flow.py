@@ -105,6 +105,9 @@ class BitmojiInteractionMixin:
         if "accounts.snapchat.com" not in current_url:
             return False
 
+        if "/v2/login" in current_url or "/accounts/v2/login" in current_url:
+            return True
+
         try:
             heading = ctx.locator("h1")
             if await heading.count() > 0:
@@ -1006,6 +1009,17 @@ class BitmojiInteractionMixin:
                             return "GENDER"
                         if await ctx.locator("canvas, .current_preview, [class*='avatar-builder']").count() > 0:
                             return "EDITOR"
+
+                        current_url = ""
+                        try:
+                            current_url = (ctx.url or "").strip().lower()
+                        except Exception:
+                            current_url = ""
+                        if current_url:
+                            if "accounts.snapchat.com/accounts/oauth2" in current_url:
+                                return "CONTINUE"
+                            if "accounts.snapchat.com" in current_url:
+                                return "LOGIN"
                     except Exception:
                         continue
             except Exception:
@@ -1057,7 +1071,7 @@ class BitmojiInteractionMixin:
                 return "ACCOUNT_HOME"
             if "sdk.bitmoji.com/web-builder" in current_url:
                 return "EDITOR"
-            if "accounts.snapchat.com/accounts/oauth2/auth" in current_url:
+            if "accounts.snapchat.com/accounts/oauth2" in current_url:
                 return "CONTINUE"
             if "accounts.snapchat.com" in current_url:
                 return "LOGIN"
