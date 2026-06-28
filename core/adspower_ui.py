@@ -527,10 +527,12 @@ class AdsPowerUIController:
 
     @staticmethod
     def _name_fragment(name: str) -> str:
-        """The distinctive part of a temp name for a 'Name contains' search.
-        'Snapchat: Pending' -> 'Pending'."""
-        frag = name.split(":")[-1].strip() if ":" in name else name.strip()
-        return frag or name.strip()
+        """The distinctive part of a temp name for a 'Name contains' search, with
+        no stray separators: 'Snapchat: Pending' -> 'Pending', 'Snapchat:' ->
+        'Snapchat'. A trailing ':' must not survive — AdsPower offers a different
+        (worse) set of suggestions for a value that ends in punctuation."""
+        parts = [p.strip() for p in str(name or "").split(":") if p.strip()]
+        return parts[-1] if parts else str(name or "").strip()
 
     def _rows_for_name(self, name: str):
         """Filter the list by 'Name contains <fragment>' and return rows whose
@@ -693,9 +695,10 @@ class AdsPowerUIController:
         if search is None:
             raise AdsPowerUIError("Search bar not found on the Profiles page.")
         below = search.bottom
+        left_min = search.left - 30          # suggestions align under the search box
         self._paste_rect(search, value)
         time.sleep(1.2)                      # let the suggestion dropdown render
-        if not self._click_dropdown_row(field, operator, below_top=below):
+        if not self._click_dropdown_row(field, operator, below_top=below, left_min=left_min):
             logger.debug(f"Dropdown row {field!r}/{operator!r} not found; pressing Enter.")
             _pg().press("enter")
         time.sleep(1.2)
@@ -704,19 +707,26 @@ class AdsPowerUIController:
         self._connect()
         self._wait_list_settled()
 
-    def _click_dropdown_row(self, field: str, operator: str, below_top: int) -> bool:
+    def _click_dropdown_row(self, field: str, operator: str, below_top: int,
+                            left_min: int = 460) -> bool:
         """Click the suggestion row containing both ``field`` and ``operator``
         labels. AdsPower renders each suggestion as separate Text controls
-        (field / operator / value) sharing a row top, so we cluster by top."""
+        (field / operator / value) sharing a row top, so we cluster by top.
+
+        ``left_min`` is the left edge of the suggestion column — it aligns under
+        the search box (~L480), NOT far right, so the threshold is derived from
+        the search box position. (The old hard-coded ``left > 600`` skipped the
+        whole dropdown, so 'Name contains' never matched and the search fell back
+        to AdsPower's default 'Profile No./ID is' — searching by id, not name.)"""
         from collections import defaultdict
         groups = defaultdict(list)
         for t in self._win.descendants(control_type="Text"):
             try:
                 s = (t.window_text() or "").strip()
                 r = t.rectangle()
-                # Suggestions render in the content area (well right of the
-                # sidebar) just below the search bar.
-                if s and r.width() > 0 and r.top > below_top and r.left > 600:
+                # Suggestions render just below the search bar, in the column that
+                # starts at the search box's left edge (right of the sidebar).
+                if s and r.width() > 0 and r.top > below_top and r.left >= left_min:
                     groups[round(r.top / 6)].append((r.left, r.right, r.top, r.bottom, s.lower()))
             except Exception:
                 continue
