@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nyxify Username Scrape</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyxify-body nyxify-settings-body">
+  <main class="panel panel-settings-page">
+    <div class="settings-page-shell">
+      <header class="settings-page-header">
+        <div>
+          <h1>Nyxify Username Scrape</h1>
+          <p id="scrapeStatusLine" class="muted">Loading scrape status...</p>
+        </div>
+        <div class="settings-page-actions">
+          <button id="scrapeRefreshButton" class="button button-secondary" type="button">Refresh</button>
+          <button id="scrapeOpenOptionsButton" class="button button-secondary" type="button">Nyxify Settings</button>
+        </div>
+      </header>
+
+      <section class="card settings-card settings-card-wide">
+        <div class="button-row button-row-compact">
+          <button id="scrapeStartButton" class="button" type="button">Check</button>
+          <button id="scrapePauseButton" class="button button-secondary" type="button" style="display:none">Pause</button>
+          <button id="scrapeResumeButton" class="button" type="button" style="display:none">Resume</button>
+          <button id="scrapeStopButton" class="button button-secondary" type="button">Stop</button>
+          <button id="scrapeClearButton" class="button button-danger" type="button">Clear Data</button>
+          <button id="scrapeSaveButton" class="button button-secondary" type="button">Save Settings</button>
+        </div>
+        <div class="button-row button-row-compact button-row-two">
+          <button id="copyWithAccountButton" class="button button-secondary" type="button">Copy All With Account</button>
+          <button id="copyNoAccountButton" class="button button-secondary" type="button">Copy All No Account</button>
+        </div>
+        <pre id="scrapeRunnerSummary">Waiting for username scrape.</pre>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Input</h2>
+        <div class="settings-page-grid">
+          <label class="setting-field">
+            <span class="label">Parallel tabs</span>
+            <input id="scrapeParallelTabsInput" class="input" type="number" min="1" max="50" step="1" value="4">
+          </label>
+          <label class="setting-field">
+            <span class="label">Profile timeout (ms)</span>
+            <input id="scrapeTimeoutMsInput" class="input" type="number" min="4000" max="60000" step="500" value="12000">
+          </label>
+        </div>
+        <label class="label" for="scrapeInputText">Paste usernames</label>
+        <textarea id="scrapeInputText" class="input textarea-input scrape-input" placeholder="@username&#10;snapchat.com/@username"></textarea>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Status</h2>
+        <div class="scrape-summary-grid scrape-summary-grid-wide">
+          <div class="status-tile"><span class="status-tile-label">Input</span><strong id="scrapeInputCount">0</strong></div>
+          <div class="status-tile"><span class="status-tile-label">Checked</span><strong id="scrapeCheckedCount">0</strong></div>
+          <div class="status-tile"><span class="status-tile-label">With Account</span><strong id="scrapeWithAccountCount">0</strong></div>
+          <div class="status-tile"><span class="status-tile-label">No Account</span><strong id="scrapeNoAccountCount">0</strong></div>
+          <div class="status-tile"><span class="status-tile-label">Unknown</span><strong id="scrapeUnknownCount">0</strong></div>
+        </div>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Filtered Lists</h2>
+        <div class="scrape-results-grid">
+          <section class="scrape-results-panel">
+            <div class="scrape-group-header">
+              <div class="scrape-group-title">With Account</div>
+              <span id="withAccountBadge" class="scrape-group-count">0</span>
+            </div>
+            <textarea id="withAccountResults" class="input textarea-input scrape-results-text" readonly></textarea>
+          </section>
+          <section class="scrape-results-panel">
+            <div class="scrape-group-header">
+              <div class="scrape-group-title">No Account</div>
+              <span id="noAccountBadge" class="scrape-group-count">0</span>
+            </div>
+            <textarea id="noAccountResults" class="input textarea-input scrape-results-text" readonly></textarea>
+          </section>
+          <section class="scrape-results-panel">
+            <div class="scrape-group-header">
+              <div class="scrape-group-title">Unknown</div>
+              <span id="unknownBadge" class="scrape-group-count">0</span>
+            </div>
+            <textarea id="unknownResults" class="input textarea-input scrape-results-text" readonly></textarea>
+          </section>
+        </div>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Records</h2>
+        <div id="scrapeRecordsTable" class="scrape-records-table">No scrape records yet.</div>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Scrape Events</h2>
+        <pre id="scrapeEventLog">No scrape events yet.</pre>
+      </section>
+    </div>
+  </main>
+  <script src="scrape.js"></script>
+</body>
+</html>

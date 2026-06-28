@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nyxify v4</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyxify-body">
+  <main class="panel panel-wide popup-shell">
+    <header class="popup-frame-header">
+      <div class="popup-header">
+        <div class="popup-title-row">
+          <img src="icons8-origami-50-gray.png" alt="Nyxify logo" class="popup-logo">
+          <h1>Nyxify v4</h1>
+        </div>
+        <a class="settings-link" href="options.html" target="_blank" rel="noreferrer">Settings</a>
+      </div>
+      <div class="agent-row">
+        <button id="openWebAppButton" class="button button-secondary button-small" type="button" title="Open the Nyx Suite dashboard (Nyxify)">Open Dashboard</button>
+        <span class="nyxsuite-indicator">
+          <span id="runnerDot" class="runner-dot runner-dot-offline" aria-hidden="true"></span>
+          <span id="runnerConnectionText">Checking NyxSuite...</span>
+        </span>
+      </div>
+      <div class="toggle-row nyxsuite-toggle-row">
+        <span class="toggle-text" id="nyxsuiteToggleText">NyxSuite off</span>
+        <label class="toggle-switch" for="bridgePowerToggle">
+          <input id="bridgePowerToggle" type="checkbox" data-running="false">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+      <div class="popup-tabs" role="tablist" aria-label="Nyxify views">
+        <button id="runnerTabButton" class="popup-tab popup-tab-active" type="button" data-view="runnerView" role="tab" aria-selected="true">Runner</button>
+        <button id="scrapeTabButton" class="popup-tab" type="button" data-view="scrapeView" role="tab" aria-selected="false">Username Scrape</button>
+      </div>
+    </header>
+
+    <section id="runnerView" class="popup-view popup-view-active" role="tabpanel">
+      <div class="view-scroll">
+        <section class="card card-hero">
+          <div class="status-cluster">
+            <p id="statusLine">Loading...</p>
+            <p id="runnerLine" class="muted">Checking Nyxify runner...</p>
+            <p id="capacityLine" class="muted">Checking AdsPower profile usage...</p>
+          </div>
+          <div class="status-tiles">
+            <div class="status-tile"><span class="status-tile-label">Ready</span><strong id="countReady">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Waiting</span><strong id="countWaiting">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Running</span><strong id="countRunning">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Failed</span><strong id="countFailed">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Done</span><strong id="countDone">0</strong></div>
+          </div>
+          <div class="control-panel">
+            <div class="toggle-row">
+              <span class="toggle-text">Push AdsPower ID to SnapBoard</span>
+              <label class="toggle-switch" for="popupPushAdspowerIdToggle">
+                <input id="popupPushAdspowerIdToggle" type="checkbox" checked>
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-text">Apply AdsPower tags <span class="muted">(off = create profiles with no tags)</span></span>
+              <label class="toggle-switch" for="popupAdspowerTagsToggle">
+                <input id="popupAdspowerTagsToggle" type="checkbox" checked>
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row toggle-row-danger">
+              <span class="toggle-text">Full Auto Mode</span>
+              <label class="toggle-switch toggle-switch-danger" for="popupFullAutoModeToggle">
+                <input id="popupFullAutoModeToggle" type="checkbox">
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-text">Auto-Fill Row <span class="muted">(auto-clicks Get Proxy when all rows have AdsPower ID &amp; username filled)</span></span>
+              <label class="toggle-switch" for="popupAutoFillRowToggle">
+                <input id="popupAutoFillRowToggle" type="checkbox">
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="auto-fill-target-row">
+              <label class="label" for="popupAutoFillAccountTarget">Auto-fill target</label>
+              <input id="popupAutoFillAccountTarget" class="input" type="number" min="0" max="9999" step="1" placeholder="Unlimited">
+              <span id="popupAutoFillTargetStatus" class="muted">Unlimited</span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-text">Lock in G5</span>
+              <label class="toggle-switch" for="popupLockG5Toggle">
+                <input id="popupLockG5Toggle" type="checkbox">
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="button-row button-row-compact button-row-two runner-action-row">
+              <button id="startStopRunnerButton" class="button runner-action-button" type="button" data-action="start">Start</button>
+              <button id="pauseResumeRunnerButton" class="button runner-action-button" type="button" data-action="pause">Pause</button>
+            </div>
+            <div class="button-row button-row-compact button-row-two">
+              <button id="refreshButton" class="button button-secondary" type="button">Refresh</button>
+              <button id="resetFailedButton" class="button button-secondary" type="button">Reset Failed</button>
+            </div>
+            <div class="button-row button-row-compact button-row-two">
+              <button id="deleteOrphanProfilesButton" class="button button-secondary" type="button">Delete Orphans</button>
+              <button id="clearQueueButton" class="button button-danger" type="button">Clear Queue</button>
+            </div>
+            <div class="inline-settings">
+              <div class="settings-grid">
+                <div class="setting-field">
+                  <label class="label" for="popupTemporaryName">Temporary name</label>
+                  <input id="popupTemporaryName" class="input" type="text" placeholder="Snapchat:">
+                </div>
+                <div class="setting-field">
+                  <label class="label" for="popupGroup">AdsPower group</label>
+                  <input id="popupGroup" class="input" type="text" placeholder="Snapchat">
+                </div>
+                <div class="setting-field">
+                  <label class="label" for="popupTagOne">Tag 1</label>
+                  <input id="popupTagOne" class="input" type="text" placeholder="Snapchat">
+                </div>
+                <div class="setting-field">
+                  <label class="label" for="popupTagTwo">Tag 2</label>
+                  <input id="popupTagTwo" class="input" type="text" placeholder="Existing tag">
+                </div>
+                <div class="setting-field">
+                  <label class="label" for="popupRowLimit">Top rows to detect</label>
+                  <input id="popupRowLimit" class="input" type="number" min="1" max="200" step="1" placeholder="20">
+                </div>
+              </div>
+              <button id="savePopupSettingsButton" class="button" type="button">Save Dashboard Settings</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Nyxify Queue</h2>
+          <div class="button-row queue-action-row">
+            <button id="banProxyButton" class="button button-secondary" type="button">Ban Proxy</button>
+            <button id="removeQueueRowButton" class="button button-danger" type="button">Remove Row</button>
+          </div>
+          <div id="sheetQueue" class="queue-table">Loading local Nyxify rows...</div>
+        </section>
+
+        <section class="card">
+          <h2>Banned Proxies</h2>
+          <p class="muted">One pattern per line. Matches by host prefix, full prefix, or substring (e.g. <code>130</code> blocks all <code>130.x.x.x</code> proxies).</p>
+          <textarea id="popupBlockedProxies" class="input textarea-input" placeholder="e.g. 130&#10;82.26&#10;109.176.200.39:57813"></textarea>
+          <p id="popupBlockedProxiesCount" class="muted">No proxies are banned.</p>
+          <div class="button-row button-row-compact button-row-two">
+            <button id="savePopupBlockedProxiesButton" class="button" type="button">Save</button>
+            <button id="clearPopupBlockedProxiesButton" class="button button-danger" type="button">Clear All</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Last detected</h2>
+          <pre id="lastSeen">No dashboard rows detected yet.</pre>
+        </section>
+
+        <section class="card">
+          <h2>Local Sync</h2>
+          <p id="syncLine">Not configured.</p>
+        </section>
+      </div>
+    </section>
+
+    <section id="scrapeView" class="popup-view" role="tabpanel" hidden>
+      <div class="view-scroll">
+        <section class="card card-hero">
+          <h2>Username Scrape</h2>
+          <div class="status-cluster">
+            <p id="scrapeStatusLine">Paste usernames and click Check.</p>
+            <p id="scrapeRunnerLine" class="muted">No scrape session running.</p>
+          </div>
+          <div class="settings-grid scrape-settings-grid">
+            <div class="setting-field">
+              <label class="label" for="scrapeParallelTabsInput">Parallel tabs</label>
+              <input id="scrapeParallelTabsInput" class="input" type="number" min="1" max="10" step="1" value="4">
+            </div>
+            <div class="setting-field">
+              <label class="label" for="scrapeTimeoutMsInput">Timeout (ms)</label>
+              <input id="scrapeTimeoutMsInput" class="input" type="number" min="4000" max="60000" step="500" value="12000">
+            </div>
+          </div>
+          <label class="label" for="scrapeInputText">Paste usernames</label>
+          <textarea id="scrapeInputText" class="input textarea-input scrape-input" placeholder="@username&#10;snapchat.com/@username"></textarea>
+          <div class="button-row button-row-compact button-row-three">
+            <button id="scrapeCheckButton" class="button" type="button">Check</button>
+            <button id="scrapeStopButton" class="button button-secondary" type="button">Stop</button>
+            <button id="scrapeClearButton" class="button button-danger" type="button">Clear</button>
+          </div>
+          <div class="button-row button-row-compact button-row-two">
+            <button id="copyWithAccountButton" class="button button-secondary" type="button">Copy All With Account</button>
+            <button id="copyNoAccountButton" class="button button-secondary" type="button">Copy All No Account</button>
+          </div>
+          <div class="button-row button-row-compact button-row-single">
+            <button id="scrapeOpenPageButton" class="button button-secondary" type="button">Open Web UI</button>
+          </div>
+          <div class="scrape-summary-grid">
+            <div class="status-tile"><span class="status-tile-label">Input</span><strong id="scrapeInputCount">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Checked</span><strong id="scrapeCheckedCount">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">With Account</span><strong id="scrapeWithAccountCount">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">No Account</span><strong id="scrapeNoAccountCount">0</strong></div>
+            <div class="status-tile"><span class="status-tile-label">Unknown</span><strong id="scrapeUnknownCount">0</strong></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="scrape-group-header">
+            <h2>With Account</h2>
+            <span id="withAccountBadge" class="scrape-group-count">0</span>
+          </div>
+          <textarea id="withAccountResults" class="input textarea-input scrape-results-text" readonly></textarea>
+        </section>
+
+        <section class="card">
+          <div class="scrape-group-header">
+            <h2>No Account</h2>
+            <span id="noAccountBadge" class="scrape-group-count">0</span>
+          </div>
+          <textarea id="noAccountResults" class="input textarea-input scrape-results-text" readonly></textarea>
+        </section>
+
+        <section class="card">
+          <div class="scrape-group-header">
+            <h2>Unknown</h2>
+            <span id="unknownBadge" class="scrape-group-count">0</span>
+          </div>
+          <textarea id="unknownResults" class="input textarea-input scrape-results-text" readonly></textarea>
+        </section>
+
+        <section class="card">
+          <h2>Scrape Events</h2>
+          <pre id="scrapeEventLog">No scrape events yet.</pre>
+        </section>
+      </div>
+    </section>
+
+    <p class="brand-mark">Powered by Roldan Creation</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

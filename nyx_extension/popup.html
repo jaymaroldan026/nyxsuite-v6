@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nyx v4</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyx-body">
+  <main class="panel panel-wide">
+    <div class="sticky-top">
+      <div class="popup-header">
+        <div class="popup-title-row">
+          <img src="icons8-origami-50.png" alt="Nyx logo" class="popup-logo">
+          <h1>Nyx v4</h1>
+        </div>
+        <div class="header-right">
+          <details id="runnerStatusCard" class="runner-status-mini">
+            <summary class="runner-status-summary">
+              <span id="runnerDot" class="runner-dot runner-dot-offline" aria-hidden="true"></span>
+              <span id="runnerConnectionText">Checking NyxSuite...</span>
+              <span class="runner-view-button">Status</span>
+            </summary>
+            <pre id="runnerStatus" class="runner-status-popup">Waiting for Nyx runner...</pre>
+          </details>
+          <button id="headerRefreshButton" class="header-refresh-button" type="button" title="Refresh Nyx status" aria-label="Refresh Nyx status">
+            <span id="headerRefreshIcon" class="header-refresh-icon" aria-hidden="true">↻</span>
+          </button>
+          <a class="settings-gear" href="options.html" target="_blank" rel="noreferrer" title="Open Nyx settings" aria-label="Open Nyx settings">⚙</a>
+        </div>
+      </div>
+      <div id="extReloadBanner" class="ext-reload-banner" hidden>
+        Extension updated to <span id="extReloadVersion"></span> — <a id="openExtensionsLink" href="#">reload it</a> at chrome://extensions to apply.
+      </div>
+      <div class="agent-row">
+        <button id="openWebAppButton" class="button button-secondary button-small" type="button" title="Open the Nyx Suite dashboard (one tab)">Open Dashboard</button>
+      </div>
+      <div class="toggle-row nyxsuite-toggle-row">
+        <span class="toggle-text" id="nyxsuiteToggleText">NyxSuite off</span>
+        <label class="toggle-switch" for="bridgePowerToggle">
+          <input id="bridgePowerToggle" type="checkbox" data-running="false">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+      <p id="statusLine">Loading...</p>
+      <p id="runnerLine" class="muted">Checking Nyx runner...</p>
+      <div class="button-row button-row-compact button-row-single quick-nav-row">
+        <button id="jumpDailyUpdateButton" class="button button-secondary" type="button">Daily Update</button>
+      </div>
+      <div id="botControlsPanel" class="bot-controls-panel bot-state-stopped">
+        <div id="botStatePill" class="bot-state-pill" title="Nyx runner state">
+          <span id="botStateDot" class="bot-state-dot" aria-hidden="true"></span>
+          <span id="botStateText">Stopped</span>
+        </div>
+      </div>
+      <div id="botActionRow" class="button-row button-row-compact button-row-two bot-action-row bot-state-stopped">
+        <button id="startStopBotButton" class="button bot-action-button" type="button" data-action="start" title="Start Nyx">
+          <span class="bot-action-icon" aria-hidden="true">&#9654;</span>
+          <span class="bot-action-label">Start</span>
+        </button>
+        <button id="pauseResumeBotButton" class="button bot-action-button" type="button" data-action="pause" title="Pause Nyx">
+          <span class="bot-action-icon" aria-hidden="true">&#10073;&#10073;</span>
+          <span class="bot-action-label">Pause</span>
+        </button>
+      </div>
+      <div class="button-row button-row-compact button-row-three">
+        <button id="resetStuckButton" class="button" type="button">Reset Stuck</button>
+        <button id="rerunFailedButton" class="button" type="button">Rerun Failed</button>
+        <button id="removeMissingProfileButton" class="button button-secondary" type="button" title="Remove all missing AdsPower profile rows">Remove Missing</button>
+      </div>
+      <div class="button-row button-row-compact button-row-three">
+        <button id="clearCompletedButton" class="button" type="button">Clear Completed</button>
+        <button id="showBitmojiStatusButton" class="button button-secondary" type="button">Show</button>
+        <button id="finishRemainingButton" class="button" type="button">Flush</button>
+      </div>
+      <div class="button-row button-row-compact button-row-single">
+        <button id="warmupAllButton" class="button button-secondary" type="button">Warm Up All Inaccessible</button>
+      </div>
+      <div class="inline-settings">
+        <div class="settings-grid">
+          <div class="setting-field">
+            <label class="label" for="popupOutfitStyle">Outfit style</label>
+            <select id="popupOutfitStyle" class="input">
+              <option value="default">Default</option>
+              <option value="mixed">Mixed</option>
+              <option value="casual">Casual</option>
+              <option value="sexy">Sexy</option>
+              <option value="no_dresses">No Dresses</option>
+            </select>
+          </div>
+          <div class="setting-field">
+            <label class="label" for="popupRowLimit">Top rows to detect</label>
+            <input id="popupRowLimit" class="input" type="number" min="1" max="500" step="1" placeholder="100">
+          </div>
+          <div class="setting-field">
+            <label class="label" for="popupPendingThreshold">Run bot when pending reaches</label>
+            <input id="popupPendingThreshold" class="input" type="number" min="1" max="500" step="1" placeholder="1">
+          </div>
+          <div class="setting-field">
+            <label class="label" for="popupMaxParallel">Run profiles in parallel</label>
+            <input id="popupMaxParallel" class="input" type="number" min="1" max="50" step="1" placeholder="5">
+          </div>
+          <div class="setting-field setting-field-wide">
+            <label class="label" for="popupAutomationSpeed">Speed <span id="popupAutomationSpeedLabel">50%</span></label>
+            <input id="popupAutomationSpeed" class="speed-input" type="range" min="5" max="100" step="1" value="50">
+          </div>
+        </div>
+        <div class="toggle-row compact-toggle">
+          <span class="toggle-text">Randomize configured hair per profile</span>
+          <label class="toggle-switch" for="popupHairRandomizer">
+            <input id="popupHairRandomizer" type="checkbox">
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <button id="savePopupSettingsButton" class="button" type="button">Save Dashboard Settings</button>
+      </div>
+    </div>
+    <div class="scroll-area scroll-area-tall">
+      <section class="card card-collapsible">
+        <details id="queueSectionToggle" open>
+          <summary class="card-toggle">
+            <span>Nyx Queue</span>
+            <span class="chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="collapsible-content">
+            <input id="queueSearchInput" class="input queue-search-input" type="text" placeholder="Search by AdsPower ID">
+            <div class="button-row queue-action-row">
+              <button id="markDoneQueueProfileButton" class="button" type="button">Mark Done</button>
+              <button id="relaunchQueueProfileButton" class="button" type="button">Relaunch</button>
+              <button id="closeQueueProfileButton" class="button" type="button">Close Profile</button>
+              <button id="removeQueueProfileButton" class="button button-danger" type="button">Remove Row</button>
+            </div>
+            <div id="queueTable" class="queue-table">Loading local Nyx rows...</div>
+          </div>
+        </details>
+      </section>
+      <section class="card" id="dailyUpdateSection">
+        <h2>Daily Update</h2>
+        <div class="rename-grid">
+          <div class="setting-field">
+            <label class="label" for="dailyStartAdspowerIdInput">Start AdsPower ID</label>
+            <input id="dailyStartAdspowerIdInput" class="input" type="text" placeholder="k1aygxxc">
+          </div>
+          <div class="setting-field">
+            <label class="label" for="dailyTopAdspowerIdInput">Top AdsPower ID</label>
+            <input id="dailyTopAdspowerIdInput" class="input" type="text" placeholder="Auto">
+          </div>
+        </div>
+        <div id="dailyUpdateSummary" class="rename-summary">Loading daily update...</div>
+        <pre id="dailyUpdatePreview">Loading daily update...</pre>
+        <div class="button-row button-row-compact rename-button-row">
+          <button id="refreshDailyRowsButton" class="button button-secondary" type="button">Refresh Rows</button>
+          <button id="copyDailyUpdateButton" class="button button-secondary" type="button">Copy Daily Report</button>
+          <button id="saveDailyStartButton" class="button button-secondary" type="button">Save Start ID</button>
+          <button id="dailyScrapeButton" class="button" type="button">Scrape</button>
+          <button id="openScrapePageButton" class="button button-secondary" type="button">Open Scrape Page</button>
+        </div>
+        <p id="dailyUpdateStatusLine" class="muted">Counts from Start AdsPower ID up to the current top valid ID.</p>
+      </section>
+      <section class="card" id="nyxScrapeSection">
+        <h2>Nyx Scrape</h2>
+        <p class="muted">Checks every row on the open SnapBoard for an existing Snapchat account / Bitmoji.</p>
+        <div class="button-row button-row-compact">
+          <button id="nyxScanAllButton" class="button" type="button">Scan All SnapBoard Rows</button>
+          <button id="nyxScrapePauseButton" class="button button-secondary" type="button" style="display:none">Pause</button>
+          <button id="nyxScrapeResumeButton" class="button" type="button" style="display:none">Resume</button>
+          <button id="nyxScrapeStopButton" class="button button-secondary" type="button">Stop</button>
+        </div>
+        <div class="button-row button-row-compact">
+          <button id="nyxScrapeOpenPageButton" class="button button-secondary" type="button">Open Results</button>
+          <button id="nyxScrapeClearButton" class="button button-danger" type="button">Clear Data</button>
+        </div>
+        <div id="nyxScrapeSummary" class="rename-summary">Scrape is idle.</div>
+        <p id="nyxScrapeStatusLine" class="muted">Open a SnapBoard tab, then click Scan All.</p>
+      </section>
+      <section class="card">
+        <h2>Local Sync</h2>
+        <p id="syncLine">Not configured.</p>
+      </section>
+    </div>
+    <div class="button-row button-row-compact button-row-single setup-install-row">
+      <button id="setupInstallButton" class="button button-secondary button-small" type="button" title="Set up & install Nyx Suite (opens the install web UI)">⚙ Setup &amp; Install</button>
+    </div>
+    <p class="brand-mark">Powered by Roldan Creation</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

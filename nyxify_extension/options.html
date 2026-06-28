@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyxify v4 Settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyxify-body nyxify-settings-body">
+  <main class="panel panel-settings-page">
+    <section class="card settings-card settings-card-wide">
+      <h1>Nyxify v4 Settings</h1>
+      <p class="muted">Dark Nyx-style dashboard settings for the standalone AdsPower creator.</p>
+
+      <label class="label" for="localApiUrl">Local API URL</label>
+      <input id="localApiUrl" class="input" type="text" placeholder="http://127.0.0.1:8866">
+
+      <label class="label" for="temporaryProfileName">Temporary profile name</label>
+      <input id="temporaryProfileName" class="input" type="text" placeholder="Snapchat:">
+
+      <label class="label" for="adspowerGroup">AdsPower group</label>
+      <input id="adspowerGroup" class="input" type="text" placeholder="Snapchat">
+
+      <div class="settings-grid">
+        <div class="setting-field">
+          <label class="label" for="tagOne">Tag 1</label>
+          <input id="tagOne" class="input" type="text" placeholder="Snapchat">
+        </div>
+        <div class="setting-field">
+          <label class="label" for="tagTwo">Tag 2</label>
+          <input id="tagTwo" class="input" type="text" placeholder="Existing tag">
+        </div>
+        <div class="setting-field">
+          <label class="label" for="rowLimit">Top rows to detect</label>
+          <input id="rowLimit" class="input" type="number" min="1" max="200" step="1">
+        </div>
+        <div class="setting-field">
+          <label class="label" for="maxParallelProfiles">Max parallel profiles</label>
+          <input id="maxParallelProfiles" class="input" type="number" min="1" max="10" step="1">
+        </div>
+        <div class="setting-field">
+          <label class="label" for="autoFillAccountTarget">Auto-fill target</label>
+          <input id="autoFillAccountTarget" class="input" type="number" min="0" max="9999" step="1" placeholder="Unlimited">
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Proxy Blocker</span>
+        <label class="toggle-switch" for="proxyBlockerToggle">
+          <input id="proxyBlockerToggle" type="checkbox" checked>
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+      <p class="muted" style="margin-top:0">Rotate any proxy matching these patterns. One per line. Prefix match, for example <code>130</code> blocks all <code>130.x.x.x</code> proxies.</p>
+      <textarea id="blockedProxies" class="input textarea-input" placeholder="e.g. 130&#10;82.26&#10;109.176.200.39:57813"></textarea>
+
+      <div class="toggle-row" style="margin-top:16px">
+        <span class="toggle-text">Proxy Checker <span class="muted">(uses AdsPower check: IP, country, city)</span></span>
+        <label class="toggle-switch" for="proxyCheckerToggle">
+          <input id="proxyCheckerToggle" type="checkbox" checked>
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Push AdsPower ID to SnapBoard <span class="muted">(writes the created profile id back to the row)</span></span>
+        <label class="toggle-switch" for="pushAdspowerIdToggle">
+          <input id="pushAdspowerIdToggle" type="checkbox" checked>
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Apply AdsPower tags <span class="muted">(off = create profiles with no tags; Tag 1 / Tag 2 above are ignored)</span></span>
+        <label class="toggle-switch" for="adspowerTagsToggle">
+          <input id="adspowerTagsToggle" type="checkbox" checked>
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row toggle-row-danger">
+        <span class="toggle-text">Full Auto Mode <span class="muted">(replaces `temp_...` usernames from per-model `.txt` files)</span></span>
+        <label class="toggle-switch toggle-switch-danger" for="fullAutoModeToggle">
+          <input id="fullAutoModeToggle" type="checkbox">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Auto-Fill Row <span class="muted">(auto-clicks Get Proxy when all rows have AdsPower ID &amp; username filled)</span></span>
+        <label class="toggle-switch" for="autoFillRowToggle">
+          <input id="autoFillRowToggle" type="checkbox">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Lock in G5 <span class="muted">(keeps SnapBoard email provider on G5 after refresh)</span></span>
+        <label class="toggle-switch" for="lockG5Toggle">
+          <input id="lockG5Toggle" type="checkbox">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Nyxify enabled</span>
+        <label class="toggle-switch" for="enabledToggle">
+          <input id="enabledToggle" type="checkbox" checked>
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <button id="saveOptionsButton" class="button" type="button">Save Settings</button>
+      <p id="feedback" class="muted"></p>
+    </section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

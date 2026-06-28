@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyx Suite — Pricing</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <style>
+    .pricing-page{max-width:520px;margin:60px auto;padding:0 20px}
+    .pricing-card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-lg);padding:32px;box-shadow:var(--card-shadow)}
+    .pricing-card h1{margin:0 0 6px;font-size:22px;color:var(--text)}
+    .pricing-card .sub{color:var(--muted);font-size:14px;margin:0 0 24px}
+    .price-box{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-md);padding:20px;text-align:center;margin-bottom:24px}
+    .price-amount{font-size:36px;font-weight:700;color:var(--accent);font-family:"Fira Code",monospace}
+    .price-duration{font-size:13px;color:var(--muted);margin-top:4px}
+    .price-box .note{font-size:12px;color:var(--faint);margin-top:10px}
+    .pay-instructions{font-size:13px;color:var(--text);line-height:1.6;margin:0 0 20px}
+    .pay-instructions strong{color:var(--accent)}
+    .qr-wrap{text-align:center;margin:20px 0}
+    .qr-wrap img{max-width:280px;border-radius:var(--r-md);border:1px solid var(--line)}
+    .footnote{font-size:11px;color:var(--faint);text-align:center;margin-top:24px}
+    .footnote a{color:var(--accent)}
+  </style>
+</head>
+<body>
+  <div class="pricing-page">
+    <div class="pricing-card">
+      <h1>Nyx Suite License</h1>
+      <p class="sub">One-time activation per machine</p>
+      <div class="price-box">
+        <div class="price-amount">₱3,000</div>
+        <div class="price-duration">30 days (PHP)</div>
+        <div class="note">Pay via InstaPay / GCash</div>
+      </div>
+      <p class="pay-instructions">
+        Scan the QR below using your GCash or any InstaPay-enabled app, then
+        send proof of payment to <strong>Jaymar</strong> to receive your
+        activation code.
+      </p>
+      <div class="qr-wrap">
+        <img src="pay-qr.jpg" alt="GCash QR">
+      </div>
+      <p class="footnote">
+        After receiving your code, enter it on the
+        <a href="http://127.0.0.1:8870/" target="_blank">dashboard</a>
+        to unlock Nyx Suite.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

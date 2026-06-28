@@ -1,0 +1,52 @@
+# Python cache / local env
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+credentials/
+Extension Creds.txt
+
+# Runtime / machine-local state
+logs/
+updates/
+local_update_backup_*/
+local_update_backups/
+data/*
+!data/signup_names/
+!data/signup_names/*.txt
+!data/full_auto_usernames/
+!data/full_auto_usernames/*.txt
+!data/bitmoji_catalog.json
+data/*.db
+data/*_config.json
+data/verify_local_queue.db
+
+# Build / package outputs
+build/
+dist/
+release/
+NyxWindowsRelease/
+NyxMacRelease/
+*.spec.bak
+
+# Tooling / editor clutter
+.claude/
+.agents/
+.opencode/
+skills-lock.json
+.DS_Store
+Thumbs.db
+desktop.ini
+OPENCODE_PROMPT_v*.md
+
+# Generated per-install agent token (secret — never commit)
+agent_token.txt

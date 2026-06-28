@@ -1,0 +1,10 @@
+# Keep POSIX scripts and the shebang'd native-messaging host as LF so they run
+# on macOS/Linux regardless of the committer's core.autocrlf setting. A stray
+# CRLF in a shebang line breaks `#!/usr/bin/env ...` on Unix.
+*.sh                     text eol=lf
+*.command                text eol=lf
+agent_host/host_main.py  text eol=lf
+
+# Windows scripts stay CRLF.
+*.bat                    text eol=crlf
+*.ps1                    text eol=crlf

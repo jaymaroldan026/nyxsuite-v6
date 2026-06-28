@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyx Suite</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <link rel="icon" type="image/png" href="settings-icon.png">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Nyx<span>Suite</span></div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="nyx">Nyx</button>
+      <button class="tab" data-tab="nyxify">Nyxify</button>
+      <button class="tab" data-tab="bitmoji">Nyxmoji</button>
+      <button class="tab" data-tab="settings"><img src="settings-icon.png" class="tab-icon" alt=""> Settings</button>
+    </div>
+    <div class="meta">
+      <button id="update-indicator" class="pill pill-update" type="button" style="display:none" title="An update is available — open Settings">update ready</button>
+      <span id="license" class="pill pill-muted">license …</span>
+      <span id="version" class="pill pill-muted">v…</span>
+      <span id="conn" class="pill pill-bad">connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="panel-nyx" data-product="nyx">
+      <div class="panel-head">
+        <div class="statusrow">
+          <span class="state" id="state-nyx">…</span>
+          <span class="detail" id="detail-nyx"></span>
+        </div>
+        <button id="nyx-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
+          <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
+        </button>
+      </div>
+      <div id="nyx-advanced" class="advanced-panel" hidden>
+        <div id="nyx-advanced-body"></div>
+        <span id="config-feedback" class="feedback"></span>
+      </div>
+      <div class="tiles" id="tiles-nyx"></div>
+      <div class="toolbar" id="runner-nyx"></div>
+      <div class="toolbar sub" id="queue-nyx"></div>
+      <div class="toolbar sub" id="row-nyx"></div>
+      <div class="toolbar group" id="group-nyx"></div>
+      <div class="searchbar"><input class="input search-input" id="search-nyx" type="text" placeholder="Search AdsPower ID or username…"></div>
+      <div class="tablewrap">
+        <table class="queue"><thead id="thead-nyx"></thead><tbody id="tbody-nyx"></tbody></table>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="panel-nyxify" data-product="nyxify">
+      <div class="panel-head">
+        <div class="statusrow">
+          <span class="state" id="state-nyxify">…</span>
+          <span class="detail" id="detail-nyxify"></span>
+          <span class="detail" id="usage-nyxify"></span>
+        </div>
+        <div class="panel-head-btns">
+          <button id="fullauto-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Full Auto Editor</button>
+          <button id="nyxify-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
+            <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
+          </button>
+        </div>
+      </div>
+      <div id="nyxify-advanced" class="advanced-panel" hidden>
+        <div id="nyxify-advanced-body"></div>
+        <span id="nyxify-config-feedback" class="feedback"></span>
+      </div>
+      <div class="tiles" id="tiles-nyxify"></div>
+      <div class="toolbar" id="runner-nyxify"></div>
+      <div class="toolbar sub" id="queue-nyxify"></div>
+      <div class="toolbar sub" id="row-nyxify"></div>
+      <div class="toolbar group" id="group-nyxify"></div>
+      <div id="fullauto-section" class="fullauto-section" style="display:none">
+        <div class="toolbar sub" style="margin-top:8px">
+          <label class="label-inline">Model: <select id="fullauto-model-select" class="input-inline"></select></label>
+        </div>
+        <div class="fullauto-grid" style="margin-top:0">
+          <div class="fullauto-col">
+            <h3>Usernames</h3>
+            <p class="hint">One per line. Lines starting with <code>#</code> or <code>;</code> are ignored.</p>
+            <textarea id="fullauto-usernames" class="input textarea-full" placeholder="username1&#10;username2"></textarea>
+            <button id="fullauto-save-usernames" class="btn primary" type="button">Save Usernames</button>
+          </div>
+          <div class="fullauto-col">
+            <h3>Signup Names</h3>
+            <p class="hint">One per line. Used during account creation.</p>
+            <textarea id="fullauto-signup-names" class="input textarea-full" placeholder="Jane Doe&#10;Alice Smith"></textarea>
+            <button id="fullauto-save-signup" class="btn primary" type="button">Save Signup Names</button>
+          </div>
+        </div>
+      </div>
+      <div class="searchbar"><input class="input search-input" id="search-nyxify" type="text" placeholder="Search AdsPower ID or username…"></div>
+      <div class="tablewrap">
+        <table class="queue"><thead id="thead-nyxify"></thead><tbody id="tbody-nyxify"></tbody></table>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="panel-bitmoji">
+      <div class="bm-toolbar">
+        <div class="bm-head">
+          <label class="label" for="bm-model">Model</label>
+          <select id="bm-model" class="input input-inline"></select>
+          <span id="bm-status" class="detail"></span>
+        </div>
+        <div class="bm-toolbar-actions">
+          <button id="bm-import" class="btn" type="button" title="Load a saved Nyxmoji config file">Import</button>
+          <button id="bm-export" class="btn" type="button" title="Download this Nyxmoji config">Export</button>
+          <button id="bm-save" class="btn primary" type="button">Save</button>
+          <input id="bm-import-file" type="file" accept="application/json" hidden>
+        </div>
+      </div>
+      <div class="bm-catbar" id="bm-catbar"></div>
+      <div class="bm-editor">
+        <div class="bm-stage">
+          <div class="bm-stage-inner">
+            <img id="bm-avatar" class="bm-avatar" alt="Preview unavailable" onerror="this.style.display='none';document.getElementById('bm-avatar-err').style.display='flex'" onload="this.style.display='';document.getElementById('bm-avatar-err').style.display='none'">
+            <div id="bm-avatar-err" class="bm-avatar-err" style="display:none">Preview unavailable</div>
+          </div>
+          <div class="bm-stage-foot">
+            <span id="bm-model-tag" class="bm-model-tag"></span>
+            <button id="bm-shuffle" class="btn btn-ghost" type="button" title="Preview a different random combination">⟳ Shuffle preview</button>
+          </div>
+        </div>
+        <div class="bm-side">
+          <div class="bm-side-head">
+            <div>
+              <span id="bm-feature-title" class="bm-feature-title">Hair Style</span>
+              <span id="bm-feature-count" class="bm-count"></span>
+            </div>
+            <div class="bm-mode-group" id="bm-mode-group" role="tablist">
+              <button class="bm-mode-btn" data-mode="preset" type="button">Preset</button>
+              <button class="bm-mode-btn" data-mode="fixed" type="button">Fixed</button>
+              <button class="bm-mode-btn" data-mode="random" type="button">Random</button>
+            </div>
+          </div>
+          <p id="bm-mode-hint" class="hint bm-mode-hint"></p>
+          <div id="bm-options" class="bm-options"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="panel-settings">
+      <div class="settings-grid-2col">
+        <div class="settings-card">
+          <h2>License</h2>
+          <div id="license-status" class="setting-value">Loading…</div>
+          <div class="setting-row">
+            <label class="label" for="license-request-code">Request Code</label>
+            <input id="license-request-code" class="input" readonly>
+          </div>
+          <div class="setting-row">
+            <label class="label" for="license-activate-input">Activation Code</label>
+            <input id="license-activate-input" class="input" placeholder="NYX1....">
+          </div>
+          <button id="license-activate-btn" class="btn primary" type="button">Activate</button>
+          <span id="license-feedback" class="feedback"></span>
+        </div>
+
+        <div class="settings-card">
+          <h2>Updates</h2>
+          <div class="setting-row">
+            <span class="setting-label">Installed</span>
+            <span id="update-current" class="setting-value">—</span>
+          </div>
+          <div class="setting-row" id="update-latest-row" style="display:none">
+            <span class="setting-label">Latest</span>
+            <span id="update-latest" class="setting-value"></span>
+          </div>
+          <div class="btn-row">
+            <button id="update-check-btn" class="btn" type="button">Check for Update</button>
+            <button id="update-apply-btn" class="btn primary" type="button" style="display:none">Apply Update</button>
+            <button id="update-rollback-btn" class="btn bad" type="button" style="display:none">Roll Back</button>
+          </div>
+          <div id="update-backups" class="setting-row"></div>
+          <div id="update-release-notes" class="release-notes" style="display:none"></div>
+          <span id="update-feedback" class="feedback"></span>
+        </div>
+
+        <div class="settings-card">
+          <h2>Start on Login</h2>
+          <div class="toggle-row">
+            <span class="toggle-text">Launch bridge agent on system startup</span>
+            <label class="toggle-switch" for="autostart-toggle">
+              <input id="autostart-toggle" type="checkbox">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <span id="autostart-feedback" class="feedback"></span>
+        </div>
+
+        <div class="settings-card" id="card-setup">
+          <h2>Setup &amp; Install</h2>
+          <p class="hint">First-time setup: installs the Python packages and the Playwright browser engine. Run this once on a fresh machine before starting the bot. The live log appears below — it can take a few minutes.</p>
+          <div class="setting-row">
+            <button id="install-deps-btn" class="btn primary" type="button">Install Dependencies</button>
+            <span id="install-deps-state" class="setting-value" style="margin-left:10px"></span>
+          </div>
+          <pre id="install-deps-output" class="install-output" style="display:none"></pre>
+          <span id="install-deps-feedback" class="feedback"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- Activation gate overlay -->
+  <div id="activation-gate" class="activation-gate" style="display:none">
+    <div class="activation-modal">
+      <h2>Nyx Suite is locked</h2>
+      <p>Request an activation code from <strong>Jaymar</strong>, or purchase one below.</p>
+      <div class="act-row">
+        <label class="act-label">Request Code</label>
+        <div class="act-copy-row">
+          <input id="gate-request-code" class="input" readonly>
+          <button id="gate-copy-code" class="btn" type="button" title="Copy to clipboard">Copy</button>
+        </div>
+      </div>
+      <div class="act-row">
+        <label class="act-label">Activation Code</label>
+        <input id="gate-activate-input" class="input" placeholder="NYX1....">
+      </div>
+      <div class="act-btn-row">
+        <button id="gate-activate-btn" class="btn primary" type="button">Activate</button>
+        <button id="gate-pricing-btn" class="btn btn-ghost" type="button">View pricing / Pay</button>
+      </div>
+      <span id="gate-feedback" class="feedback"></span>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

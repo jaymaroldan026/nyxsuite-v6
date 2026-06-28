@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyx v4 Settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyx-body nyx-settings-body">
+  <main class="panel panel-settings-page">
+    <section class="settings-page-shell">
+      <div class="settings-page-header">
+        <div>
+          <h1>Nyx v4 Settings</h1>
+          <p id="feedback" class="muted settings-feedback">Nyx sends SnapBoard rows directly to the local Nyx app. No Google Sheet is needed for the live queue.</p>
+        </div>
+        <div class="settings-page-actions">
+          <label class="toggle-row settings-page-toggle" for="enabled">
+            <span>Nyx enabled</span>
+            <span class="toggle-switch">
+              <input id="enabled" type="checkbox" checked>
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+          <button id="saveButton" class="button" type="button">Save Settings</button>
+        </div>
+      </div>
+
+      <div class="settings-page-grid">
+        <section class="card settings-card">
+          <h2>Connection</h2>
+
+          <label class="label" for="localApiUrl">Nyx Local API URL</label>
+          <input id="localApiUrl" class="input" type="url" placeholder="http://127.0.0.1:8865">
+
+          <label class="label" for="localToken">Local token</label>
+          <input id="localToken" class="input" type="password" placeholder="Optional local token">
+
+          <label class="label" for="remoteConfigUrl">Online config URL</label>
+          <input id="remoteConfigUrl" class="input" type="url" placeholder="Shared config link">
+        </section>
+
+        <section class="card settings-card">
+          <h2>Runner</h2>
+
+          <label class="label" for="rowLimit">Top rows to detect</label>
+          <input id="rowLimit" class="input" type="number" min="1" max="500" step="1" placeholder="100">
+
+          <label class="label" for="pendingThreshold">Run bot when pending reaches</label>
+          <input id="pendingThreshold" class="input" type="number" min="1" max="500" step="1" placeholder="10">
+
+          <label class="label" for="maxParallelProfiles">Run profiles in parallel</label>
+          <input id="maxParallelProfiles" class="input" type="number" min="1" max="50" step="1" placeholder="5">
+
+          <label class="toggle-row settings-inline-toggle" for="ignoreDoneProfiles">
+            <span>Ignore profiles already marked DONE</span>
+            <span class="toggle-switch">
+              <input id="ignoreDoneProfiles" type="checkbox" checked>
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="toggle-row settings-inline-toggle" for="nyxifyGuardEnabled">
+            <span>Protect active Nyxify signups</span>
+            <span class="toggle-switch">
+              <input id="nyxifyGuardEnabled" type="checkbox" checked>
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="toggle-row settings-inline-toggle" for="launchOnWindowsStartup">
+            <span>Start Nyx runner when Windows starts</span>
+            <span class="toggle-switch">
+              <input id="launchOnWindowsStartup" type="checkbox">
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+        </section>
+
+        <section class="card settings-card settings-card-wide">
+          <h2>Tools</h2>
+          <div class="settings-actions settings-actions-grid">
+            <button id="exportConfigButton" class="button" type="button">Export Config</button>
+            <button id="downloadOnlineConfigButton" class="button button-secondary" type="button">Download Online Config</button>
+            <label class="button button-secondary file-import-button" for="importConfigFile">Local Update</label>
+            <input id="importConfigFile" type="file" accept="application/json" hidden>
+            <button id="clearDetectedDataButton" class="button button-secondary" type="button">Clear Recorded IDs/Models</button>
+            <button id="pruneCompletedButton" class="button button-secondary" type="button">Delete Excess Keep 150</button>
+            <button id="clearQueueButton" class="button button-danger" type="button">Clear IDs And Queue</button>
+            <button id="clearCacheLogsButton" class="button button-danger" type="button">Clear Cache/Logs</button>
+          </div>
+        </section>
+      </div>
+      <p class="brand-mark">Powered by Roldan Creation</p>
+    </section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

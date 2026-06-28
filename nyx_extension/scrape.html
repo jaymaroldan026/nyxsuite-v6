@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyx Scrape</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="nyx-body">
+  <main class="panel panel-settings-page">
+    <div class="settings-page-shell">
+      <header class="settings-page-header">
+        <div>
+          <h1>Nyx Scrape</h1>
+          <p id="scrapeStatusLine" class="muted">Loading scrape status...</p>
+        </div>
+        <div class="settings-page-actions">
+          <button id="scrapeRefreshButton" class="button button-secondary" type="button">Refresh</button>
+          <button id="scrapeOpenOptionsButton" class="button button-secondary" type="button">Nyx Settings</button>
+        </div>
+      </header>
+
+      <section class="card settings-card settings-card-wide">
+        <div class="button-row button-row-compact button-row-three">
+          <button id="scrapeStopButton" class="button button-secondary" type="button">Stop</button>
+          <button id="scrapeClearButton" class="button button-danger" type="button">Clear Data</button>
+          <button id="scrapeSaveButton" class="button button-secondary" type="button">Save Settings</button>
+        </div>
+        <pre id="scrapeRunnerSummary">Waiting for popup Scrape action.</pre>
+      </section>
+
+      <section class="card settings-card">
+        <h2>Scrape Settings</h2>
+        <div class="settings-page-grid">
+          <label class="setting-field">
+            <span class="label">Enabled</span>
+            <input id="scrapeEnabledInput" type="checkbox" checked>
+          </label>
+          <label class="setting-field">
+            <span class="label">Max profiles per run</span>
+            <input id="scrapeMaxProfilesInput" class="input" type="number" min="1" max="500" step="1" value="25">
+          </label>
+          <label class="setting-field">
+            <span class="label">Parallel tabs</span>
+            <input id="scrapeParallelTabsInput" class="input" type="number" min="1" max="10" step="1" value="3">
+          </label>
+          <label class="setting-field">
+            <span class="label">Profile timeout (ms)</span>
+            <input id="scrapeTimeoutMsInput" class="input" type="number" min="2000" max="60000" step="500" value="8000">
+          </label>
+          <label class="setting-field">
+            <span class="label">Nyx local API URL</span>
+            <input id="scrapeNyxLocalApiUrlInput" class="input" type="text" placeholder="http://127.0.0.1:8865">
+          </label>
+          <label class="setting-field">
+            <span class="label">Nyx local token</span>
+            <input id="scrapeNyxSharedSecretInput" class="input" type="text" placeholder="Optional">
+          </label>
+          <label class="setting-field">
+            <span class="label">Daily start AdsPower ID</span>
+            <input id="scrapeDailyStartInput" class="input" type="text" placeholder="k1aygxxc">
+          </label>
+        </div>
+      </section>
+
+      <section class="card settings-card settings-card-wide">
+        <h2>Bitmoji Check Results</h2>
+        <div id="scrapeResultsGroups" class="scrape-results-groups">No scrape results yet.</div>
+      </section>
+    </div>
+  </main>
+  <script src="scrape.js"></script>
+</body>
+</html>

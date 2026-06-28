@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyx Suite — Setup &amp; Install</title>
+  <style>
+    :root{
+      --bg:#080c17; --panel:#111c31; --panel2:#0c1424; --panel-hi:#16233c;
+      --line:#22324f; --line-soft:#1a2740; --text:#e7edf9; --muted:#8497c1; --faint:#5f6f96;
+      --accent:#6366f1; --accent2:#4f46e5; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444;
+      --card-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px -16px rgba(0,0,0,.7);
+      --r-sm:8px; --r-md:10px; --r-lg:14px;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%}
+    body{
+      background:radial-gradient(1200px 600px at 78% -8%, rgba(99,102,241,.12), transparent 60%),
+                 radial-gradient(900px 500px at 10% 0%, rgba(79,70,229,.10), transparent 55%), var(--bg);
+      background-attachment:fixed; color:var(--text);
+      font:14px/1.5 system-ui,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;
+    }
+    .topbar{display:flex;align-items:center;gap:12px;padding:13px 26px;background:rgba(11,17,32,.72);border-bottom:1px solid var(--line);position:sticky;top:0}
+    .brand{font-weight:700;font-size:19px;letter-spacing:.3px}
+    .brand span{color:var(--accent)}
+    .pill{margin-left:auto;padding:5px 12px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid transparent}
+    .pill.off{background:rgba(245,158,11,.16);color:var(--warn);border-color:rgba(245,158,11,.4)}
+    .pill.on{background:rgba(16,185,129,.16);color:var(--ok);border-color:rgba(16,185,129,.4)}
+    main{max-width:780px;margin:24px auto;padding:0 22px}
+    h1{font-size:20px;font-weight:600;margin:0 0 6px}
+    .lead{color:var(--muted);font-size:13px;margin:0 0 18px;line-height:1.6}
+    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;box-shadow:var(--card-shadow);margin-bottom:18px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+    button.btn{background:var(--panel-hi);color:var(--text);border:1px solid var(--line);padding:9px 16px;border-radius:9px;cursor:pointer;font-weight:500;font-size:13px;transition:border-color 160ms ease,background 160ms ease,filter 160ms ease,transform 140ms ease}
+    button.btn:active{transform:scale(.97)} button.btn:hover{border-color:var(--accent)}
+    button.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#fff;font-weight:600}
+    button.btn.primary:hover{filter:brightness(1.08)}
+    button.btn:disabled{opacity:.45;cursor:not-allowed}
+    .log{background:#0a1120;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;font:12px/1.6 "Fira Code",Consolas,monospace;color:var(--text);height:200px;overflow:auto;white-space:pre-wrap}
+    .logline{white-space:pre-wrap}
+    .logline.ok{color:var(--ok)} .logline.bad{color:var(--bad)} .logline.muted{color:var(--muted)}
+    h2{font-size:14px;font-weight:600;color:#aeb6ff;margin:0 0 12px;font-family:"Fira Code",monospace}
+    .os{margin-bottom:16px}
+    .os h3{font-size:13px;margin:0 0 8px;color:var(--text)}
+    .step{display:flex;gap:8px;align-items:center;margin:6px 0}
+    .step .num{flex:0 0 20px;height:20px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)}
+    code{background:#0a1120;border:1px solid var(--line);border-radius:6px;padding:4px 9px;font:12px/1.4 "Fira Code",Consolas,monospace;color:#aeb6ff;flex:1;overflow:auto;white-space:nowrap}
+    .copy{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer}
+    .copy:hover{border-color:var(--accent);color:var(--text)}
+    .note{font-size:12px;color:var(--faint);line-height:1.6;border-top:1px solid var(--line-soft);padding-top:12px;margin-top:6px}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Nyx<span>Suite</span> — Setup</div>
+    <span id="statePill" class="pill off">bridge offline</span>
+  </header>
+  <main>
+    <h1>Setup &amp; Install</h1>
+    <p class="lead">This opens the install web UI. If the Nyx Suite bridge isn't running yet, start it below — on a brand-new PC, do the one-time launcher step, then the bridge installs everything and the dashboard opens with a live install log.</p>
+
+    <div class="card">
+      <div class="actions">
+        <button id="startBtn" class="btn primary" type="button">Start the bridge</button>
+        <button id="retryBtn" class="btn" type="button">I've launched it — Retry</button>
+        <button id="showStepsBtn" class="btn" type="button">First time? Show setup steps</button>
+      </div>
+      <div id="log" class="log" aria-live="polite"></div>
+    </div>
+
+    <div id="steps" class="card" hidden>
+      <h2>One-time setup (fresh machine)</h2>
+      <p class="lead">Extract the release folder, then run the launcher for your OS once. It creates the Python environment, installs dependencies + the Playwright browser, registers the agent, and starts the bridge. After that, this button does everything for you.</p>
+
+      <div class="os">
+        <h3>Windows</h3>
+        <div class="step"><span class="num">1</span><code>Right-click run_nyx_suite.bat → Run</code><button class="copy" data-copy="run_nyx_suite.bat">Copy</button></div>
+        <div class="step"><span class="num">2</span><code>or: PowerShell → .\portable_launch_nyx.ps1</code><button class="copy" data-copy=".\portable_launch_nyx.ps1">Copy</button></div>
+      </div>
+      <div class="os">
+        <h3>macOS</h3>
+        <div class="step"><span class="num">1</span><code>chmod +x *.sh *.command</code><button class="copy" data-copy="chmod +x *.sh *.command">Copy</button></div>
+        <div class="step"><span class="num">2</span><code>./run_nyx_suite.command</code><button class="copy" data-copy="./run_nyx_suite.command">Copy</button></div>
+      </div>
+      <div class="os">
+        <h3>Linux</h3>
+        <div class="step"><span class="num">1</span><code>chmod +x *.sh</code><button class="copy" data-copy="chmod +x *.sh">Copy</button></div>
+        <div class="step"><span class="num">2</span><code>./run_nyx_suite.sh</code><button class="copy" data-copy="./run_nyx_suite.sh">Copy</button></div>
+      </div>
+      <p class="note">Still seeing "native messaging host not found"? Close the bridge and run once: <code style="display:inline;flex:none">python agent_host/install_host.py --register</code> then relaunch. After the bridge has run once, the “Start the bridge” button above works on its own.</p>
+    </div>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

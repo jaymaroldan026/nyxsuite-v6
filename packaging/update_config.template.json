@@ -1,0 +1,15 @@
+{
+  "app": "__APP__",
+  "repo": "jaymaroldan026/snap_bitmoji_bot_releases",
+  "asset_pattern": "__ASSET_PATTERN__",
+  "exe_to_relaunch": "__EXE__",
+  "skip_paths": ["data", "logs", ".env"],
+  "data_preserve_paths": [
+    "data/*.db",
+    "data/nyx_config.json",
+    "data/nyxify_config.json",
+    "data/full_auto_usernames/*",
+    "data/signup_names/*",
+    "data/logs/*"
+  ]
+}
