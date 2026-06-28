@@ -1304,6 +1304,19 @@ async def main():
     try:
         store = NyxifyTaskStore(db_path=TASK_DB_PATH)
         adspower = AdsPowerManager()
+
+        # Orphan recovery: any row still RUNNING at startup belongs to a previous
+        # run that crashed/stopped (the RunnerLock guarantees no live runner owns
+        # it). Without this it would sit RUNNING forever — claim_pending_tasks only
+        # claims PENDING — which is exactly how a stuck "creating_adspower_profile"
+        # row never gets created after a restart.
+        try:
+            requeued = store.reset_orphaned_running_tasks()
+            if requeued:
+                logger.info(f"Requeued {requeued} orphaned RUNNING Nyxify task(s) to PENDING after restart.")
+        except Exception as exc:
+            logger.warning(f"Could not requeue orphaned RUNNING Nyxify tasks at startup: {exc}")
+
         active_tasks: set[asyncio.Task] = set()
 
         while True:

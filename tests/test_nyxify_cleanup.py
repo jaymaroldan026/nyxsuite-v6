@@ -171,6 +171,23 @@ class NyxifyCleanupTests(unittest.TestCase):
         self.assertEqual(store.state["status"], "PENDING")
         self.assertEqual(adspower.deleted, ["k1norow"])
 
+    def test_reset_orphaned_running_tasks_requeues_to_pending(self):
+        # A task left RUNNING after a restart/crash must be requeued to PENDING so
+        # it gets reprocessed (claim_pending_tasks only claims PENDING).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = NyxifyTaskStore(db_path=Path(temp_dir) / "nyxify_tasks.db")
+            task_id, _ = store.upsert_task(
+                row_key="row-stuck", model="Lizzie", ip_address="1.2.3.4",
+                username="brity.lizi", adspower_id="k1stuck",
+            )
+            store.update_task_state(task_id, status="RUNNING", last_step="creating_adspower_profile")
+
+            requeued = store.reset_orphaned_running_tasks()
+            claimable = store.claim_pending_tasks(limit=5)
+
+        self.assertEqual(requeued, 1)
+        self.assertTrue(any(r["row_key"] == "row-stuck" for r in claimable))
+
     def test_cleanup_delete_failed_rows_are_selected_for_orphan_cleanup(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = NyxifyTaskStore(db_path=Path(temp_dir) / "nyxify_tasks.db")

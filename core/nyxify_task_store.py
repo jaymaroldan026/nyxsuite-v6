@@ -473,6 +473,31 @@ class NyxifyTaskStore:
             )
             return cursor.rowcount
 
+    def reset_orphaned_running_tasks(self):
+        """Reset rows left in RUNNING back to PENDING so they get reprocessed.
+
+        The single-instance RunnerLock means that at runner startup ANY task still
+        marked RUNNING is necessarily orphaned (a previous run crashed, was stopped,
+        or — as with the old group-resolution bug — got stuck), and would otherwise
+        sit RUNNING forever because claim_pending_tasks only claims PENDING. The
+        AdsPower fields are intentionally kept so _cleanup_stale_pending_profile can
+        delete any half-created profile before the retry."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'PENDING',
+                    error = '',
+                    last_step = 'requeued_after_restart',
+                    otp_request_status = '',
+                    otp_code = '',
+                    updated_at = ?
+                WHERE status = 'RUNNING'
+                """,
+                (utc_now_iso(),)
+            )
+            return cursor.rowcount
+
     def remove_task_by_row_key(self, row_key):
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM tasks WHERE row_key = ?", (str(row_key or "").strip(),))
