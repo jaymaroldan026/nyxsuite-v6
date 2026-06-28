@@ -1551,7 +1551,13 @@ class AdsPowerManager:
             except Exception as e:
                 last_error = e
 
-        if last_error:
+        if last_error is not None:
+            # A permission-gated (9110) group fetch must NOT be flattened to "no
+            # groups" — otherwise resolve_group_id raises a misleading "group not
+            # found" and create_profile never falls back to the GUI. Propagate it
+            # so the no-API GUI create path takes over.
+            if isinstance(last_error, AdsPowerPermissionError):
+                raise last_error
             logger.warning(f"Could not fetch AdsPower groups: {last_error}")
 
         return []
@@ -1573,7 +1579,11 @@ class AdsPowerManager:
             except Exception as e:
                 last_error = e
 
-        if last_error:
+        if last_error is not None:
+            # Same as list_groups: a 9110 must propagate so create_profile falls
+            # back to the GUI instead of failing with a misleading lookup error.
+            if isinstance(last_error, AdsPowerPermissionError):
+                raise last_error
             logger.warning(f"Could not fetch AdsPower extension categories: {last_error}")
 
         return []

@@ -197,6 +197,48 @@ class OpenProfileFallbackTests(unittest.TestCase):
                 m.open_profile("k1dyapw4")
 
 
+class GroupResolutionNoApiTests(unittest.TestCase):
+    """Regression: a permission-gated (9110) group/category fetch must propagate
+    as AdsPowerPermissionError so create_profile falls back to the GUI — NOT get
+    flattened to an empty list (which made resolve_group_id raise a misleading
+    'group not found' and looped Nyxify forever)."""
+
+    def _manager(self):
+        m = AdsPowerManager.__new__(AdsPowerManager)
+        return m
+
+    def test_list_groups_propagates_permission_error(self):
+        m = self._manager()
+        m._get_json = mock.Mock(side_effect=AdsPowerPermissionError("9110 No local API permission"))
+        with self.assertRaises(AdsPowerPermissionError):
+            m.list_groups()
+
+    def test_resolve_group_id_propagates_permission_not_group_not_found(self):
+        m = self._manager()
+        m._get_json = mock.Mock(side_effect=AdsPowerPermissionError("9110 No local API permission"))
+        with self.assertRaises(AdsPowerPermissionError):
+            m.resolve_group_id("Snapchat20")
+
+    def test_list_extension_categories_propagates_permission_error(self):
+        m = self._manager()
+        m._get_json = mock.Mock(side_effect=AdsPowerPermissionError("9110 No local API permission"))
+        with self.assertRaises(AdsPowerPermissionError):
+            m.list_extension_categories()
+
+    def test_create_profile_falls_back_to_gui_when_group_fetch_gated(self):
+        m = AdsPowerManager()
+        m.ui_fallback_enabled = True
+        # The real gating point: every API call (incl. group fetch) is 9110.
+        m._create_profile_via_api = mock.Mock(side_effect=AdsPowerPermissionError("9110"))
+        fake_ui = mock.Mock()
+        fake_ui.create_profile.return_value = {"profile_id": "k1new", "name": "Snapchat: Pending"}
+        m._ui_controller = mock.Mock(return_value=fake_ui)
+        res = m.create_profile(name="Snapchat: Pending", proxy_value="1.2.3.4:9:u:p",
+                               group_reference="Snapchat20")
+        self.assertEqual(res.get("profile_id"), "k1new")
+        fake_ui.create_profile.assert_called_once()
+
+
 class ProxyCheckNoApiTests(unittest.TestCase):
     """In no-API mode the AdsPower proxy-check API is permission-gated; the
     pre-create rotation loop must NOT hard-fail — it falls through to the socket
