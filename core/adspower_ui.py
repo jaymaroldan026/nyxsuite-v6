@@ -975,22 +975,24 @@ class AdsPowerUIController:
 
     def _open_one_in_batch(self, profile_id: str):
         """Click Open on ``profile_id``'s row within the bulk-search results.
-        Confirms the row is present first so a missing/invalid id fails fast
-        instead of clicking the wrong row, and tolerates the rare 'already open'
-        race (row shows Close) by treating it as success."""
-        deadline = time.time() + 5.0
-        while time.time() < deadline:
-            self._connect()
-            if self._row_has_button(profile_id, "Open"):
-                self._click_open_for_id(profile_id)
-                return
+
+        Aligns to the id's *own* row (``require_aligned`` — never falls back to
+        some other visible Open button) and tolerates the 'already open' case
+        (row shows Close instead of Open). It relies on ``_click_row_action``'s
+        own robust retry loop rather than a fixed deadline: a single scan of
+        AdsPower's huge tree can take 10-40s, so the old 5s wait timed out before
+        even one scan finished and wrongly reported the row missing."""
+        try:
+            self._click_row_action(profile_id, "Open", template_name="open_btn",
+                                   require_aligned=True)
+        except AdsPowerUIError:
+            # No alignable Open button — the profile may already be open (its row
+            # shows Close). Treat that as success; otherwise re-raise.
             if self._row_has_button(profile_id, "Close"):
                 logger.info(f"Profile {profile_id} already open during bulk batch; "
                             f"no Open click needed.")
                 return
-            time.sleep(0.3)
-        raise AdsPowerUIError(
-            f"Profile {profile_id} not present in the bulk search results.")
+            raise
 
     def _click_open_for_id(self, profile_id: str):
         """Click the Action-column 'Open' button on the id's row."""
@@ -1023,14 +1025,21 @@ class AdsPowerUIController:
                 res.event.set()
 
     def _close_one_in_batch(self, profile_id: str, wait_timeout: float = 12.0) -> bool:
-        """Close ``profile_id``'s row within the bulk-search results. Returns True
-        once the row's action reverts to Open (or it wasn't running)."""
+        """Close ``profile_id``'s row within the bulk-search results (aligned to
+        its own row — many Close buttons are visible at once during a bulk close).
+        Returns True once the row's action reverts to Open (or it wasn't running).
+        Relies on ``_click_row_action``'s robust retry rather than a fixed
+        deadline (a single scan of AdsPower's huge tree can take 10-40s)."""
         self._connect()
-        if not self._row_has_button(profile_id, "Close"):
+        try:
+            self._click_row_action(profile_id, "Close", template_name="close_btn",
+                                   require_aligned=True)
+        except AdsPowerUIError:
+            # No alignable Close button for this row — it isn't running (shows
+            # Open). Nothing to close.
             logger.info(f"Profile {profile_id} is not running (no Close button); "
                         f"nothing to close.")
             return True
-        self._click_row_action(profile_id, "Close", template_name="close_btn")
         # closing is immediate in AdsPower (no confirm), but accept one if it appears
         self._maybe_confirm(("OK", "Confirm", "Yes"), timeout=0.8)
         if self._wait_row_button(profile_id, "Open", timeout=wait_timeout):
@@ -1081,14 +1090,21 @@ class AdsPowerUIController:
                 continue
         return max(bottoms) if bottoms else 460
 
-    def _click_row_action(self, profile_id: str, label: str, template_name: str = ""):
+    def _click_row_action(self, profile_id: str, label: str, template_name: str = "",
+                          require_aligned: bool = False):
         """Click the Action-column button whose text == ``label`` on the row whose
         No./ID == ``profile_id``. Only considers buttons *below the column
         headers*, so the window titlebar 'Close' and the batch toolbar are never
-        hit. Aligning to the id's row avoids the toolbar batch button."""
+        hit. Aligning to the id's row avoids the toolbar batch button.
+
+        ``require_aligned`` (used by the bulk open/close paths, where MANY rows
+        and many ``label`` buttons are visible at once): never fall back to the
+        first/topmost button — only click the button on the id's *own* row, and
+        keep retrying until that row's id text has rendered. Without this a
+        missing/late-rendering id would click some other row's Open/Close."""
         id_top = None
         btns = []   # (centre_y, left, rect)
-        for _ in range(6):                  # a11y tree can be briefly empty post-filter
+        for _ in range(8):                  # a11y tree can be briefly empty post-filter
             self._connect()
             header_bottom = self._list_header_bottom()
             id_top = self._row_center_y(profile_id)
@@ -1103,7 +1119,9 @@ class AdsPowerUIController:
                         btns.append((cy, r.left, r))
                 except Exception:
                     continue
-            if btns:
+            # In bulk mode we MUST resolve the id's row before clicking; keep
+            # retrying until both the buttons AND the id row are visible.
+            if btns and (id_top is not None or not require_aligned):
                 break
             time.sleep(1.0)
         if not btns:
@@ -1118,6 +1136,10 @@ class AdsPowerUIController:
             if aligned:
                 target = min(aligned, key=lambda b: abs(b[0] - id_top))[2]
         if target is None:
+            if require_aligned:
+                raise AdsPowerUIError(
+                    f"Row for profile {profile_id} not found among {label!r} buttons "
+                    f"(bulk-safe: refusing to click a different row).")
             row_btns.sort()
             target = row_btns[0][2]
         self._click_rect(target, template_name=template_name)
