@@ -525,20 +525,32 @@ class AdsPowerUIController:
         "referral bonus", "active", "employee", "overview",
     }
 
-    def _rows_for_name(self, name: str):
-        """Filter the list by 'Name contains <exact temp name>' and return rows
-        whose full name matches ``name`` exactly.
+    @staticmethod
+    def _search_fragment(name: str) -> str:
+        """The part of the temporary name to type into a 'Name contains' search:
+        the text after the last ':' so the shared 'Snapchat:' prefix is dropped
+        ('Snapchat: Pending' -> 'Pending'). Searching the distinctive suffix keeps
+        the result set tight; the EXACT full name is still used for the row match.
+        Falls back to the whole (separator-stripped) name when there's no suffix
+        ('Snapchat:' -> 'Snapchat')."""
+        parts = [p.strip() for p in str(name or "").split(":") if p.strip()]
+        return parts[-1] if parts else str(name or "").strip()
 
-        ``name`` is the exact temporary profile name configured in the Nyxify
-        dashboard/settings (``temporary_profile_name``, e.g. 'Snapchat:'). It is
-        used verbatim — AdsPower offers 'Name contains <value>' even for values
-        ending in ':' — so the just-created profile is matched precisely instead
-        of by a broad fragment. AdsPower lists newest-first, so the new row lands
-        on page 1 even with a large library; the caller pairs this with a serial
-        watermark to stay correct under concurrent creators."""
+    def _rows_for_name(self, name: str):
+        """Search 'Name contains <suffix of the temp name>' and return rows whose
+        full name matches ``name`` exactly.
+
+        ``name`` is the Nyxify ``temporary_profile_name`` setting (e.g.
+        'Snapchat: Pending'). We type only the distinctive suffix ('Pending') into
+        the 'Name contains' filter — dropping the shared 'Snapchat:' prefix — then
+        keep only rows whose full name equals the configured temp name. AdsPower
+        lists newest-first, so the just-created row lands on page 1; the caller
+        pairs this with a serial watermark to stay correct under concurrent
+        creators."""
         target = name.strip().lower()
+        fragment = self._search_fragment(name)
         for attempt in range(2):
-            self._search_by(name.strip(), field="Name", operator="contains")
+            self._search_by(fragment, field="Name", operator="contains")
             rows = [r for r in self._scan_rows() if r[2].strip().lower() == target and r[1]]
             if rows:
                 return rows
