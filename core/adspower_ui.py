@@ -742,24 +742,34 @@ class AdsPowerUIController:
         the search box position. (The old hard-coded ``left > 600`` skipped the
         whole dropdown, so 'Name contains' never matched and the search fell back
         to AdsPower's default 'Profile No./ID is' — searching by id, not name.)"""
-        from collections import defaultdict
-        groups = defaultdict(list)
+        # Collect suggestion labels (below the search bar, in the suggestion
+        # column) then group them into ROWS by top-proximity. A suggestion's
+        # field/operator/value labels share a row top; rows are ~34px apart.
+        # (Fixed 6px-bucket rounding split same-row labels across a boundary, so
+        # the field+operator match failed intermittently and fell back to Enter —
+        # which is why id/name search was flaky and slow.)
+        items = []
         for t in self._win.descendants(control_type="Text"):
             try:
                 s = (t.window_text() or "").strip()
                 r = t.rectangle()
-                # Suggestions render just below the search bar, in the column that
-                # starts at the search box's left edge (right of the sidebar).
                 if s and r.width() > 0 and r.top > below_top and r.left >= left_min:
-                    groups[round(r.top / 6)].append((r.left, r.right, r.top, r.bottom, s.lower()))
+                    items.append((r.top, r.left, r.right, r.bottom, s.lower()))
             except Exception:
                 continue
+        items.sort()
+        rows = []
+        for it in items:
+            if rows and abs(it[0] - rows[-1][0][0]) <= 12:   # same visual row
+                rows[-1].append(it)
+            else:
+                rows.append([it])
         fl, op = field.lower(), operator.lower()
-        for _key, items in sorted(groups.items()):
-            labels = {s for (_l, _r, _t, _b, s) in items}
+        for row in rows:
+            labels = {x[4] for x in row}
             if fl in labels and op in labels:
-                cx = (min(i[0] for i in items) + max(i[1] for i in items)) // 2
-                cy = (min(i[2] for i in items) + max(i[3] for i in items)) // 2
+                cx = (min(x[1] for x in row) + max(x[2] for x in row)) // 2
+                cy = (min(x[0] for x in row) + max(x[3] for x in row)) // 2
                 self._click_xy(cx, cy)
                 return True
         return False
@@ -1137,10 +1147,29 @@ class AdsPowerUIController:
             f"Could not locate the Delete toolbar icon (found {len(cands)} toolbar icons).")
 
     @_serialized
+    def _tick_clear_cache(self) -> bool:
+        """Tick 'Clear cache as well' in the Delete-profile dialog. AdsPower exposes
+        no CheckBox control for it, so we click the box that sits just left of its
+        label text."""
+        for t in self._win.descendants(control_type="Text"):
+            try:
+                if (t.window_text() or "").strip().lower() == "clear cache as well":
+                    r = t.rectangle()
+                    if r.width() > 0:
+                        self._click_xy(r.left - 14, (r.top + r.bottom) // 2)
+                        logger.info("Ticked 'Clear cache as well' in the Delete dialog.")
+                        time.sleep(0.3)
+                        return True
+            except Exception:
+                continue
+        logger.debug("'Clear cache as well' label not found; proceeding without it.")
+        return False
+
     def delete_profile_by_id(self, profile_id: str) -> dict:
         """Delete a profile via the GUI. A *running* profile cannot be deleted
         (AdsPower blocks it), so close it first, then select the row and click the
-        toolbar trash, then confirm. Returns ``{'code': 0}`` on success."""
+        toolbar trash, tick 'Clear cache as well', and confirm. Returns
+        ``{'code': 0}`` on success."""
         profile_id = str(profile_id or "").strip()
         if not profile_id:
             raise AdsPowerUIError("delete_profile_by_id requires a profile id.")
@@ -1162,10 +1191,17 @@ class AdsPowerUIController:
             raise AdsPowerUIError(f"Could not select the row for {profile_id} to delete.")
         cx, cy = self._toolbar_trash_center()
         self._click_xy(cx, cy)
-        time.sleep(0.8)
-        self._maybe_confirm(("Confirm", "OK", "Delete", "Remove", "Move to Trash", "Yes"),
-                            timeout=2.0)
-        time.sleep(0.8)
+        time.sleep(1.0)
+        self._connect()
+        # The "Delete profile" dialog: tick 'Clear cache as well', then confirm.
+        # AdsPower's confirm button is literally 'Confirm deletion' — the old
+        # generic labels never matched, so the dialog was left open and the delete
+        # silently did nothing.
+        self._tick_clear_cache()
+        if not self._maybe_confirm(
+                ("Confirm deletion", "Confirm", "Delete", "OK", "Yes"), timeout=3.0):
+            logger.warning(f"Delete-dialog confirm button not found for {profile_id}.")
+        time.sleep(1.0)
 
         # verify the row is gone
         self._search_by(profile_id, field="Profile ID", operator="is")
