@@ -697,11 +697,25 @@ class AdsPowerUIController:
         below = search.bottom
         left_min = search.left - 30          # suggestions align under the search box
         self._paste_rect(search, value)
-        time.sleep(1.2)                      # let the suggestion dropdown render
-        if not self._click_dropdown_row(field, operator, below_top=below, left_min=left_min):
-            logger.debug(f"Dropdown row {field!r}/{operator!r} not found; pressing Enter.")
+        # The dropdown renders after a variable delay and its rows can appear in
+        # ANY order, so retry the content-based (field+operator) match for a few
+        # seconds. Enter is only a last resort: it applies AdsPower's default top
+        # suggestion, which is order-dependent and usually the WRONG field
+        # ('Profile No./ID is' instead of 'Name contains').
+        clicked = False
+        deadline = time.time() + 4.5
+        while time.time() < deadline:
+            time.sleep(0.4)
+            self._connect()
+            if self._click_dropdown_row(field, operator, below_top=below, left_min=left_min):
+                clicked = True
+                break
+        if not clicked:
+            logger.warning(
+                f"Dropdown row {field!r}/{operator!r} not found after retries; pressing Enter "
+                f"(may apply the wrong default filter).")
             _pg().press("enter")
-        time.sleep(1.2)
+        time.sleep(1.0)
         self._foreground()
         time.sleep(0.3)
         self._connect()
