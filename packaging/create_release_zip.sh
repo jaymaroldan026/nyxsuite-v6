@@ -43,6 +43,7 @@ if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$ROOT/dist"
 fi
 mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 
 # ---- temp staging ----
 TMP="$(mktemp -d "/tmp/nyx_release_zip.XXXXXX")"

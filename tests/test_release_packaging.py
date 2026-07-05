@@ -42,3 +42,23 @@ def test_shell_release_zip_uses_portable_native_host_manifest(tmp_path):
     assert "NyxSuite-v9.9.9-test/core/license_runtime_secret.py" not in names
     assert update_config["repo"] == "jaymaroldan026/nyxsuite-v6"
     assert update_config["asset_pattern"] == "NyxSuite-v*.zip"
+
+
+def test_shell_release_zip_accepts_relative_output_dir(tmp_path):
+    relative_output = "relative-release"
+    subprocess.run(
+        [
+            "bash",
+            str(ROOT / "packaging" / "create_release_zip.sh"),
+            "--version",
+            "9.9.8-test",
+            "--output-dir",
+            relative_output,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+
+    assert (tmp_path / relative_output / "NyxSuite-v9.9.8-test.zip").exists()
