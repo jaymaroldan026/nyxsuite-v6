@@ -1,7 +1,7 @@
 {
   "name": "com.nyxsuite.agent",
   "description": "Nyx Suite bridge agent launcher and token provider",
-  "path": "C:\\Users\\oppen\\Documents\\nyxsuite v5\\agent_host\\host_main.bat",
+  "path": "agent_host/host_main.py",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://mmbbkhjgdpjaokpmklndheoklmjgakle/",

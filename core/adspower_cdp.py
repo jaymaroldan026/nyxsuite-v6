@@ -73,6 +73,10 @@ def _cache_base_dirs():
         home = Path.home()
         candidates.append(home / ".ADSPOWER_GLOBAL" / "cache")
         candidates.append(home / "Library" / "Application Support" / "adspower_global" / "cache")
+        candidates.append(
+            home / "Library" / "Application Support" / "adspower_global"
+            / "cwd_global" / "source" / "cache"
+        )
         candidates.append(home / ".config" / "adspower_global" / "cache")
         candidates.append(Path("/Users/Shared/.ADSPOWER_GLOBAL/cache"))
 
@@ -288,7 +292,7 @@ def list_open_profile_endpoints(session=None):
     endpoints = {}
     try:
         for cache_dir, port, ws_path in _recent_live_candidates(session):
-            serial = cache_dir.name.split("_", 1)[0] or _open_serial_for_port(session, port)
+            serial = _open_serial_for_port(session, port) or cache_dir.name.split("_", 1)[0]
             if not serial:
                 continue
             endpoint = _browser_ws_endpoint(session, port, ws_path)

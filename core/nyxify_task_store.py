@@ -83,6 +83,7 @@ class NyxifyTaskStore:
                     proxy_address TEXT NOT NULL DEFAULT '',
                     username TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
+                    password TEXT NOT NULL DEFAULT '',
                     adspower_profile_id TEXT NOT NULL DEFAULT '',
                     adspower_name TEXT NOT NULL DEFAULT '',
                     adspower_group TEXT NOT NULL DEFAULT '',
@@ -104,6 +105,10 @@ class NyxifyTaskStore:
                 pass
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN password TEXT NOT NULL DEFAULT ''")
             except Exception:
                 pass
             try:
@@ -133,7 +138,7 @@ class NyxifyTaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                SELECT id, row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                        adspower_group, tags_json, status, last_step, error, otp_request_status, otp_code, source, created_at, updated_at
                 FROM tasks
                 ORDER BY updated_at DESC, id DESC
@@ -151,7 +156,7 @@ class NyxifyTaskStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                SELECT id, row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                        adspower_group, tags_json, status, last_step, error, otp_request_status, otp_code, source, created_at, updated_at
                 FROM tasks
                 WHERE LOWER(TRIM(COALESCE(adspower_profile_id, ''))) = LOWER(?)
@@ -185,7 +190,7 @@ class NyxifyTaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                SELECT id, row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                        adspower_group, tags_json, status, last_step, error, otp_request_status, otp_code, source, created_at, updated_at
                 FROM tasks
                 WHERE status = 'PENDING'
@@ -199,7 +204,7 @@ class NyxifyTaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                SELECT id, row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                        adspower_group, tags_json, status, last_step, error, otp_request_status, otp_code, source, created_at, updated_at
                 FROM tasks
                 WHERE status = 'FAILED'
@@ -223,7 +228,7 @@ class NyxifyTaskStore:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 """
-                SELECT id, row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                SELECT id, row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                        adspower_group, tags_json, status, last_step, error, otp_request_status, otp_code, source, created_at, updated_at
                 FROM tasks
                 WHERE status = 'PENDING'
@@ -257,7 +262,7 @@ class NyxifyTaskStore:
 
         return [self._row_to_dict(row) for row in rows]
 
-    def upsert_task(self, row_key, model, ip_address, proxy_address="", username="", email="", adspower_id="", source="nyxify-extension"):
+    def upsert_task(self, row_key, model, ip_address, proxy_address="", username="", email="", password="", adspower_id="", source="nyxify-extension"):
         now = utc_now_iso()
         normalized_row_key = _normalize_text(row_key)
         normalized_model = _normalize_text(model)
@@ -265,6 +270,7 @@ class NyxifyTaskStore:
         normalized_proxy = _normalize_text(proxy_address)
         normalized_username = _normalize_text(username)
         normalized_email = _normalize_email(email)
+        normalized_password = _normalize_text(password)
         normalized_adspower_id = str(adspower_id or "").strip()
         full_auto_mode_enabled = bool(load_nyxify_config().get("full_auto_mode_enabled", False))
         waiting_step = _task_waiting_step(
@@ -300,7 +306,7 @@ class NyxifyTaskStore:
                 conn.execute(
                     """
                     UPDATE tasks
-                    SET model = ?, ip_address = ?, proxy_address = ?, username = ?, email = ?, adspower_id = ?, source = ?,
+                    SET model = ?, ip_address = ?, proxy_address = ?, username = ?, email = ?, password = ?, adspower_id = ?, source = ?,
                         status = ?, error = ?, last_step = ?, updated_at = ?
                     WHERE row_key = ?
                     """,
@@ -310,6 +316,7 @@ class NyxifyTaskStore:
                         normalized_proxy,
                         normalized_username,
                         normalized_email,
+                        normalized_password,
                         normalized_adspower_id,
                         source,
                         next_status,
@@ -324,10 +331,10 @@ class NyxifyTaskStore:
             cursor = conn.execute(
                 """
                 INSERT INTO tasks (
-                    row_key, model, ip_address, proxy_address, username, email, adspower_id, adspower_profile_id, adspower_name,
+                    row_key, model, ip_address, proxy_address, username, email, password, adspower_id, adspower_profile_id, adspower_name,
                     adspower_group, tags_json, status, last_step, error, source, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, '', '', '', '[]', 'PENDING', ?, '', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '[]', 'PENDING', ?, '', ?, ?, ?)
                 """,
                 (
                     normalized_row_key,
@@ -336,6 +343,7 @@ class NyxifyTaskStore:
                     normalized_proxy,
                     normalized_username,
                     normalized_email,
+                    normalized_password,
                     normalized_adspower_id,
                     waiting_step,
                     source,

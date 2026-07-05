@@ -123,7 +123,7 @@ function createExportConfig(extensionConfig, runnerConfig) {
       outfitStyle: safeRunnerConfig.outfit_style || "mixed",
       automationSpeed: Number(safeRunnerConfig.automation_speed || 1),
       hairRandomizerEnabled: safeRunnerConfig.hair_randomizer_enabled === true,
-      nyxifyGuardEnabled: safeRunnerConfig.nyxify_guard_enabled !== false,
+
       launchOnWindowsStartup: safeRunnerConfig.launch_on_windows_startup === true,
     },
   };
@@ -1364,7 +1364,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message.outfitStyle !== undefined ||
           message.automationSpeed !== undefined ||
           message.hairRandomizerEnabled !== undefined ||
-          message.nyxifyGuardEnabled !== undefined ||
           message.launchOnWindowsStartup !== undefined
         ) {
           await callLocalNyx("POST", "/config", {
@@ -1374,7 +1373,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             outfit_style: message.outfitStyle,
             automation_speed: message.automationSpeed,
             hair_randomizer_enabled: message.hairRandomizerEnabled,
-            nyxify_guard_enabled: message.nyxifyGuardEnabled,
+
             launch_on_windows_startup: message.launchOnWindowsStartup,
           });
           await appendEventLog("Saved Nyx runner settings from the popup.");
@@ -1823,22 +1822,13 @@ async function flushPendingEntriesInternal() {
     const syncedCount = Number(payload.count || 0);
     const skippedDone = Number(payload.skipped_done || 0);
     const skippedMissing = Number(payload.skipped_missing || 0);
-    const skippedNyxifyGuard = Number(payload.skipped_nyxify_guard || 0);
-    const heldOnlyByNyxify = (
-      syncedCount === 0
-      && skippedDone === 0
-      && skippedMissing === 0
-      && skippedNyxifyGuard > 0
-    );
+    const heldOnlyByNyxify = false;
     const skippedBits = [];
     if (skippedDone > 0) {
       skippedBits.push(`skipped ${skippedDone} row(s) already marked DONE`);
     }
     if (skippedMissing > 0) {
       skippedBits.push(`skipped ${skippedMissing} missing profile row(s)`);
-    }
-    if (skippedNyxifyGuard > 0) {
-      skippedBits.push(`held ${skippedNyxifyGuard} row(s) still being created by Nyxify`);
     }
     const syncMessage = skippedBits.length
       ? `Synced ${syncedCount} row(s); ${skippedBits.join("; ")}.`
@@ -1937,7 +1927,7 @@ async function importNyxConfig(configPayload) {
     outfit_style: payload.runner ? payload.runner.outfitStyle : undefined,
     automation_speed: payload.runner ? payload.runner.automationSpeed : undefined,
     hair_randomizer_enabled: payload.runner ? payload.runner.hairRandomizerEnabled : undefined,
-    nyxify_guard_enabled: payload.runner ? payload.runner.nyxifyGuardEnabled : undefined,
+
     launch_on_windows_startup: payload.runner ? payload.runner.launchOnWindowsStartup : undefined,
   });
 
@@ -1948,7 +1938,7 @@ async function importNyxConfig(configPayload) {
 
 
 // Fetch the bridge token from the unauthenticated /token endpoint and persist
-// it. The v4 bridge requires a token on every local-API call; obtaining it this
+// it. The v6 bridge requires a token on every local-API call; obtaining it this
 // way (instead of relying on the native-messaging connect dance) keeps SnapBoard
 // sync as reliable as v3.3.4 did without auth.
 async function fetchAndSaveLocalToken(apiUrl) {

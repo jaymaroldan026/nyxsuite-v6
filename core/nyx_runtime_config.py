@@ -11,13 +11,6 @@ DEFAULTS = {
     "outfit_style": "default",
     "automation_speed": 1.0,
     "hair_randomizer_enabled": False,
-    "nyxify_guard_enabled": True,
-    # Strict guard: when on, a profile with NO matching Nyxify task is HELD
-    # (not run) instead of allowed. Off by default so standalone Nyx still
-    # works; pipeline users turn it on to never run a profile Nyxify hasn't
-    # vouched for. Even with strict off, the guard now holds unknown profiles
-    # while Nyxify has signups in flight (race-safe).
-    "nyxify_guard_strict": False,
     "launch_on_windows_startup": False,
     "hubstaff_control_enabled": False,
     "hubstaff_stop_mode": "queue_finished",
@@ -110,12 +103,6 @@ def load_nyx_config():
         "hair_randomizer_enabled": _safe_bool(
             raw.get("hair_randomizer_enabled"), DEFAULTS["hair_randomizer_enabled"]
         ),
-        "nyxify_guard_enabled": _safe_bool(
-            raw.get("nyxify_guard_enabled"), DEFAULTS["nyxify_guard_enabled"]
-        ),
-        "nyxify_guard_strict": _safe_bool(
-            raw.get("nyxify_guard_strict"), DEFAULTS["nyxify_guard_strict"]
-        ),
         "launch_on_windows_startup": _safe_bool(
             raw.get("launch_on_windows_startup"), DEFAULTS["launch_on_windows_startup"]
         ),
@@ -147,12 +134,6 @@ def save_nyx_config(updates):
         "automation_speed": _safe_automation_speed(updates.get("automation_speed", current["automation_speed"]), current["automation_speed"]),
         "hair_randomizer_enabled": _safe_bool(
             updates.get("hair_randomizer_enabled"), current["hair_randomizer_enabled"]
-        ),
-        "nyxify_guard_enabled": _safe_bool(
-            updates.get("nyxify_guard_enabled"), current["nyxify_guard_enabled"]
-        ),
-        "nyxify_guard_strict": _safe_bool(
-            updates.get("nyxify_guard_strict"), current["nyxify_guard_strict"]
         ),
         "launch_on_windows_startup": _safe_bool(
             updates.get("launch_on_windows_startup"), current["launch_on_windows_startup"]

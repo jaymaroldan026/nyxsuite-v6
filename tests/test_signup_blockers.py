@@ -8,10 +8,53 @@ Covers:
 """
 
 import unittest
+import sys
+import types
+from pathlib import Path
+from unittest import mock
+
+class _RequestsResponse:
+    status_code = 200
+    text = "{}"
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        return None
+
+
+class _RequestsSession:
+    def __init__(self):
+        self.trust_env = False
+
+    def get(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+    def post(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+
+_requests_stub = types.ModuleType("requests")
+_requests_stub.Session = _RequestsSession
+_requests_stub.get = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.post = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.exceptions = types.SimpleNamespace(
+    ConnectionError=ConnectionError,
+    Timeout=TimeoutError,
+    RequestException=Exception,
+)
+sys.modules.setdefault("requests", _requests_stub)
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *_args, **_kwargs: None))
+_playwright_pkg = types.ModuleType("playwright")
+_playwright_async_api = types.ModuleType("playwright.async_api")
+_playwright_async_api.async_playwright = lambda: None
+_playwright_async_api.TimeoutError = TimeoutError
+sys.modules.setdefault("playwright", _playwright_pkg)
+sys.modules.setdefault("playwright.async_api", _playwright_async_api)
 
 import nyxify_runner
 from core import signup_flow
-from core import nyxify_guard
 
 
 class ClassifyBlockerErrorsTests(unittest.TestCase):
@@ -24,6 +67,7 @@ class ClassifyBlockerErrorsTests(unittest.TestCase):
         "signup_non_english_page: page rendered in a language the bot cannot drive.": "signup_non_english_page",
         "signup_stuck_retry_exhausted: still stuck after 3 refresh attempts.": "signup_stuck_retry_exhausted",
         "email_order_unavailable: SnapBoard had no verification email.": "email_order_unavailable",
+        "phone_verification_rejected: Snapchat rejected all requested phone numbers.": "phone_verification_rejected",
     }
 
     def test_blocker_errors_classify_to_their_step(self):
@@ -54,15 +98,19 @@ class FakePage:
         reCAPTCHA-widget probe (returns the configured bool).
     """
 
-    def __init__(self, text="", lang_info=None, recaptcha=True):
+    def __init__(self, text="", lang_info=None, recaptcha=True, generic_form_error=False, signup_form_visible=True):
         self._text = str(text or "").lower()
         self._lang_info = dict(lang_info or {})
         self._recaptcha = recaptcha
+        self._generic_form_error = generic_form_error
+        self._signup_form_visible = signup_form_visible
 
     async def evaluate(self, js, arg=None):
+        js_text = str(js)
+        if "GenericFormLevelErrorMessage" in js_text and "#firstname" in js_text:
+            return self._generic_form_error and self._signup_form_visible
         if isinstance(arg, list):
             return any(str(needle).lower() in self._text for needle in arg)
-        js_text = str(js)
         if "htmlLang" in js_text:
             return dict(self._lang_info)
         if "grecaptcha-badge" in js_text:
@@ -88,6 +136,24 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(await signup_flow._is_account_creation_blocked_visible(page))
 
+    async def test_polish_unable_to_process_error_detected_on_signup_form(self):
+        page = FakePage(
+            text="Przepraszamy, ale nie udało nam się przetworzyć Twojego polecenia.",
+            generic_form_error=True,
+            signup_form_visible=True,
+        )
+        self.assertTrue(await signup_flow._is_unable_to_process_error_visible(page))
+
+    async def test_english_unable_to_process_error_detected_from_visible_text(self):
+        page = FakePage(
+            text="Sign Up Step 1 of 3 We are sorry, we were unable to process your request.",
+            generic_form_error=False,
+            signup_form_visible=True,
+        )
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="#username")):
+            self.assertTrue(await signup_flow._is_unable_to_process_error_visible(page))
+
     async def test_arabic_page_is_non_english(self):
         # Mirrors the Arabic signup screenshot: lang=ar, all non-Latin script.
         page = FakePage(lang_info={"lang": "ar", "nonLatin": 25, "latin": 0})
@@ -106,53 +172,441 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
         page = FakePage(lang_info={"lang": "en", "nonLatin": 2, "latin": 40})
         self.assertFalse(await signup_flow._is_non_english_signup_page(page))
 
+    async def test_phone_verification_step_detected_from_phone_inputs(self):
+        class FakeLocator:
+            def __init__(self, visible):
+                self._visible = visible
 
-class FakeNyxifyStore:
-    def __init__(self, task=None, inflight=False):
-        self._task = task
-        self._inflight = inflight
+            @property
+            def first(self):
+                return self
 
-    def get_task_by_adspower_profile_id(self, profile_id):
-        return self._task
+            async def is_visible(self):
+                return self._visible
 
-    def has_inflight_signups(self):
-        return self._inflight
+        class FakePhonePage(FakePage):
+            def locator(self, selector):
+                return FakeLocator(selector == "#phoneNumber")
+
+        page = FakePhonePage(text="Sign Up Step 2 of 3 Country Phone Number Next")
+        self.assertTrue(await signup_flow._is_phone_verification_step(page))
+
+    def test_phone_number_split_preserves_country_code(self):
+        self.assertEqual(
+            signup_flow._split_phone_number("+1 (555) 123-4567"),
+            ("+1", "5551234567"),
+        )
+
+    async def test_phone_verification_fills_only_local_number_when_country_code_present(self):
+        class FakeLocator:
+            def __init__(self, visible):
+                self._visible = visible
+
+            @property
+            def first(self):
+                return self
+
+            async def is_visible(self):
+                return self._visible
+
+        class FakePhoneEntryPage:
+            def locator(self, selector):
+                return FakeLocator(selector in {"#countryCode", "#phoneNumber"})
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+        page = FakePhoneEntryPage()
+        typed_values = []
+
+        async def record_typed_value(_page, selector, value, *_args):
+            typed_values.append((selector, value))
+            return True
+
+        with mock.patch.object(signup_flow, "_humanized_type_only", mock.AsyncMock(side_effect=record_typed_value)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(return_value=None)), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)):
+            self.assertTrue(await signup_flow._fill_and_submit_phone_number(page, "+15551234567", None, "172"))
+
+        self.assertEqual(typed_values, [("#phoneNumber", "5551234567")])
+
+    async def test_optional_sms_verification_runs_after_email_otp(self):
+        class FakeButton:
+            async def is_visible(self):
+                return True
+
+            async def click(self):
+                return None
+
+        class FakeLocator:
+            @property
+            def first(self):
+                return self
+
+            async def is_visible(self):
+                return True
+
+            async def click(self):
+                return None
+
+        class FakeVerificationPage:
+            def locator(self, _selector):
+                return FakeLocator()
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+            async def bring_to_front(self):
+                return None
+
+        stages = iter(["otp", "phone", "otp", "welcome"])
+        page = FakeVerificationPage()
+        otp_fetcher = mock.AsyncMock(return_value="111111")
+        phone_fetcher = mock.AsyncMock(return_value="+15551234567")
+        sms_fetcher = mock.AsyncMock(return_value="222222")
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(side_effect=lambda *a, **k: next(stages))), \
+            mock.patch.object(signup_flow, "_type_otp_code", mock.AsyncMock(return_value=True)) as type_otp, \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=True)) as fill_phone, \
+            mock.patch.object(signup_flow, "_read_success_username", mock.AsyncMock(return_value="cleaopala")):
+            result = await signup_flow._handle_verification(
+                page,
+                "kellyfrench8406123880@gmail.com",
+                otp_fetcher,
+                None,
+                "172",
+                phone_fetcher=phone_fetcher,
+                sms_fetcher=sms_fetcher,
+            )
+
+        self.assertTrue(result["otp_entered"])
+        self.assertTrue(result["phone_entered"])
+        self.assertTrue(result["sms_otp_entered"])
+        self.assertEqual(result["final_username"], "cleaopala")
+        otp_fetcher.assert_awaited_once()
+        phone_fetcher.assert_awaited_once()
+        sms_fetcher.assert_awaited_once()
+        fill_phone.assert_awaited_once_with(page, "+15551234567", None, "172")
+        self.assertEqual(type_otp.await_count, 2)
+
+    async def test_phone_verification_retries_with_new_number_when_first_stays_on_phone_step(self):
+        class FakeLocator:
+            @property
+            def first(self):
+                return self
+
+            async def is_visible(self):
+                return True
+
+            async def click(self):
+                return None
+
+        class FakeVerificationPage:
+            def locator(self, _selector):
+                return FakeLocator()
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+            async def bring_to_front(self):
+                return None
+
+        page = FakeVerificationPage()
+        phone_fetcher = mock.AsyncMock(side_effect=["+15550000000", "+15551234567"])
+        sms_fetcher = mock.AsyncMock(return_value="222222")
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(side_effect=["phone", "otp"])), \
+            mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=True)) as fill_phone, \
+            mock.patch.object(signup_flow, "_type_otp_code", mock.AsyncMock(return_value=True)) as type_otp, \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_wait_for_stage_after_otp", mock.AsyncMock(return_value="welcome")), \
+            mock.patch.object(signup_flow, "_read_success_username", mock.AsyncMock(return_value="cleaopala")):
+            result = await signup_flow._handle_optional_phone_sms_verification(
+                page,
+                phone_fetcher,
+                sms_fetcher,
+                {
+                    "reached_verification": True,
+                    "otp_entered": True,
+                    "phone_entered": False,
+                    "sms_otp_entered": False,
+                    "final_username": "",
+                    "email": "kellyfrench8406123880@gmail.com",
+                },
+                None,
+                "172",
+            )
+
+        self.assertTrue(result["phone_entered"])
+        self.assertTrue(result["sms_otp_entered"])
+        self.assertEqual(result["final_username"], "cleaopala")
+        self.assertEqual(
+            phone_fetcher.await_args_list,
+            [mock.call(force_new=False), mock.call(force_new=True)],
+        )
+        self.assertEqual(fill_phone.await_count, 2)
+        fill_phone.assert_has_awaits([
+            mock.call(page, "+15550000000", None, "172"),
+            mock.call(page, "+15551234567", None, "172"),
+        ])
+        sms_fetcher.assert_awaited_once()
+        type_otp.assert_awaited_once()
+
+    async def test_phone_verification_rejected_after_replacement_exhausted(self):
+        class FakeVerificationPage:
+            async def wait_for_timeout(self, _ms):
+                return None
+
+        page = FakeVerificationPage()
+        phone_fetcher = mock.AsyncMock(side_effect=["+15550000000", "+15551234567"])
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(side_effect=["phone", "phone"])), \
+            mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=True)):
+            with self.assertRaisesRegex(RuntimeError, "phone_verification_rejected"):
+                await signup_flow._handle_optional_phone_sms_verification(
+                    page,
+                    phone_fetcher,
+                    mock.AsyncMock(return_value="222222"),
+                    {
+                        "reached_verification": True,
+                        "otp_entered": True,
+                        "phone_entered": False,
+                        "sms_otp_entered": False,
+                        "final_username": "",
+                        "email": "kellyfrench8406123880@gmail.com",
+                    },
+                    None,
+                    "172",
+                )
+
+        self.assertEqual(
+            phone_fetcher.await_args_list,
+            [mock.call(force_new=False), mock.call(force_new=True)],
+        )
+
+    async def test_perform_signup_continues_on_non_latin_signup_page(self):
+        page = FakePage(lang_info={"lang": "ar", "nonLatin": 25, "latin": 0})
+        fill_form = mock.AsyncMock(return_value={"submitted": True, "username": "wilzxcute"})
+        handle_verification = mock.AsyncMock(
+            return_value={
+                "reached_verification": False,
+                "otp_entered": False,
+                "final_username": "",
+                "email": "",
+            }
+        )
+
+        with mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_wait_visible", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "get_random_name", return_value="Wilz"), \
+            mock.patch.object(signup_flow, "generate_birthday", return_value={"month": 7, "day": 6, "year": "2004"}), \
+            mock.patch.object(signup_flow, "_fill_signup_form", fill_form), \
+            mock.patch.object(signup_flow, "_handle_verification", handle_verification):
+            result = await signup_flow.perform_snapchat_signup(
+                page,
+                model="Willow",
+                username="wilzxcute",
+                email="",
+                names_dir=Path("."),
+                logger=None,
+                profile_id="k1pl",
+                otp_fetcher=mock.AsyncMock(return_value="123456"),
+            )
+
+        self.assertEqual(result["error"], "")
+        fill_form.assert_awaited_once()
+        handle_verification.assert_awaited_once()
 
 
-class GuardTests(unittest.TestCase):
-    """The intermittent early-run leak was the guard failing OPEN when no Nyxify
-    task matched. It must now hold (a) in strict mode, and (b) while Nyxify has
-    signups in flight — while still allowing standalone Nyx when idle."""
+class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fill_signup_form_uses_snapboard_row_password(self):
+        class FakeSignupPage:
+            async def bring_to_front(self):
+                return None
 
-    def test_no_task_idle_fails_open(self):
-        store = FakeNyxifyStore(task=None, inflight=False)
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store)
-        self.assertFalse(guard["locked"])
+            async def evaluate(self, _script, selector=None):
+                if selector == "#password":
+                    return "set"
+                return "ok"
 
-    def test_no_task_with_inflight_signups_holds(self):
-        store = FakeNyxifyStore(task=None, inflight=True)
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store)
-        self.assertTrue(guard["locked"])
+        page = FakeSignupPage()
+        typed = []
 
-    def test_no_task_strict_holds_even_when_idle(self):
-        store = FakeNyxifyStore(task=None, inflight=False)
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store, strict=True)
-        self.assertTrue(guard["locked"])
+        async def record_type(_page, selector, value, _logger=None, _label=""):
+            typed.append((selector, value))
+            return True
 
-    def test_running_task_holds(self):
-        store = FakeNyxifyStore(task={"status": "RUNNING", "last_step": "running_signup"})
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store)
-        self.assertTrue(guard["locked"])
+        with mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock()), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_js_select_month", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_humanized_type", mock.AsyncMock(side_effect=record_type)), \
+            mock.patch.object(signup_flow, "_click_signup_submit", mock.AsyncMock(return_value=True)):
+            result = await signup_flow._fill_signup_form(
+                page,
+                snap_name="Clea",
+                birthday={"month": 7, "day": 6, "year": "2004"},
+                username="cleaopala",
+                password="KyotoRiver%12",
+                logger=None,
+                profile_id="505811",
+            )
 
-    def test_completed_task_releases(self):
-        store = FakeNyxifyStore(task={"status": "DONE", "last_step": "signup_complete"})
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store)
-        self.assertFalse(guard["locked"])
+        self.assertTrue(result["submitted"])
+        self.assertIn(("#password", "KyotoRiver%12"), typed)
 
-    def test_done_but_incomplete_holds(self):
-        store = FakeNyxifyStore(task={"status": "DONE", "last_step": "awaiting_email_verification"})
-        guard = nyxify_guard.get_nyxify_profile_guard("k1abc", store=store)
-        self.assertTrue(guard["locked"])
+    async def test_click_signup_submit_prefers_agree_continue_button(self):
+        page = FakePage(text="Sign Up Step 1 of 3")
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(side_effect=lambda _page, selectors: selectors[0])), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock()), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
+            self.assertTrue(await signup_flow._click_signup_submit(page))
+
+        js_click.assert_awaited_once_with(page, "button:has-text('Agree and Continue')")
+
+    async def test_click_signup_submit_keeps_faster_clear_and_human_pause_windows(self):
+        page = FakePage(text="Sign Up Step 1 of 3")
+        clear_windows = []
+        pause_windows = []
+
+        async def record_clear(_page, _logger, _profile_id, duration_ms):
+            clear_windows.append(duration_ms)
+            return False
+
+        async def record_pause(_page, min_ms, max_ms):
+            pause_windows.append((min_ms, max_ms))
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(side_effect=lambda _page, selectors: selectors[0])), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(side_effect=record_clear)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(side_effect=record_pause)), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)):
+            self.assertTrue(await signup_flow._click_signup_submit(page))
+
+        self.assertEqual(clear_windows, [800, 500])
+        self.assertEqual(pause_windows, [(350, 900)])
+
+    async def test_click_signup_submit_fast_mode_uses_tighter_safe_windows(self):
+        page = FakePage(text="Sign Up Step 1 of 3")
+        clear_windows = []
+        pause_windows = []
+
+        async def record_clear(_page, _logger, _profile_id, duration_ms):
+            clear_windows.append(duration_ms)
+            return False
+
+        async def record_pause(_page, min_ms, max_ms):
+            pause_windows.append((min_ms, max_ms))
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(side_effect=lambda _page, selectors: selectors[0])), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(side_effect=record_clear)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(side_effect=record_pause)), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)):
+            self.assertTrue(await signup_flow._click_signup_submit(page, fast=True))
+
+        self.assertEqual(clear_windows, [250, 150])
+        self.assertEqual(pause_windows, [(90, 220)])
+
+    async def test_username_taken_detector_accepts_shorter_copy(self):
+        class FakeUsernameTakenPage:
+            async def evaluate(self, _script, markers=None):
+                text = "sorry, this username is taken. please try another one."
+                return any(marker in text for marker in (markers or []))
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="#username")):
+            self.assertTrue(
+                await signup_flow._is_username_taken_error_visible(FakeUsernameTakenPage())
+            )
+
+    async def test_username_retry_detector_accepts_invalid_username_copy(self):
+        class FakeInvalidUsernamePage:
+            async def evaluate(self, _script, markers=None):
+                text = (
+                    "invalid username. letters and numbers with an optional hyphen, "
+                    "underscore, or period in between please!"
+                )
+                return any(marker in text for marker in (markers or []))
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="#username")):
+            self.assertTrue(
+                await signup_flow._is_username_taken_error_visible(FakeInvalidUsernamePage())
+            )
+
+    async def test_username_taken_retry_wins_over_generic_form_error(self):
+        class FakeProgressPage:
+            url = "https://accounts.snapchat.com/v2/signup"
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+        page = FakeProgressPage()
+        username_state = {"value": "milyaure", "manual_override": False}
+        unable_detector = mock.AsyncMock(return_value=True)
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(return_value="email")), \
+            mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(side_effect=["milyaure", "freshmily"])), \
+            mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(side_effect=[True, False])), \
+            mock.patch.object(signup_flow, "_is_use_email_switch_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_retry_taken_username", mock.AsyncMock(return_value="freshmily")) as retry_taken, \
+            mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", unable_detector), \
+            mock.patch.object(signup_flow, "_click_signup_submit", mock.AsyncMock(return_value=True)):
+            stage = await signup_flow._wait_for_signup_progress(
+                page,
+                logger=None,
+                profile_id="194",
+                timeout_ms=1000,
+                username_retry_provider=mock.AsyncMock(return_value="freshmily"),
+                username_state=username_state,
+            )
+
+        self.assertEqual(stage, "email")
+        self.assertEqual(username_state["value"], "freshmily")
+        retry_taken.assert_awaited_once()
+        unable_detector.assert_not_awaited()
+
+    async def test_unable_to_process_retry_uses_fast_submit_and_short_settle(self):
+        class FakeProgressPage:
+            url = "https://accounts.snapchat.com/v2/signup"
+
+            def __init__(self):
+                self.waits = []
+
+            async def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+
+        page = FakeProgressPage()
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", mock.AsyncMock(side_effect=[True, False])), \
+            mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_click_signup_submit", mock.AsyncMock(return_value=True)) as click_submit:
+            stage = await signup_flow._wait_for_signup_progress(
+                page,
+                logger=None,
+                profile_id="194",
+                timeout_ms=1000,
+            )
+
+        self.assertEqual(stage, "")
+        click_submit.assert_awaited_once_with(page, None, "194", fast=True)
+        self.assertEqual(page.waits[0], 600)
 
 
 if __name__ == "__main__":

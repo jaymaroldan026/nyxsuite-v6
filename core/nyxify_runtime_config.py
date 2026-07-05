@@ -9,14 +9,15 @@ DEFAULTS = {
     "temporary_profile_name": "Snapchat:",
     "adspower_group": "Snapchat",
     "extension_category": "Snap",
-    "tag_one": "Snapchat",
+    "tag_one": "",
     "tag_two": "",
-    "adspower_tags_enabled": True,
+    "adspower_tags_enabled": False,
     "blocked_proxies": [],
     "proxy_blocker_enabled": True,
     "proxy_checker_enabled": True,
     "push_adspower_id_enabled": True,
     "full_auto_mode_enabled": False,
+    "continuous_mode_enabled": False,
     "launch_on_windows_startup": False,
     "names_dir": "",
 }
@@ -101,6 +102,10 @@ def load_nyxify_config():
             raw.get("full_auto_mode_enabled"),
             DEFAULTS["full_auto_mode_enabled"],
         ),
+        "continuous_mode_enabled": _safe_bool(
+            raw.get("continuous_mode_enabled"),
+            DEFAULTS["continuous_mode_enabled"],
+        ),
         "launch_on_windows_startup": _safe_bool(
             raw.get("launch_on_windows_startup"),
             DEFAULTS["launch_on_windows_startup"],
@@ -155,6 +160,10 @@ def save_nyxify_config(updates):
         "full_auto_mode_enabled": _safe_bool(
             updates.get("full_auto_mode_enabled"),
             current["full_auto_mode_enabled"],
+        ),
+        "continuous_mode_enabled": _safe_bool(
+            updates.get("continuous_mode_enabled"),
+            current["continuous_mode_enabled"],
         ),
         "launch_on_windows_startup": _safe_bool(
             updates.get("launch_on_windows_startup"),

@@ -12,7 +12,7 @@ if not (ROOT / "core").exists() or not (ROOT / "packaging").exists():
 sys.path.insert(0, str(ROOT))
 from core.version import NYX_VERSION_LABEL  # noqa: E402
 
-RUNNER_NAME = f"NyxBot {NYX_VERSION_LABEL}"  # e.g. "NyxBot v4.0.0" — matches NyxController detection
+RUNNER_NAME = f"NyxBot {NYX_VERSION_LABEL}"  # e.g. "NyxBot v6.0.0" — matches NyxController detection
 block_cipher = None
 
 hiddenimports = (

@@ -39,6 +39,10 @@ DASHBOARD_PORT = int(os.getenv("NYXSUITE_DASHBOARD_PORT", "8870"))
 DASHBOARD_URL = f"http://127.0.0.1:{DASHBOARD_PORT}/"
 
 
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def log(message: str) -> None:
     try:
         from core.logger import logger
@@ -79,6 +83,7 @@ class BridgeApp:
         self._tray_icon = None
         self._stop = threading.Event()
         self.token = ""
+        self._hotkey_product = "nyx"
 
     # ------------------------------------------------------------------ build
     def _version(self) -> str:
@@ -146,10 +151,12 @@ class BridgeApp:
         )
         self.dashboard.start()
         log(f"Dashboard on {DASHBOARD_URL}")
-        # NOTE: the Ctrl+F8 pause/resume hotkey is started inside each runner
-        # process (main.py / nyxify_runner.py), not here — the listener belongs in
-        # the process doing the work so it pauses the *current* run, and so the
-        # two runners toggle their own pause flags without cancelling each other.
+        try:
+            from core.hotkeys import start_stop_hotkey
+
+            start_stop_hotkey("bridge", action=lambda _scope: self._toggle_hotkey_product())
+        except Exception as exc:
+            log(f"Ctrl+F8 stop/start hotkey unavailable: {exc}")
 
     def _bridge_actions(self) -> dict:
         return {
@@ -163,9 +170,48 @@ class BridgeApp:
             "install_deps": self._action_install_deps,
             "install_deps_status": self._action_install_deps_status,
             "sync_extensions": self._action_sync_extensions,
+            "hotkey_product": self._action_hotkey_product,
             "adspower_test": self._action_adspower_test,
             "shutdown": self._action_shutdown,
         }
+
+    def _action_hotkey_product(self, payload=None) -> dict:
+        product = str((payload or {}).get("product") or "").strip().lower()
+        if product not in {"nyx", "nyxify"}:
+            return {"ok": False, "error": "Hotkey product must be nyx or nyxify."}
+        self._hotkey_product = product
+        return {"ok": True, "product": product}
+
+    def _toggle_hotkey_product(self, _scope=None) -> dict:
+        product = str(getattr(self, "_hotkey_product", "nyx") or "nyx").strip().lower()
+        if product not in {"nyx", "nyxify"}:
+            product = "nyx"
+
+        controller = getattr(self, product, None)
+        if controller is None:
+            return {"ok": False, "action": "stop", "product": product, "message": f"{product} controller is not ready."}
+
+        try:
+            snapshot = controller.status_snapshot()
+            state = str(((snapshot or {}).get("bot") or {}).get("state") or "").strip().lower()
+        except Exception:
+            state = ""
+
+        if state in {"running", "paused", "waiting", "blocked"}:
+            result = controller.stop({})
+            action = "stop"
+        else:
+            result = controller.start({})
+            action = "start"
+
+        if not isinstance(result, dict):
+            result = {"ok": True}
+        result = dict(result)
+        result["action"] = action
+        result["product"] = product
+        result.setdefault("message", f"{product} {action} requested.")
+        log(f"Ctrl+F8 {action} {product}: {result.get('message')}")
+        return result
 
     def _action_adspower_test(self, payload=None) -> dict:
         """Run the AdsPower preflight probe with the currently-saved settings so
@@ -481,7 +527,7 @@ class BridgeApp:
         # Dashboard opens only on demand (extension button / tray "Open Dashboard").
         if os.getenv("NYXSUITE_OPEN_ON_START") == "1":
             self.open_dashboard()
-        icon.run()  # blocking until icon.stop()
+        icon.run(setup=lambda _icon: self._hide_macos_dock())  # blocking until icon.stop()
 
     def _hide_macos_dock(self):
         """Hide the Dock icon on macOS so only the menu-bar tray icon shows.
@@ -489,17 +535,13 @@ class BridgeApp:
         pystray creates an NSApplication for the status-bar item but leaves the
         default (regular) activation policy, which puts a Python rocket in the
         Dock. Switching to the Accessory policy (the menu-bar-app pattern)
-        removes the Dock icon while keeping the menu-bar icon. No-op elsewhere.
+        removes the Dock icon while keeping the menu-bar icon. Some Python.app
+        launches need the older Process Manager transform too, so use both.
+        No-op elsewhere.
         """
-        if sys.platform != "darwin":
-            return
-        try:
-            import AppKit
+        from core.macos_dock import hide_macos_dock_icon
 
-            policy = getattr(AppKit, "NSApplicationActivationPolicyAccessory", 1)
-            AppKit.NSApplication.sharedApplication().setActivationPolicy_(policy)
-        except Exception as exc:
-            log(f"Could not hide macOS dock icon: {exc}")
+        hide_macos_dock_icon(log)
 
     def _build_tray_icon(self):
         if os.getenv("NYXSUITE_NO_TRAY") == "1":
@@ -571,11 +613,17 @@ def main():
 
     guard = RunnerLock("127.0.0.1", SINGLE_INSTANCE_PORT)
     if not guard.acquire():
-        log(f"Another Nyx Suite bridge already holds :{SINGLE_INSTANCE_PORT}. Opening the dashboard instead.")
-        try:
-            webbrowser.open(DASHBOARD_URL)
-        except Exception:
-            pass
+        if _env_truthy("NYXSUITE_NO_OPEN"):
+            log(
+                f"Another Nyx Suite bridge already holds :{SINGLE_INSTANCE_PORT}. "
+                "Leaving the existing dashboard tab alone because NYXSUITE_NO_OPEN=1."
+            )
+        else:
+            log(f"Another Nyx Suite bridge already holds :{SINGLE_INSTANCE_PORT}. Opening the dashboard instead.")
+            try:
+                webbrowser.open(DASHBOARD_URL)
+            except Exception:
+                pass
         return
     try:
         # Post-update launch watchdog: if the new build has been crash-looping,

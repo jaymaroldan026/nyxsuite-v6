@@ -143,7 +143,16 @@ def _coerce_bool(*values, default=False):
 
 class AdsPowerManager:
 
-    def __init__(self):
+    def __init__(self, ui_assume_presearch=None):
+        # GUI-automation mode for the no-API path:
+        #   None  -> use AdsPowerUIConfig's default (env ADSPOWER_UI_ASSUME_PRESEARCH,
+        #            default False = Nyx's Profile-ID search mode).
+        #   True  -> Nyxify dashboard mode (act on the standing 'Name contains <temp>'
+        #            view, only ever search the temp name).
+        #   False -> Nyx mode (bulk Profile-ID search, editing the chip in place).
+        # Nyx and Nyxify run as separate processes, so each sets its own mode
+        # rather than sharing one process-wide env flag.
+        self._ui_assume_presearch = ui_assume_presearch
 
         self._resolve_credentials()
         self._api_lock = threading.Lock()
@@ -219,13 +228,28 @@ class AdsPowerManager:
             default=True,
         )
         self._ui_controller_obj = None
+        self._ui_on_profile_missing = None
+
+    def set_ui_on_profile_missing(self, callback):
+        """Register a ``callback(profile_id: str)`` invoked when the UI controller
+        searches for a profile ID in the AdsPower table and cannot find it.
+        The callback is forwarded to the UI controller (created lazily on first
+        use), so it may be called before the controller is built."""
+        self._ui_on_profile_missing = callback
+        if self._ui_controller_obj is not None:
+            self._ui_controller_obj.on_profile_missing = callback
 
     def _ui_controller(self):
         """Lazily build the GUI-automation controller (import is deferred so the
         manager still imports on platforms without pywinauto)."""
         if self._ui_controller_obj is None:
-            from core.adspower_ui import AdsPowerUIController
-            self._ui_controller_obj = AdsPowerUIController()
+            from core.adspower_ui import AdsPowerUIController, AdsPowerUIConfig
+            config = AdsPowerUIConfig()
+            if self._ui_assume_presearch is not None:
+                config.assume_presearch = bool(self._ui_assume_presearch)
+            self._ui_controller_obj = AdsPowerUIController(config=config)
+            if self._ui_on_profile_missing is not None:
+                self._ui_controller_obj.on_profile_missing = self._ui_on_profile_missing
         return self._ui_controller_obj
 
     @staticmethod
@@ -648,11 +672,13 @@ class AdsPowerManager:
         # completely unreachable (port 50325 not listening), as long as the
         # AdsPower desktop app window is still available — the UI automation
         # talks to the app window, not the API.
+        ui_error_text = ""
         if self.ui_fallback_enabled:
             try:
                 endpoint = self._ui_controller().open_profile_by_id(profile_id)
             except Exception as ui_error:
                 logger.error(f"AdsPower GUI open fallback failed for {profile_id}: {ui_error}")
+                ui_error_text = str(ui_error)
                 endpoint = ""
             if endpoint:
                 self._cdp_fallback_profiles.add(str(profile_id))
@@ -673,7 +699,8 @@ class AdsPowerManager:
             f"AdsPower's Local API can't start profiles on this account (permission denied / 9110), "
             f"and profile {profile_id} is not open in the AdsPower app. Open it in AdsPower and "
             f"NyxSuite will attach automatically over CDP (no-API mode), or have your AdsPower admin "
-            f"grant Local API permission for this account. (API error: {api_error})"
+            f"grant Local API permission for this account. "
+            f"(API error: {api_error}; UI error: {ui_error_text or 'n/a'})"
         )
 
     # -------------------------------------------------
@@ -688,10 +715,16 @@ class AdsPowerManager:
         # way — click the row's Close button. The browser window should actually
         # close when a run finishes instead of piling up.
         if pid in self._cdp_fallback_profiles:
-            self._cdp_fallback_profiles.discard(pid)
+            # Keep the profile marked no-API after closing: a no-API profile is
+            # permanently no-API (the Local API is permission-gated), and the
+            # Nyxify flow renames it right AFTER closing — keeping the mark sends
+            # that rename straight to the GUI instead of wasting two 9110 API
+            # calls first. The mark is only cleared on delete (profile gone).
             if self.ui_fallback_enabled:
                 try:
-                    self._ui_controller().close_profile_by_id(pid)
+                    closed = self._ui_controller().close_profile_by_id(pid)
+                    if closed is False:
+                        raise RuntimeError("AdsPower GUI did not confirm the profile closed.")
                     logger.info(f"Closed AdsPower profile {pid} via the GUI (no-API mode).")
                     return {"code": 0, "msg": "closed_via_gui"}
                 except Exception as ui_error:
@@ -705,16 +738,19 @@ class AdsPowerManager:
             logger.info(f"Profile closed: {profile_id}")
             return data
 
-        except AdsPowerPermissionError as perm_error:
-            # The stop API is permission-gated too — close via the GUI instead.
+        except (AdsPowerPermissionError, AdsPowerUnreachableError) as api_error:
+            # In no-API mode the stop API may be permission-gated or fully
+            # unavailable. If the desktop app is open, close via the GUI instead.
             if self.ui_fallback_enabled:
                 try:
-                    self._ui_controller().close_profile_by_id(pid)
-                    logger.info(f"Closed AdsPower profile {pid} via the GUI (API gated: {perm_error}).")
+                    closed = self._ui_controller().close_profile_by_id(pid)
+                    if closed is False:
+                        raise RuntimeError("AdsPower GUI did not confirm the profile closed.")
+                    logger.info(f"Closed AdsPower profile {pid} via the GUI (API unavailable: {api_error}).")
                     return {"code": 0, "msg": "closed_via_gui"}
                 except Exception as ui_error:
                     logger.warning(f"Could not GUI-close AdsPower profile {pid}: {ui_error}")
-            logger.error(f"Failed to close profile {profile_id}: {perm_error}")
+            logger.error(f"Failed to close profile {profile_id}: {api_error}")
             raise
 
         except Exception as e:
@@ -725,6 +761,12 @@ class AdsPowerManager:
         normalized_profile_id = str(profile_id or "").strip()
         if not normalized_profile_id:
             raise ValueError("AdsPower profile id is required.")
+
+        # Close the profile first — AdsPower cannot delete an open profile.
+        try:
+            self.close_profile(normalized_profile_id)
+        except Exception as exc:
+            logger.debug(f"Close-before-delete for {normalized_profile_id} (already closed?): {exc}")
 
         # Fast path: a profile we opened in no-API mode -> the delete API is the
         # same 9110-gated endpoint, so skip it and delete through the GUI.
@@ -740,7 +782,7 @@ class AdsPowerManager:
             ("/user/delete", {"user_ids": [normalized_profile_id]}),
         ]
         errors = []
-        permission_gated = False
+        gui_fallback_reason = None
 
         for path, payload in attempts:
             try:
@@ -750,20 +792,21 @@ class AdsPowerManager:
                 logger.info(f"AdsPower profile deleted: {normalized_profile_id} via {path} payload={payload}")
                 self._cdp_fallback_profiles.discard(normalized_profile_id)
                 return data
-            except AdsPowerPermissionError as exc:
-                permission_gated = True
+            except (AdsPowerPermissionError, AdsPowerUnreachableError) as exc:
+                gui_fallback_reason = exc
                 errors.append(f"{path}: {exc}")
-                break  # both endpoints are gated by the same permission
+                break  # both endpoints share the same no-API condition
             except Exception as exc:
                 if _is_permission_error(str(exc)):
-                    permission_gated = True
+                    gui_fallback_reason = exc
                 errors.append(f"{path} payload={payload}: {exc}")
                 logger.debug(f"AdsPower delete profile attempt failed via {path} payload={payload}: {exc}")
 
         # No-API fallback: drive the AdsPower GUI (select row -> trash -> confirm).
-        if permission_gated and self.ui_fallback_enabled:
+        if gui_fallback_reason is not None and self.ui_fallback_enabled:
             logger.warning(
-                f"AdsPower Local API gated for delete ({normalized_profile_id}); deleting via the GUI (no-API mode).")
+                f"AdsPower Local API unavailable for delete ({normalized_profile_id}: "
+                f"{gui_fallback_reason}); deleting via the GUI (no-API mode).")
             data = self._ui_controller().delete_profile_by_id(normalized_profile_id)
             self._cdp_fallback_profiles.discard(normalized_profile_id)
             return data
@@ -938,7 +981,7 @@ class AdsPowerManager:
         ]
 
         last_error = None
-        permission_gated = False
+        gui_fallback_reason = None
         for payload in payload_candidates:
             try:
                 response = self._post_json("/user/update", payload=payload, timeout=20)
@@ -949,20 +992,21 @@ class AdsPowerManager:
                     "name": normalized_name,
                     "raw": response,
                 }
-            except AdsPowerPermissionError as exc:
+            except (AdsPowerPermissionError, AdsPowerUnreachableError) as exc:
                 last_error = exc
-                permission_gated = True
-                break  # every payload hits the same permission wall
+                gui_fallback_reason = exc
+                break  # every payload hits the same no-API condition
             except Exception as exc:
                 last_error = exc
                 if _is_permission_error(str(exc)):
-                    permission_gated = True
+                    gui_fallback_reason = exc
                     break
 
         # No-API fallback: rename through the AdsPower GUI (Name edit pencil).
-        if permission_gated and self.ui_fallback_enabled:
+        if gui_fallback_reason is not None and self.ui_fallback_enabled:
             logger.warning(
-                f"AdsPower Local API gated for rename ({normalized_profile_id}); "
+                f"AdsPower Local API unavailable for rename ({normalized_profile_id}: "
+                f"{gui_fallback_reason}); "
                 f"renaming via the GUI (no-API mode).")
             info = self._ui_controller().rename_profile_by_id(normalized_profile_id, normalized_name)
             return {
@@ -2289,6 +2333,7 @@ class AdsPowerManager:
         tags=None,
         user_proxy_config=None,
         extension_category_reference="",
+        proxy_rotator=None,
     ):
         """Create a profile via the Local API. If the API is permission-gated
         (9110) or unreachable (Local API not running) and the GUI fallback is
@@ -2304,12 +2349,15 @@ class AdsPowerManager:
                 raise
             return self._create_profile_via_ui(
                 name, proxy_value, group_reference, user_proxy_config, api_error,
-                tags=tags, extension_category_reference=extension_category_reference,
+                tags=tags,
+                extension_category_reference=extension_category_reference,
+                proxy_rotator=proxy_rotator,
             )
 
     def _create_profile_via_ui(self, name, proxy_value, group_reference,
                                user_proxy_config, api_error, tags=None,
-                               extension_category_reference=""):
+                               extension_category_reference="",
+                               proxy_rotator=None):
         """No-API profile creation through the AdsPower GUI.
 
         Sets the functional fields the runners depend on — name, group and proxy.
@@ -2338,6 +2386,7 @@ class AdsPowerManager:
             name=resolved_name,
             proxy=proxy_str,
             group=str(group_reference or "").strip(),
+            proxy_rotator=proxy_rotator,
         )
         profile_id = str(info.get("profile_id") or "").strip()
         if not profile_id:

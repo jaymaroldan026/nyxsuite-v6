@@ -43,6 +43,9 @@ NyxMacRelease/
 .agents/
 .opencode/
 .playwright-mcp/
+.playwright-cli/
+output/
+adspower_uia_tree.txt
 skills-lock.json
 .DS_Store
 Thumbs.db

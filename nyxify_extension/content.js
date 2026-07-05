@@ -6,6 +6,8 @@
   var proxyRotatePollTimer = null;
   var usernameUpdatePollTimer = null;
   var usernameUpdatePollInFlight = false;
+  var adspowerUpdatePollTimer = null;
+  var adspowerUpdatePollInFlight = false;
   var adspowerNameUpdatePollTimer = null;
   var adspowerNameUpdatePollInFlight = false;
   var statusUpdatePollTimer = null;
@@ -42,6 +44,12 @@
   function extractEmailFromText(value) {
     var match = normalizeText(value).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     return match ? match[0] : "";
+  }
+
+  function extractPhoneFromText(value) {
+    var text = stripLeadingNonAlphanumeric(normalizeText(value));
+    var match = text.match(/\+?\d[\d\s().-]{7,}\d/);
+    return match ? normalizeText(match[0]).replace(/[^\d+]/g, "") : "";
   }
 
   function normalizeHeaderKey(value) {
@@ -144,6 +152,21 @@
     return extractEmailFromText(row.innerText || row.textContent || "");
   }
 
+  function readPhoneFromRowId(rowId) {
+    var row = document.querySelector('tr[data-id="' + rowId + '"]');
+    var headerMap;
+    var phone;
+    if (!row) {
+      return "";
+    }
+    headerMap = getTableHeaderMap(row);
+    phone = extractPhoneFromText(readValueFromAliases(row, headerMap, ["phone", "phone number", "sms", "mobile", "number"]));
+    if (phone) {
+      return phone;
+    }
+    return "";
+  }
+
   function rowMatchesExpectedEmail(rowId, expectedEmail) {
     var expected = normalizeComparableEmail(expectedEmail);
     var row;
@@ -216,6 +239,7 @@
       var adspowerId = readValueFromAliases(row, headerMap, ["adspower", "adspower id", "profile id"]);
       var username = readValueFromAliases(row, headerMap, ["username", "snap username", "snapchat username", "user", "snap user"]);
       var email = extractEmailFromText(readValueFromAliases(row, headerMap, ["email", "gmail", "google", "mail", "google mail"]));
+      var password = readValueFromAliases(row, headerMap, ["password", "pass", "snap password", "snapchat password", "account password"]);
 
       if (!model || !ipAddress || adspowerId) {
         return null;
@@ -228,6 +252,7 @@
         proxy_address: proxyAddress,
         username: username,
         email: email,
+        password: password,
         adspower_id: adspowerId,
       };
     }).filter(Boolean);
@@ -390,11 +415,12 @@
     scheduleProviderLock();
   }
 
-  function getOtpTextForRow(rowId) {
+  function getCodeTextForRow(rowId, displayAttribute) {
     var selectors = [
-      'tr[data-id="' + rowId + '"] .twofa-code',
-      '.twofa-code-display[data-code-display="' + rowId + '"]',
-      '[data-code-display="' + rowId + '"]',
+      '.twofa-code-display[' + displayAttribute + '="' + rowId + '"] .twofa-code',
+      '.twofa-code-display[' + displayAttribute + '="' + rowId + '"]',
+      '[' + displayAttribute + '="' + rowId + '"] .twofa-code',
+      '[' + displayAttribute + '="' + rowId + '"]',
     ];
     var i;
     for (i = 0; i < selectors.length; i += 1) {
@@ -409,6 +435,14 @@
       }
     }
     return "";
+  }
+
+  function getOtpTextForRow(rowId) {
+    return getCodeTextForRow(rowId, "data-code-display");
+  }
+
+  function getSmsTextForRow(rowId) {
+    return getCodeTextForRow(rowId, "data-sms-display");
   }
 
   function isVisibleElement(node) {
@@ -527,6 +561,22 @@
     return true;
   }
 
+  function clickCheckSms(rowId) {
+    var button = document.querySelector('button.btn-check-code[data-check-sms="' + rowId + '"]')
+      || document.querySelector('button[data-check-sms="' + rowId + '"]');
+    if (!button) {
+      button = toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = String(node.getAttribute("onclick") || "");
+        return onclickText.indexOf("checkSms") >= 0 && onclickText.indexOf(rowId) >= 0;
+      }) || null;
+    }
+    if (!button) {
+      return false;
+    }
+    button.click();
+    return true;
+  }
+
   function clickGetEmailButton(rowId) {
     var button = document.querySelector('button.btn-get-email[data-get-email="' + rowId + '"]')
       || document.querySelector('button[data-get-email="' + rowId + '"]');
@@ -534,6 +584,23 @@
       button = toArray(document.querySelectorAll("button")).find(function (node) {
         var onclickText = String(node.getAttribute("onclick") || "");
         return onclickText.indexOf("get2faEmail") >= 0 && onclickText.indexOf(rowId) >= 0;
+      }) || null;
+    }
+    if (!button) {
+      return false;
+    }
+    return clickElement(button);
+  }
+
+  function clickGetPhoneButton(rowId) {
+    var button = document.querySelector('button.btn-get-email[data-get-phone="' + rowId + '"]')
+      || document.querySelector('button[data-get-phone="' + rowId + '"]');
+    if (!button) {
+      button = toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = String(node.getAttribute("onclick") || "");
+        var title = normalizeText(node.getAttribute("title") || "").toLowerCase();
+        return onclickText.indexOf("getPhone") >= 0 && onclickText.indexOf(rowId) >= 0
+          || (title.indexOf("request phone") >= 0 && onclickText.indexOf(rowId) >= 0);
       }) || null;
     }
     if (!button) {
@@ -551,6 +618,23 @@
         var title = normalizeText(node.getAttribute("title") || "").toLowerCase();
         return onclickText.indexOf("redo2faEmail") >= 0 && onclickText.indexOf(rowId) >= 0
           || (title.indexOf("get new email") >= 0 && onclickText.indexOf(rowId) >= 0);
+      }) || null;
+    }
+    if (!button) {
+      return false;
+    }
+    return clickElement(button);
+  }
+
+  function clickRedoPhoneButton(rowId) {
+    var button = document.querySelector('button.btn-redo-email[data-redo-phone="' + rowId + '"]')
+      || document.querySelector('button[data-redo-phone="' + rowId + '"]');
+    if (!button) {
+      button = toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = String(node.getAttribute("onclick") || "");
+        var title = normalizeText(node.getAttribute("title") || "").toLowerCase();
+        return onclickText.indexOf("redoPhone") >= 0 && onclickText.indexOf(rowId) >= 0
+          || (title.indexOf("get new number") >= 0 && onclickText.indexOf(rowId) >= 0);
       }) || null;
     }
     if (!button) {
@@ -589,6 +673,64 @@
         }
         if (email && !prior) {
           cleanup(email);
+          return true;
+        }
+        if ((Date.now() - startedAt) >= timeoutMs) {
+          cleanup("");
+          return true;
+        }
+        return false;
+      }
+
+      if (checkNow()) {
+        return;
+      }
+
+      var row = document.querySelector('tr[data-id="' + rowId + '"]');
+      if (row && typeof MutationObserver !== "undefined") {
+        observer = new MutationObserver(checkNow);
+        observer.observe(row, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: true,
+        });
+      }
+
+      timer = window.setInterval(checkNow, 350);
+    });
+  }
+
+  function waitForPhoneForRow(rowId, timeoutMs, previousPhone) {
+    return new Promise(function (resolve) {
+      var startedAt = Date.now();
+      var observer = null;
+      var timer = null;
+      var finished = false;
+      var prior = normalizeText(previousPhone);
+
+      function cleanup(result) {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        if (observer) {
+          observer.disconnect();
+        }
+        if (timer) {
+          window.clearInterval(timer);
+        }
+        resolve(result || "");
+      }
+
+      function checkNow() {
+        var phone = readPhoneFromRowId(rowId);
+        if (phone && phone !== prior) {
+          cleanup(phone);
+          return true;
+        }
+        if (phone && !prior) {
+          cleanup(phone);
           return true;
         }
         if ((Date.now() - startedAt) >= timeoutMs) {
@@ -667,6 +809,34 @@
 
     queueScan();
     return { ok: true, email: fetchedEmail };
+  }
+
+  async function requestPhoneFetch(rowId, forceNew) {
+    var currentPhone = readPhoneFromRowId(rowId);
+    if (currentPhone && !forceNew) {
+      return { ok: true, phone: currentPhone };
+    }
+
+    var clicked = forceNew ? clickRedoPhoneButton(rowId) : clickGetPhoneButton(rowId);
+    if (!clicked) {
+      clicked = forceNew ? clickGetPhoneButton(rowId) : clickRedoPhoneButton(rowId);
+    }
+    if (!clicked) {
+      return { ok: false, error: "No Request/Redo Phone button found for row." };
+    }
+
+    var fetchedPhone = await waitForPhoneForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentPhone);
+    if (!fetchedPhone) {
+      return {
+        ok: false,
+        error: forceNew
+          ? "New phone did not appear after clicking Redo Phone."
+          : "Phone did not appear after clicking Request Number.",
+      };
+    }
+
+    queueScan();
+    return { ok: true, phone: fetchedPhone };
   }
 
   function sleep(ms) {
@@ -1092,6 +1262,67 @@
     });
   }
 
+  function waitForSmsCode(rowId, timeoutMs, popupSnapshot) {
+    return new Promise(function (resolve) {
+      var startedAt = Date.now();
+      var observer = null;
+      var timer = null;
+      var finished = false;
+
+      function cleanup(result) {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        if (observer) {
+          observer.disconnect();
+        }
+        if (timer) {
+          window.clearInterval(timer);
+        }
+        resolve(result || "");
+      }
+
+      function checkNow() {
+        var code = getSmsTextForRow(rowId) || getNewOtpPopupCode(popupSnapshot);
+        if (code) {
+          cleanup(code);
+          return true;
+        }
+        if ((Date.now() - startedAt) >= timeoutMs) {
+          cleanup("");
+          return true;
+        }
+        return false;
+      }
+
+      if (checkNow()) {
+        return;
+      }
+
+      var row = document.querySelector('tr[data-id="' + rowId + '"]');
+      if (typeof MutationObserver !== "undefined") {
+        observer = new MutationObserver(checkNow);
+        if (row) {
+          observer.observe(row, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+          });
+        }
+        if (document.body) {
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+          });
+        }
+      }
+
+      timer = window.setInterval(checkNow, 250);
+    });
+  }
+
   async function clickCheckCodeUntilOtp(rowId, timeoutMs) {
     var startedAt = Date.now();
     var latestCode = getOtpTextForRow(rowId);
@@ -1099,6 +1330,25 @@
     while (!latestCode && (Date.now() - startedAt) < timeoutMs) {
       clickCheckCode(rowId);
       latestCode = await waitForOtpCode(
+        rowId,
+        Math.min(OTP_CLICK_RETRY_INTERVAL_MS, Math.max(500, timeoutMs - (Date.now() - startedAt))),
+        popupSnapshot
+      );
+      if (latestCode) {
+        return latestCode;
+      }
+      await sleep(300);
+    }
+    return latestCode || "";
+  }
+
+  async function clickCheckSmsUntilOtp(rowId, timeoutMs) {
+    var startedAt = Date.now();
+    var latestCode = getSmsTextForRow(rowId);
+    var popupSnapshot = captureOtpPopupSnapshot();
+    while (!latestCode && (Date.now() - startedAt) < timeoutMs) {
+      clickCheckSms(rowId);
+      latestCode = await waitForSmsCode(
         rowId,
         Math.min(OTP_CLICK_RETRY_INTERVAL_MS, Math.max(500, timeoutMs - (Date.now() - startedAt))),
         popupSnapshot
@@ -1241,6 +1491,57 @@
     }
   }
 
+  async function pollPendingAdspowerUpdate() {
+    if (adspowerUpdatePollInFlight) {
+      return;
+    }
+    adspowerUpdatePollInFlight = true;
+
+    try {
+      var config = await getStoredConfig();
+      var apiConfig = getLocalApiConfig(config);
+      if (!apiConfig.localApiUrl) {
+        return;
+      }
+
+      var headers = {};
+      if (apiConfig.localToken) {
+        headers["X-Nyxify-Token"] = apiConfig.localToken;
+      }
+
+      var response = await fetch(apiConfig.localApiUrl + "/adspower_update/pending", {
+        method: "GET",
+        headers: headers,
+      });
+      var payload = await response.json();
+      if (!response.ok || !payload.ok || !payload.request) {
+        return;
+      }
+
+      var rowKey = normalizeText(payload.request.row_key);
+      var nextAdspowerId = normalizeText(payload.request.adspower_id);
+      var updated = requestAdspowerIdUpdate(
+        rowKey.replace(/^snapboard:/i, ""),
+        nextAdspowerId
+      );
+
+      headers["Content-Type"] = "application/json";
+      await fetch(apiConfig.localApiUrl + "/adspower_update/result", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify({
+          row_key: rowKey,
+          success: updated,
+          error: updated ? "" : "SnapBoard AdsPower id input was not updated",
+        }),
+      });
+    } catch (_error) {
+      return;
+    } finally {
+      adspowerUpdatePollInFlight = false;
+    }
+  }
+
   async function pollPendingAdspowerNameUpdate() {
     if (adspowerNameUpdatePollInFlight) {
       return;
@@ -1361,6 +1662,15 @@
     }, USERNAME_UPDATE_POLL_INTERVAL_MS);
   }
 
+  function startAdspowerUpdatePoll() {
+    if (adspowerUpdatePollTimer) {
+      return;
+    }
+    adspowerUpdatePollTimer = window.setInterval(function () {
+      pollPendingAdspowerUpdate();
+    }, USERNAME_UPDATE_POLL_INTERVAL_MS);
+  }
+
   function startAdspowerNameUpdatePoll() {
     if (adspowerNameUpdatePollTimer) {
       return;
@@ -1456,6 +1766,22 @@
         return;
       }
 
+      if (message.action === "phone_fetch") {
+        var phoneResult = await requestPhoneFetch(rowId, !!message.force_new);
+        sendResponse(phoneResult);
+        return;
+      }
+
+      if (message.action === "sms") {
+        var smsCode = await clickCheckSmsUntilOtp(rowId, OTP_FETCH_TIMEOUT_MS);
+        if (!smsCode) {
+          sendResponse({ ok: false, error: "SMS code not found on SnapBoard row." });
+          return;
+        }
+        sendResponse({ ok: true, code: smsCode });
+        return;
+      }
+
       if (message.action === "username_update") {
         var updated = requestUsernameUpdate(rowId, normalizeText(message.username));
         sendResponse({
@@ -1540,6 +1866,7 @@
 
   startAutoFillPoll();
   startUsernameUpdatePoll();
+  startAdspowerUpdatePoll();
   startAdspowerNameUpdatePoll();
   startStatusUpdatePoll();
   startProviderLockPoll();

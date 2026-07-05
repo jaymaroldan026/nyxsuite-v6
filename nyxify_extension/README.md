@@ -1,4 +1,4 @@
-# Nyxify Chrome Extension v4.1
+# Nyxify Chrome Extension v6
 
 Watches `https://snapboard.onrender.com/`, detects new top rows, and creates AdsPower profiles through the Nyxify Runner.
 
@@ -20,5 +20,5 @@ Watches `https://snapboard.onrender.com/`, detects new top rows, and creates Ads
 ## Required setup
 
 1. Start the Nyx Suite bridge agent (`python bridge_app.py` or the frozen build).
-2. The extension defaults to `http://127.0.0.1:8866` (v4 Nyxify API).
+2. The extension defaults to `http://127.0.0.1:8866` (v6 Nyxify API).
 3. Connect to Agent gets the per-install token automatically.

@@ -12,7 +12,8 @@ const POPUP_CONFIG_STORAGE_KEY = "nyxifyConfig";
 const POPUP_AUTO_FILL_PROGRESS_STORAGE_KEY = "nyxifyAutoFillAccountProgress";
 const DEFAULT_TEMPORARY_PROFILE_NAME = "Snapchat:";
 const DEFAULT_ADSPOWER_GROUP = "Snapchat";
-const DEFAULT_TAG_ONE = "Snapchat";
+const DEFAULT_EXTENSION_CATEGORY = "Snap";
+const DEFAULT_TAG_ONE = "";
 
 function normalizePositiveInteger(value, fallback = 0) {
   const parsed = parseInt(value, 10);
@@ -24,14 +25,20 @@ function normalizePopupConfig(config) {
   return {
     enabled: safeConfig.enabled !== false,
     pushAdspowerIdEnabled: safeConfig.pushAdspowerIdEnabled !== false,
+    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled === true,
+    proxyBlockerEnabled: safeConfig.proxyBlockerEnabled !== false,
+    proxyCheckerEnabled: safeConfig.proxyCheckerEnabled !== false,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
+    continuousModeEnabled: safeConfig.continuousModeEnabled === true,
     autoFillRow: safeConfig.autoFillRow === true,
     lockG5: safeConfig.lockG5 === true,
     temporaryProfileName: String(safeConfig.temporaryProfileName || DEFAULT_TEMPORARY_PROFILE_NAME),
     adspowerGroup: String(safeConfig.adspowerGroup || DEFAULT_ADSPOWER_GROUP),
-    tagOne: String(safeConfig.tagOne || DEFAULT_TAG_ONE),
+    extensionCategory: String(safeConfig.extensionCategory || DEFAULT_EXTENSION_CATEGORY),
+    tagOne: Object.prototype.hasOwnProperty.call(safeConfig, "tagOne")
+      ? String(safeConfig.tagOne || "")
+      : DEFAULT_TAG_ONE,
     tagTwo: String(safeConfig.tagTwo || ""),
-    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled !== false,
     rowLimit: normalizePositiveInteger(safeConfig.rowLimit, 20),
     autoFillAccountTarget: normalizePositiveInteger(safeConfig.autoFillAccountTarget, 0),
     bannedProxies: Array.isArray(safeConfig.bannedProxies) ? safeConfig.bannedProxies : [],
@@ -297,8 +304,11 @@ function applyPopupStatusSnapshot(status) {
   updateRunnerActionButtons(runnerStatus);
 
   document.getElementById("popupPushAdspowerIdToggle").checked = config.pushAdspowerIdEnabled !== false;
-  document.getElementById("popupAdspowerTagsToggle").checked = config.adspowerTagsEnabled !== false;
+  document.getElementById("popupProxyBlockerToggle").checked = config.proxyBlockerEnabled !== false;
+  document.getElementById("popupProxyCheckerToggle").checked = config.proxyCheckerEnabled !== false;
+  document.getElementById("popupAdspowerTagsToggle").checked = config.adspowerTagsEnabled === true;
   document.getElementById("popupFullAutoModeToggle").checked = config.fullAutoModeEnabled === true;
+  document.getElementById("popupContinuousModeToggle").checked = config.continuousModeEnabled === true;
   document.getElementById("popupAutoFillRowToggle").checked = config.autoFillRow === true;
   document.getElementById("popupLockG5Toggle").checked = config.lockG5 === true;
   document.getElementById("countReady").textContent = String(counts.ready || 0);
@@ -308,6 +318,7 @@ function applyPopupStatusSnapshot(status) {
   document.getElementById("countDone").textContent = String(counts.done || 0);
   setInputValue("popupTemporaryName", config.temporaryProfileName);
   setInputValue("popupGroup", config.adspowerGroup);
+  setInputValue("popupExtensionCategory", config.extensionCategory);
   setInputValue("popupTagOne", config.tagOne);
   setInputValue("popupTagTwo", config.tagTwo || "");
   setInputValue("popupRowLimit", config.rowLimit || 20);
@@ -401,12 +412,16 @@ function savePopupSettings() {
     type: "NYXIFY_SAVE_CONFIG",
     enabled: true,
     pushAdspowerIdEnabled: document.getElementById("popupPushAdspowerIdToggle").checked,
+    proxyBlockerEnabled: document.getElementById("popupProxyBlockerToggle").checked,
+    proxyCheckerEnabled: document.getElementById("popupProxyCheckerToggle").checked,
     adspowerTagsEnabled: document.getElementById("popupAdspowerTagsToggle").checked,
     fullAutoModeEnabled: document.getElementById("popupFullAutoModeToggle").checked,
+    continuousModeEnabled: document.getElementById("popupContinuousModeToggle").checked,
     autoFillRow: document.getElementById("popupAutoFillRowToggle").checked,
     lockG5: document.getElementById("popupLockG5Toggle").checked,
     temporaryProfileName: document.getElementById("popupTemporaryName").value,
     adspowerGroup: document.getElementById("popupGroup").value,
+    extensionCategory: document.getElementById("popupExtensionCategory").value,
     tagOne: document.getElementById("popupTagOne").value,
     tagTwo: document.getElementById("popupTagTwo").value,
     rowLimit: document.getElementById("popupRowLimit").value,
@@ -608,7 +623,11 @@ chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => 
 
 [
   ["popupPushAdspowerIdToggle", "pushAdspowerIdEnabled", "Push AdsPower ID enabled.", "Push AdsPower ID disabled."],
+  ["popupProxyBlockerToggle", "proxyBlockerEnabled", "Proxy Blocker enabled.", "Proxy Blocker disabled."],
+  ["popupProxyCheckerToggle", "proxyCheckerEnabled", "Proxy Checker enabled.", "Proxy Checker disabled."],
+  ["popupAdspowerTagsToggle", "adspowerTagsEnabled", "AdsPower tags enabled.", "AdsPower tags disabled."],
   ["popupFullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
+  ["popupContinuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["popupAutoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
   ["popupLockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
 ].forEach(([toggleId, configKey, enabledMessage, disabledMessage]) => {

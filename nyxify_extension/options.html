@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nyxify v4 Settings</title>
+  <title>Nyxify v6 Settings</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="nyxify-body nyxify-settings-body">
   <main class="panel panel-settings-page">
     <section class="card settings-card settings-card-wide">
-      <h1>Nyxify v4 Settings</h1>
+      <h1>Nyxify v6 Settings</h1>
       <p class="muted">Dark Nyx-style dashboard settings for the standalone AdsPower creator.</p>
 
       <label class="label" for="localApiUrl">Local API URL</label>
@@ -21,10 +21,13 @@
       <label class="label" for="adspowerGroup">AdsPower group</label>
       <input id="adspowerGroup" class="input" type="text" placeholder="Snapchat">
 
+      <label class="label" for="extensionCategory">Extension category</label>
+      <input id="extensionCategory" class="input" type="text" placeholder="Snap">
+
       <div class="settings-grid">
         <div class="setting-field">
           <label class="label" for="tagOne">Tag 1</label>
-          <input id="tagOne" class="input" type="text" placeholder="Snapchat">
+          <input id="tagOne" class="input" type="text" placeholder="Optional tag">
         </div>
         <div class="setting-field">
           <label class="label" for="tagTwo">Tag 2</label>
@@ -73,7 +76,7 @@
       <div class="toggle-row">
         <span class="toggle-text">Apply AdsPower tags <span class="muted">(off = create profiles with no tags; Tag 1 / Tag 2 above are ignored)</span></span>
         <label class="toggle-switch" for="adspowerTagsToggle">
-          <input id="adspowerTagsToggle" type="checkbox" checked>
+          <input id="adspowerTagsToggle" type="checkbox">
           <span class="toggle-slider" aria-hidden="true"></span>
         </label>
       </div>
@@ -82,6 +85,14 @@
         <span class="toggle-text">Full Auto Mode <span class="muted">(replaces `temp_...` usernames from per-model `.txt` files)</span></span>
         <label class="toggle-switch toggle-switch-danger" for="fullAutoModeToggle">
           <input id="fullAutoModeToggle" type="checkbox">
+          <span class="toggle-slider" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-text">Continuous Mode <span class="muted">(send completed signups to Nyx)</span></span>
+        <label class="toggle-switch" for="continuousModeToggle">
+          <input id="continuousModeToggle" type="checkbox">
           <span class="toggle-slider" aria-hidden="true"></span>
         </label>
       </div>

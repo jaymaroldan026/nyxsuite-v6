@@ -33,7 +33,7 @@ function Resolve-PackagingPython {
         }
     }
 
-    throw "No working packaging Python found. Create the v4 venv (see packaging\V4_RELEASE.md)."
+    throw "No working packaging Python found. Create the v6 venv (see packaging\V6_RELEASE.md)."
 }
 
 $venvPython = Resolve-PackagingPython

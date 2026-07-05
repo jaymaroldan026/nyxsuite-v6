@@ -5,14 +5,23 @@ certifi
 python-dotenv
 pystray
 pillow
-pynput            # global Ctrl+F8 pause/resume hotkey (Windows + macOS + Linux)
+pynput            # global Ctrl+F8 stop/start hotkey (Windows + macOS + Linux)
 
-# No-API AdsPower GUI automation — Windows only.
+# No-API AdsPower GUI automation — Windows.
 # These drive the AdsPower desktop app when the Local API is permission-gated
-# (9110). On macOS/Linux they are skipped (no-API GUI mode is Windows-only); the
-# suite still runs there via the AdsPower Local API + Playwright.
+# (9110).
 pywinauto ; sys_platform == "win32"
 pywin32 ; sys_platform == "win32"
 pyautogui ; sys_platform == "win32"
 opencv-python ; sys_platform == "win32"
 numpy ; sys_platform == "win32"
+
+# No-API AdsPower GUI automation — macOS.
+# PyObjC reads the AdsPower AXUIElement tree; pyautogui performs real clicks and
+# keystrokes; OpenCV/Numpy power the existing screenshot-template fallback.
+pyobjc-framework-ApplicationServices ; sys_platform == "darwin"
+pyobjc-framework-Quartz ; sys_platform == "darwin"
+pyobjc-framework-Cocoa ; sys_platform == "darwin"
+pyautogui ; sys_platform == "darwin"
+opencv-python ; sys_platform == "darwin"
+numpy ; sys_platform == "darwin"

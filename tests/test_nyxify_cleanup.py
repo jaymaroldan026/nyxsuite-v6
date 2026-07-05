@@ -58,6 +58,23 @@ async def unexpected_rotation(*_args, **_kwargs):
 
 
 class NyxifyCleanupTests(unittest.TestCase):
+    def test_accessibility_permission_failure_does_not_requeue_forever(self):
+        error = (
+            "macOS Accessibility permission is required for AdsPower no-API GUI "
+            "automation. Grant Accessibility permission to Python."
+        )
+
+        failure_step = nyxify_runner._classify_failure_last_step(
+            created=None,
+            last_step="creating_adspower_profile",
+            error_message=error,
+        )
+
+        self.assertEqual(failure_step, "adspower_accessibility_permission_missing")
+        self.assertFalse(
+            nyxify_runner._should_cleanup_failed_created_profile(failure_step, error)
+        )
+
     def test_failed_signup_cleanup_keeps_profile_id_when_delete_fails(self):
         store = FakeStore()
         adspower = FakeAdsPower(delete_error="AdsPower API error: {'code': -1, 'msg': 'user_ids is required'}")

@@ -80,6 +80,7 @@ def _row_signature(row):
         row.get("proxy_address") or row.get("proxy"),
         row.get("adspower_id") or row.get("adspower_profile_id") or row.get("profile_id"),
         row.get("adspower_open"),
+        row.get("adspower_open_profile_id"),
     )
 
 
@@ -170,6 +171,7 @@ class WebDashboardServer:
                         snap.get("bot", {}).get("state"),
                         json.dumps(snap.get("counts", {}), sort_keys=True),
                         json.dumps(snap.get("adspower_health") or {}, sort_keys=True),
+                        json.dumps(snap.get("adspower_live") or {}, sort_keys=True),
                     )
                     meta_changed = self._last_meta.get(name) != meta
                     self._last_meta[name] = meta
@@ -182,6 +184,7 @@ class WebDashboardServer:
                             "bot": snap.get("bot"),
                             "adspower_usage": snap.get("adspower_usage"),
                             "adspower_health": snap.get("adspower_health"),
+                            "adspower_live": snap.get("adspower_live"),
                             "rows": changed,
                             "removed": removed,
                         })

@@ -260,8 +260,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
         raise Exception(f"Could not connect to AdsPower browser via CDP: {last_error}")
 
-    async def stop(self):
-        if self.page:
+    async def stop(self, *, close_page=False):
+        if close_page and self.page:
             try:
                 if not self.page.is_closed():
                     await self.page.close()
@@ -569,6 +569,11 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         if timeout_seconds is None:
             timeout_seconds = self.long_wait_seconds
 
+        login_code_retries = 0
+        max_login_code_retries = 3
+        continue_retries = 0
+        max_continue_retries = 3
+
         for _ in range(int(timeout_seconds)):
             await self.wait_if_paused()
             state = await self.check_session_state(fast=True)
@@ -592,6 +597,38 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
             if state in ["GENDER", "EDITOR", "ACCOUNT_HOME"]:
                 print(f"Arrived at: {state}")
                 return state
+
+            # Still on the OAuth consent page — the previous handle_oauth_continue
+            # may not have taken effect. Retry with a limit.
+            if state == "CONTINUE" and continue_retries < max_continue_retries:
+                continue_retries += 1
+                print(f"Still on OAuth consent page (attempt {continue_retries}/{max_continue_retries}), clicking Continue...")
+                await self.handle_oauth_continue()
+                await asyncio.sleep(1.0)
+                continue
+
+            # When UNKNOWN, check if the page is stuck on bitmoji.com/login
+            # (the intermediate page after OAuth Continue that should auto-redirect
+            # to the avatar create page). Reload to re-trigger the JS code exchange.
+            if state == "UNKNOWN" and login_code_retries < max_login_code_retries:
+                stuck_on_login = False
+                for ctx in await self.get_contexts():
+                    try:
+                        current_url = (ctx.url or "").strip().lower()
+                    except Exception:
+                        continue
+                    if "bitmoji.com/login" in current_url:
+                        stuck_on_login = True
+                        break
+                if stuck_on_login:
+                    login_code_retries += 1
+                    print(f"Stuck on login redirect page (attempt {login_code_retries}/{max_login_code_retries}), reloading...")
+                    try:
+                        await (self.page or ctx).reload(timeout=30000, wait_until="domcontentloaded")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2.0)
+                    continue
 
             await self.human_delay(0.05, 0.12, kind="think", respect_speed=False, respect_jitter=False)
 

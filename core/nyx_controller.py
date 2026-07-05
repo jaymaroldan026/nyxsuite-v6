@@ -13,6 +13,7 @@ import threading
 import time
 
 from core import runner_flags
+from core.adspower_live import annotate_rows_with_open_state
 from core.process_utils import APP_DATA_DIR, LOGS_DIR, ROOT_DIR
 from core.runner_supervisor import RunnerSpec
 from core.version import NYX_VERSION_LABEL
@@ -26,7 +27,7 @@ PID_FILE = LOGS_DIR / "bot.pid"
 BOT_STDOUT = LOGS_DIR / "bot_ui_stdout.log"
 BOT_STDERR = LOGS_DIR / "bot_ui_stderr.log"
 BOT_SCRIPT = ROOT_DIR / "main.py"
-# v4 ships its own runner exe (named via the version label, e.g. "NyxBot v4.0.0.exe").
+# v6 ships its own runner exe (named via the version label, e.g. "NyxBot v6.0.0.exe").
 # We deliberately do NOT list the v3 exe names, so a running v3 NyxBot is never
 # mis-detected as this line's runner.
 # macOS frozen builds produce .app bundles or plain executables (no .exe).
@@ -77,7 +78,7 @@ class NyxController:
             pid_file=PID_FILE,
             stdout_path=BOT_STDOUT,
             stderr_path=BOT_STDERR,
-            script_match=str(BOT_SCRIPT),  # full path so v4 never adopts a v3 source runner
+            script_match=str(BOT_SCRIPT),  # full path so v6 never adopts an older source runner
             exe_candidates=BOT_EXECUTABLE_CANDIDATES,
             process_names=BOT_EXECUTABLE_PROCESS_NAMES,
             env_builder=self._base_env,
@@ -124,6 +125,7 @@ class NyxController:
     # ------------------------------------------------------------------ status
     def status_snapshot(self) -> dict:
         tasks = self.store.list_tasks(limit=500)
+        live = annotate_rows_with_open_state(tasks, ("profile_id",))
         name_map = self._profile_names()
         if name_map:
             for row in tasks:
@@ -166,6 +168,7 @@ class NyxController:
             },
             "bot": {"state": state, "detail": detail, "pid": pid},
             "adspower_health": health,
+            "adspower_live": live,
             "config": config,
         }
 

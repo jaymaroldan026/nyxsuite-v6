@@ -3,6 +3,12 @@
 const HOST = location.hostname || "127.0.0.1";
 const TOKEN = (typeof window !== "undefined" && window.__NYX_TOKEN__) || "";
 function tokenHeaders() { return TOKEN ? { "X-Nyx-Token": TOKEN, "X-Nyxify-Token": TOKEN } : {}; }
+function adspowerStateText(r) {
+  if (!r || !r.adspower_open_profile_id) return "";
+  if (r.adspower_open === true) return "Open";
+  if (r.adspower_open === false) return "Closed";
+  return "Checking";
+}
 
 const PRODUCTS = {
   nyx: {
@@ -11,6 +17,7 @@ const PRODUCTS = {
     sortFields: ["model", "created_at", "status"],
     columns: [
       { h: "AdsPower ID", f: r => r.profile_id || "", s: "" },
+      { h: "AdsPower", f: adspowerStateText, s: "" },
       { h: "Username", f: r => (r.username || "").replace(/^\s*snapchat\s*:\s*/i, ""), s: "" },
       { h: "Model", f: r => r.model || "", s: "model" },
       { h: "Date Added", f: r => (r.created_at || "").slice(0, 19).replace("T", " "), s: "created_at" },
@@ -30,6 +37,7 @@ const PRODUCTS = {
     sortFields: ["model", "created_at", "status"],
     columns: [
       { h: "AdsPower ID", f: r => r.adspower_id || r.adspower_profile_id || "", s: "" },
+      { h: "AdsPower", f: adspowerStateText, s: "" },
       { h: "Username", f: r => (r.username || "").replace(/^\s*snapchat\s*:\s*/i, ""), s: "" },
       { h: "Model", f: r => r.model || "", s: "model" },
       { h: "Date Added", f: r => (r.created_at || "").slice(0, 19).replace("T", " "), s: "created_at" },
@@ -46,8 +54,8 @@ const PRODUCTS = {
 };
 
 const state = {
-  nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
-  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, advancedVisible: false },
+  nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
+  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, advancedVisible: false },
   version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [] },
 };
@@ -66,6 +74,7 @@ function applyProductSnapshot(p, snap) {
   state[p].bot = snap.bot || {};
   state[p].usage = snap.adspower_usage || null;
   state[p].health = snap.adspower_health || null;
+  state[p].live = snap.adspower_live || null;
   if (snap.config) state[p].config = snap.config;
 }
 
@@ -78,6 +87,7 @@ function applyUpdate(ev) {
   if (ev.bot) state[p].bot = ev.bot;
   if (ev.adspower_usage !== undefined && ev.adspower_usage !== null) state[p].usage = ev.adspower_usage;
   if (ev.adspower_health !== undefined) state[p].health = ev.adspower_health;
+  if (ev.adspower_live !== undefined) state[p].live = ev.adspower_live;
 }
 
 function onMessage(data) {
@@ -124,7 +134,20 @@ async function callAction(p, path, payload) {
     });
     const d = await r.json().catch(() => ({}));
     toast(d.message || (d.ok !== false ? "Done." : (d.error || ("HTTP " + r.status))), d.ok !== false);
-  } catch (e) { toast("Request failed: " + e, false); }
+    return d;
+  } catch (e) { toast("Request failed: " + e, false); return { ok: false, error: String(e) }; }
+}
+
+// Pull the live config straight from the product API so the Advanced form always
+// reflects what is actually persisted. The SSE stream only carries `config` in
+// the initial snapshot, so without this the form could render a stale config and
+// a Save would write those stale values back — silently wiping real settings.
+async function refreshConfig(p) {
+  try {
+    const r = await fetch(PRODUCTS[p].base + "/config", { headers: tokenHeaders() });
+    const d = await r.json().catch(() => ({}));
+    if (d && d.config) state[p].config = d.config;
+  } catch (e) { /* keep whatever we have */ }
 }
 
 async function callBridge(action, payload) {
@@ -140,7 +163,6 @@ async function callBridge(action, payload) {
 
 function render() {
   el("version").textContent = state.version ? ("v" + state.version) : "v…";
-  renderAdsPowerBanner();
   if (active === "nyx" || active === "nyxify") renderPanel(active);
   // Settings is rendered once on tab open (see setActive); re-rendering on every
   // SSE tick would clobber in-progress edits in the config form.
@@ -171,6 +193,7 @@ function panelSignature(p, cfg, s) {
     (s.bot && s.bot.state) || "",
     (s.bot && s.bot.detail) || "",
     p === "nyxify" ? JSON.stringify(s.usage || {}) : "",
+    p === "nyxify" ? JSON.stringify(s.live || {}) : "",
     JSON.stringify(s.counts || {}),
     s.statusFilter || "",
     (s.search || "").toLowerCase().trim(),
@@ -196,8 +219,8 @@ function renderPanel(p) {
   const stEl = el("state-" + p); stEl.textContent = bs; stEl.className = "state " + bs;
   el("detail-" + p).textContent = (s.bot && s.bot.detail) || "";
   if (p === "nyxify") {
-    const u = s.usage || {};
-    el("usage-nyxify").textContent = (u.used != null) ? ("AdsPower profiles: " + u.used) : (u.error ? ("AdsPower: " + u.error) : "");
+    const live = s.live || {};
+    el("usage-nyxify").textContent = live.ready ? ("Open AdsPower profiles: " + (live.open || 0)) : "";
   }
 
   // Tiles — click to filter by status
@@ -311,9 +334,8 @@ function renderRunnerButtons(p) {
   const bar = el("runner-" + p);
   if (!bar) return;
   const botState = ((state[p].bot || {}).state || "").toLowerCase();
-  const isRunning = botState === "running";
+  const isActive = ["running", "paused", "waiting", "blocked"].includes(botState);
   const isPaused = botState === "paused";
-  const isActive = isRunning || isPaused;
   bar.innerHTML = "";
   const g = document.createElement("div"); g.className = "btn-group"; bar.appendChild(g);
   const ss = document.createElement("button");
@@ -399,7 +421,10 @@ function setActive(p) {
   document.querySelectorAll(".panel").forEach(s => s.classList.toggle("hidden", s.dataset.product !== p && s.id !== ("panel-" + p)));
   if (p === "settings") renderSettings();
   if (p === "bitmoji") loadBitmoji();
-  if (p === "nyx" || p === "nyxify") render();
+  if (p === "nyx" || p === "nyxify") {
+    callBridge("hotkey_product", { product: p }).catch(() => {});
+    render();
+  }
 }
 
 // ---------- Settings panel ----------
@@ -498,8 +523,7 @@ function renderNyxAdvanced() {
         ${opt("default", "Default")}${opt("mixed", "Mixed")}${opt("casual", "Casual")}${opt("sexy", "Sexy")}${opt("no_dresses", "No Dresses")}
       </select></label>
       <div class="adv-field toggle-row"><span class="toggle-text">Hair randomizer</span><label class="toggle-switch"><input id="cfg-hair_randomizer_enabled" type="checkbox" ${v.hair_randomizer_enabled ? "checked" : ""}><span class="toggle-slider"></span></label></div>
-      <div class="adv-field toggle-row"><span class="toggle-text">Nyxify guard</span><label class="toggle-switch"><input id="cfg-nyxify_guard_enabled" type="checkbox" ${v.nyxify_guard_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
-      <div class="adv-field toggle-row"><span class="toggle-text">Nyxify guard — strict (hold profiles with no Nyxify task)</span><label class="toggle-switch"><input id="cfg-nyxify_guard_strict" type="checkbox" ${v.nyxify_guard_strict ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+
     </div>
     <div class="adv-section-label">AdsPower Local API</div>
     <p class="adv-note">NyxSuite connects to AdsPower automatically — just keep the AdsPower app open and logged in. No API key needed. The fields below are optional, only for a custom host/port or an AdsPower that requires a key.</p>
@@ -528,11 +552,15 @@ function renderNyxifyAdvanced() {
       <label class="adv-field"><span>Max parallel</span><input id="ncfg-max_parallel_profiles" class="input" value="${escapeAttr(v.max_parallel_profiles || 1)}"></label>
       <label class="adv-field"><span>Temporary name</span><input id="ncfg-temporary_profile_name" class="input" value="${escapeAttr(v.temporary_profile_name || "")}"></label>
       <label class="adv-field"><span>AdsPower group</span><input id="ncfg-adspower_group" class="input" value="${escapeAttr(v.adspower_group || "")}"></label>
+      <label class="adv-field"><span>Extension category</span><input id="ncfg-extension_category" class="input" value="${escapeAttr(v.extension_category || "")}"></label>
       <label class="adv-field"><span>Tag 1</span><input id="ncfg-tag_one" class="input" value="${escapeAttr(v.tag_one || "")}"></label>
       <label class="adv-field"><span>Tag 2</span><input id="ncfg-tag_two" class="input" value="${escapeAttr(v.tag_two || "")}"></label>
-      <div class="adv-field toggle-row"><span class="toggle-text">Apply AdsPower tags <span class="muted">(off = no tags on created profiles)</span></span><label class="toggle-switch"><input id="ncfg-adspower_tags_enabled" type="checkbox" ${v.adspower_tags_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">Apply AdsPower tags <span class="muted">(off = no tags on created profiles)</span></span><label class="toggle-switch"><input id="ncfg-adspower_tags_enabled" type="checkbox" ${v.adspower_tags_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
       <div class="adv-field toggle-row"><span class="toggle-text">Push AdsPower ID to SnapBoard</span><label class="toggle-switch"><input id="ncfg-push_adspower_id_enabled" type="checkbox" ${v.push_adspower_id_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">Proxy Blocker</span><label class="toggle-switch"><input id="ncfg-proxy_blocker_enabled" type="checkbox" ${v.proxy_blocker_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">Proxy Checker <span class="muted">(uses AdsPower check)</span></span><label class="toggle-switch"><input id="ncfg-proxy_checker_enabled" type="checkbox" ${v.proxy_checker_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
       <div class="adv-field toggle-row"><span class="toggle-text">Full Auto Mode</span><label class="toggle-switch"><input id="ncfg-full_auto_mode_enabled" type="checkbox" ${v.full_auto_mode_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">Continuous Mode <span class="muted">(send completed signups to Nyx)</span></span><label class="toggle-switch"><input id="ncfg-continuous_mode_enabled" type="checkbox" ${v.continuous_mode_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
     </div>
     <label class="adv-field adv-field-wide"><span>Banned proxies (one per line)</span><textarea id="ncfg-banned_proxies" class="input textarea-full">${escapeHtml(banned.join("\n"))}</textarea></label>
     <button id="ncfg-save-btn" class="btn primary" type="button">Save Config</button>
@@ -599,43 +627,6 @@ el("update-apply-btn").addEventListener("click", async () => {
   }, pollInterval);
 });
 
-// Dismissible banner for AdsPower environment problems (Local API permission /
-// unreachable). Driven by state.nyx.health, which the runner sets via its
-// preflight gate. Dismissing hides the current problem until its code changes;
-// recovery re-arms it so a future problem shows again.
-let dismissedAdsHealthCode = null;
-function renderAdsPowerBanner() {
-  const health = (state.nyx && state.nyx.health) || null;
-  const existing = el("adspower-health-banner");
-  if (!health || !health.message) {
-    dismissedAdsHealthCode = null;
-    if (existing) existing.remove();
-    return;
-  }
-  if (health.code && health.code === dismissedAdsHealthCode) {
-    if (existing) existing.remove();
-    return;
-  }
-  const msg = escapeHtml(String(health.message));
-  if (existing) {
-    const t = el("adspower-health-text");
-    if (t) t.innerHTML = msg;
-    return;
-  }
-  const banner = document.createElement("div");
-  banner.id = "adspower-health-banner";
-  banner.className = "adspower-health-banner";
-  banner.innerHTML = `<span id="adspower-health-text">${msg}</span>`
-    + `<button id="adspower-health-settings" class="btn btn-ghost" type="button">Open Settings</button>`
-    + `<button id="adspower-health-dismiss" class="banner-x" type="button" aria-label="Dismiss">✕</button>`;
-  document.querySelector(".topbar")?.after(banner);
-  el("adspower-health-settings")?.addEventListener("click", () => setActive("settings"));
-  el("adspower-health-dismiss")?.addEventListener("click", () => {
-    dismissedAdsHealthCode = health.code || "dismissed";
-    banner.remove();
-  });
-}
-
 function showExtensionReloadBanner(version) {
   const existing = el("ext-reload-banner");
   if (existing) return;
@@ -678,11 +669,14 @@ el("nyx-advanced-toggle").addEventListener("click", () => {
   el("nyx-advanced-toggle").classList.toggle("active", willShow);
 });
 
-el("nyxify-advanced-toggle").addEventListener("click", () => {
+el("nyxify-advanced-toggle").addEventListener("click", async () => {
   const panel = el("nyxify-advanced");
   const willShow = panel.hidden;
   state.nyxify.advancedVisible = willShow;
-  if (willShow) renderNyxifyAdvanced();
+  if (willShow) {
+    await refreshConfig("nyxify");   // always edit the live config, never a stale one
+    renderNyxifyAdvanced();
+  }
   panel.hidden = !willShow;
   el("nyxify-advanced-toggle").classList.toggle("active", willShow);
 });
@@ -696,8 +690,7 @@ document.addEventListener("click", async (e) => {
       automation_speed: Math.max(0.1, Math.min(2.0, Math.round((speedPct / 50) * 100) / 100)),
       outfit_style: el("cfg-outfit_style").value,
       hair_randomizer_enabled: el("cfg-hair_randomizer_enabled").checked,
-      nyxify_guard_enabled: el("cfg-nyxify_guard_enabled").checked,
-      nyxify_guard_strict: el("cfg-nyxify_guard_strict").checked,
+
       adspower_host: el("cfg-adspower_host") ? el("cfg-adspower_host").value.trim() : "",
       adspower_port: el("cfg-adspower_port") ? el("cfg-adspower_port").value.trim() : "",
     };
@@ -740,14 +733,21 @@ document.addEventListener("click", async (e) => {
       max_parallel_profiles: parseInt(el("ncfg-max_parallel_profiles").value) || 1,
       temporary_profile_name: el("ncfg-temporary_profile_name").value,
       adspower_group: el("ncfg-adspower_group").value,
+      extension_category: el("ncfg-extension_category").value,
       tag_one: el("ncfg-tag_one").value,
       tag_two: el("ncfg-tag_two").value,
       adspower_tags_enabled: el("ncfg-adspower_tags_enabled").checked,
       push_adspower_id_enabled: el("ncfg-push_adspower_id_enabled").checked,
+      proxy_blocker_enabled: el("ncfg-proxy_blocker_enabled").checked,
+      proxy_checker_enabled: el("ncfg-proxy_checker_enabled").checked,
       full_auto_mode_enabled: el("ncfg-full_auto_mode_enabled").checked,
+      continuous_mode_enabled: el("ncfg-continuous_mode_enabled").checked,
       banned_proxies: el("ncfg-banned_proxies").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
     };
-    await callAction("nyxify", "/config", cfg);
+    const res = await callAction("nyxify", "/config", cfg);
+    // Keep local state in sync with what was persisted, so re-opening the panel
+    // (or a later save) edits the saved config — not a stale snapshot.
+    if (res && res.config) { state.nyxify.config = res.config; renderNyxifyAdvanced(); }
     el("nyxify-config-feedback").textContent = "Config saved.";
   }
 });

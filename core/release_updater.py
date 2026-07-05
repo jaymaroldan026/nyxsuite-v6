@@ -356,14 +356,14 @@ def extract_staging_zip(zip_path: Path, dest_dir: Path) -> Path:
     """Extract `zip_path` into `dest_dir` and return the inner folder.
 
     Release ZIPs are expected to contain a single top-level folder like
-    ``NyxSuite-v4.3.0/``. We return that folder so the updater can be pointed
+    ``NyxSuite-v6.3.0/``. We return that folder so the updater can be pointed
     at it.
 
     Robust against ZIPs whose entries use backslash (``\\``) path separators.
     Older release ZIPs were built with PowerShell's ``Compress-Archive``, which
     stored Windows-style separators; non-Windows Python treats ``\\`` as a
     literal filename character, so ``extractall()`` created flat files like
-    ``NyxSuite-v4.3.0\\core\\foo.py`` instead of nested folders. The updater
+    ``NyxSuite-v6.3.0\\core\\foo.py`` instead of nested folders. The updater
     then found no ``core/``/``webui/``/``data/`` and reported "0 files synced"
     (the macOS update-does-nothing bug). We normalize separators ourselves.
     """

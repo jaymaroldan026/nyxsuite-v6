@@ -1,0 +1,316 @@
+import asyncio
+import sys
+import types
+import unittest
+from unittest import mock
+
+class _RequestsResponse:
+    status_code = 200
+    text = "{}"
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        return None
+
+
+class _RequestsSession:
+    def __init__(self):
+        self.trust_env = False
+
+    def get(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+    def post(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+
+_requests_stub = types.ModuleType("requests")
+_requests_stub.Session = _RequestsSession
+_requests_stub.get = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.post = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.exceptions = types.SimpleNamespace(
+    ConnectionError=ConnectionError,
+    Timeout=TimeoutError,
+    RequestException=Exception,
+)
+sys.modules.setdefault("requests", _requests_stub)
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *_args, **_kwargs: None))
+_playwright_pkg = types.ModuleType("playwright")
+_playwright_async_api = types.ModuleType("playwright.async_api")
+_playwright_async_api.async_playwright = lambda: None
+_playwright_async_api.TimeoutError = TimeoutError
+sys.modules.setdefault("playwright", _playwright_pkg)
+sys.modules.setdefault("playwright.async_api", _playwright_async_api)
+
+import nyxify_runner
+
+
+class _FakeLogger:
+    def info(self, *_args, **_kwargs):
+        pass
+
+    def warning(self, *_args, **_kwargs):
+        pass
+
+    def error(self, *_args, **_kwargs):
+        pass
+
+
+class _FakeStore:
+    def __init__(self):
+        self.updates = []
+        self.usernames = []
+        self.proxy_updates = []
+
+    def update_task_state(self, task_id, **updates):
+        self.updates.append((task_id, dict(updates)))
+
+    def update_task_username(self, row_key, username):
+        self.usernames.append((row_key, username))
+
+    def update_task_proxy(self, task_id, proxy_address):
+        self.proxy_updates.append((task_id, proxy_address))
+
+    def clear_otp_request(self, _row_key):
+        pass
+
+    def request_otp_for_row(self, _row_key):
+        pass
+
+    def consume_otp_code(self, _row_key):
+        return ""
+
+
+class _FakeAdsPower:
+    def __init__(self, rename_error=None, rotate_during_create=False):
+        self.closed = []
+        self.renamed = []
+        self.create_calls = []
+        self.rotated_proxy = ""
+        self.rename_error = rename_error
+        self.rotate_during_create = rotate_during_create
+
+    def create_profile(self, **kwargs):
+        self.create_calls.append(dict(kwargs))
+        if self.rotate_during_create:
+            self.rotated_proxy = kwargs["proxy_rotator"](
+                current_proxy=kwargs["proxy_value"],
+                attempt=1,
+                reason="gui_proxy_check_failed",
+            )
+        return {"profile_id": "k1new", "name": "Snapchat:"}
+
+    def close_profile(self, profile_id):
+        self.closed.append(profile_id)
+        return {"code": 0}
+
+    def rename_profile(self, profile_id, new_name):
+        if self.rename_error:
+            raise self.rename_error
+        self.renamed.append((profile_id, new_name))
+        return {"profile_id": profile_id, "name": new_name}
+
+
+class _FakePage:
+    url = "https://accounts.snapchat.com/v2/signup"
+
+    def on(self, *_args, **_kwargs):
+        pass
+
+
+class _FakePlaywright:
+    def __init__(self):
+        self.stopped = False
+
+    async def stop(self):
+        self.stopped = True
+
+
+async def _fake_rotate_proxy(**kwargs):
+    return kwargs["proxy_value"], {"proxy": None}
+
+
+async def _fake_disable_extensions(*_args, **_kwargs):
+    return {
+        "playwright_instance": _FakePlaywright(),
+        "signup_page": None,
+        "context": object(),
+        "signup_url": "",
+    }
+
+
+async def _fake_warmup(*_args, **_kwargs):
+    return {"enabled": True, "visited": ["https://wikipedia.org/"]}
+
+
+async def _fake_open_signup(*_args, **_kwargs):
+    return {
+        "page": _FakePage(),
+        "url": "https://accounts.snapchat.com/v2/signup",
+        "method": "new_tab",
+    }
+
+
+async def _fake_signup(**kwargs):
+    await kwargs["username_detected_callback"]("cleepink")
+    return {"final_username": "cleepink", "otp_entered": True}
+
+
+async def _fake_signup_without_welcome_username(**kwargs):
+    return {
+        "final_username": "",
+        "otp_entered": True,
+        "reached_verification": True,
+        "error": "",
+    }
+
+
+async def _fake_snapboard_wait(*_args, **_kwargs):
+    return True
+
+
+class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
+    async def _run_task(
+        self,
+        continuous_mode,
+        rename_error=None,
+        signup_side_effect=_fake_signup,
+        adspower_id_update=None,
+        rotate_during_create=False,
+        snapboard_rotation="",
+    ):
+        store = _FakeStore()
+        adspower = _FakeAdsPower(
+            rename_error=rename_error,
+            rotate_during_create=rotate_during_create,
+        )
+        handoffs = []
+        adspower_id_update = adspower_id_update or (lambda *_args, **_kwargs: True)
+        config = {
+            "blocked_proxies": [],
+            "proxy_blocker_enabled": False,
+            "proxy_checker_enabled": False,
+            "adspower_tags_enabled": False,
+            "temporary_profile_name": "Snapchat:",
+            "adspower_group": "Snapchat",
+            "extension_category": "Snap",
+            "push_adspower_id_enabled": True,
+            "full_auto_mode_enabled": False,
+            "continuous_mode_enabled": continuous_mode,
+            "names_dir": "",
+        }
+        task = {
+            "id": 123,
+            "row_key": "snapboard:123",
+            "username": "seeduser",
+            "model": "Clea",
+            "proxy_address": "1.2.3.4:5555:user:pass",
+            "email": "person@example.com",
+        }
+
+        def fake_handoff(profile_id, model, logger=None):
+            handoffs.append((profile_id, model))
+            return {"ok": True, "method": "api"}
+
+        with mock.patch.object(nyxify_runner, "logger", _FakeLogger()), \
+                mock.patch.object(nyxify_runner, "load_nyxify_config", return_value=config), \
+                mock.patch.object(nyxify_runner, "_rotate_proxy_until_usable", side_effect=_fake_rotate_proxy), \
+                mock.patch.object(nyxify_runner, "disable_profile_extensions", side_effect=_fake_disable_extensions), \
+                mock.patch.object(nyxify_runner, "warm_ads_profile_cookies", side_effect=_fake_warmup), \
+                mock.patch.object(nyxify_runner, "open_snapchat_signup", side_effect=_fake_open_signup), \
+                mock.patch.object(nyxify_runner, "perform_snapchat_signup", side_effect=signup_side_effect), \
+                mock.patch.object(nyxify_runner, "_wait_for_snapboard_update", side_effect=_fake_snapboard_wait), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_username_update", return_value=True), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_adspower_id_update", side_effect=adspower_id_update), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_adspower_name_update", return_value=True), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_rotation_sync", return_value=snapboard_rotation, create=True), \
+                mock.patch.object(nyxify_runner, "_play_completion_sound"), \
+                mock.patch.object(nyxify_runner, "enqueue_profile_for_nyx", side_effect=fake_handoff):
+            await nyxify_runner.process_task(task, store, adspower)
+
+        return store, adspower, handoffs
+
+    async def test_cookie_warmup_is_visible_step_before_signup_handoff(self):
+        store, _adspower, _handoffs = await self._run_task(True)
+
+        steps = [update.get("last_step") for _task_id, update in store.updates if update.get("last_step")]
+
+        self.assertLess(steps.index("extensions_disabled"), steps.index("cookie_warmup"))
+        self.assertLess(steps.index("cookie_warmup"), steps.index("signup_handoff"))
+        self.assertLess(steps.index("signup_handoff"), steps.index("signup_opened"))
+
+    async def test_continuous_mode_renames_queues_nyx_and_does_not_close(self):
+        store, adspower, handoffs = await self._run_task(True)
+
+        self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+        self.assertEqual(adspower.closed, [])
+        self.assertEqual(handoffs, [("k1new", "Clea")])
+        self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
+
+    async def test_toggle_off_keeps_existing_close_after_signup_behavior(self):
+        _store, adspower, handoffs = await self._run_task(False)
+
+        self.assertEqual(handoffs, [])
+        self.assertEqual(adspower.closed, ["k1new"])
+        self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+
+    async def test_continuous_mode_rename_failure_does_not_close_or_handoff(self):
+        store, adspower, handoffs = await self._run_task(True, rename_error=RuntimeError("rename unavailable"))
+
+        self.assertEqual(adspower.closed, [])
+        self.assertEqual(adspower.renamed, [])
+        self.assertEqual(handoffs, [])
+        self.assertTrue(any(update.get("last_step") == "profile_rename_failed" for _task_id, update in store.updates))
+        self.assertTrue(any("rename unavailable" in update.get("error", "") for _task_id, update in store.updates))
+
+    async def test_otp_without_welcome_username_does_not_complete_or_handoff(self):
+        store, adspower, handoffs = await self._run_task(
+            True,
+            signup_side_effect=_fake_signup_without_welcome_username,
+        )
+
+        self.assertEqual(adspower.closed, [])
+        self.assertEqual(adspower.renamed, [])
+        self.assertEqual(handoffs, [])
+        self.assertFalse(any(update.get("status") == "DONE" for _task_id, update in store.updates))
+        self.assertTrue(any(update.get("last_step") == "awaiting_welcome_username" for _task_id, update in store.updates))
+
+    async def test_incomplete_signup_does_not_push_adspower_id_to_snapboard(self):
+        adspower_id_updates = []
+
+        def record_adspower_id_update(row_key, adspower_id):
+            adspower_id_updates.append((row_key, adspower_id))
+            return True
+
+        await self._run_task(
+            True,
+            signup_side_effect=_fake_signup_without_welcome_username,
+            adspower_id_update=record_adspower_id_update,
+        )
+
+        self.assertEqual(
+            adspower_id_updates,
+            [("snapboard:123", "k1new")],
+            "AdsPower id is now pushed to SnapBoard immediately after profile creation",
+        )
+
+    async def test_gui_proxy_check_failure_rotator_updates_task_proxy(self):
+        store, adspower, _handoffs = await self._run_task(
+            False,
+            rotate_during_create=True,
+            snapboard_rotation="9.9.9.9:9999:user:pass",
+        )
+
+        self.assertEqual(adspower.rotated_proxy, "9.9.9.9:9999:user:pass")
+        self.assertEqual(store.proxy_updates, [(123, "9.9.9.9:9999:user:pass")])
+        self.assertTrue(callable(adspower.create_calls[0]["proxy_rotator"]))
+        self.assertTrue(any(
+            update.get("last_step") == "refreshing_proxy_after_gui_proxy_check_failed"
+            for _task_id, update in store.updates
+        ))
+
+
+if __name__ == "__main__":
+    unittest.main()

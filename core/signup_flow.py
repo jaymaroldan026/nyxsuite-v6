@@ -23,6 +23,41 @@ SIGNUP_MAX_REFRESH_ATTEMPTS = int(os.getenv("NYXIFY_SIGNUP_MAX_REFRESH_ATTEMPTS"
 # How many times to (re-)order a verification email from SnapBoard when it has
 # "no pending email order" before giving up and letting the runner retry.
 EMAIL_ORDER_MAX_ATTEMPTS = int(os.getenv("NYXIFY_EMAIL_ORDER_MAX_ATTEMPTS", "4"))
+# Phone numbers can be rejected before Snapchat sends an SMS. When that happens
+# SnapBoard can issue a replacement number via its redo/force-new path.
+PHONE_VERIFICATION_MAX_ATTEMPTS = int(os.getenv("NYXIFY_PHONE_VERIFICATION_MAX_ATTEMPTS", "2"))
+SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS", "250"))
+SIGNUP_FAST_SUBMIT_POST_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_POST_CLEAR_MS", "150"))
+SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS", "90"))
+SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS", "220"))
+SIGNUP_UNABLE_TO_PROCESS_RETRY_SETTLE_MS = int(
+    os.getenv("NYXIFY_SIGNUP_UNABLE_RETRY_SETTLE_MS", "600")
+)
+
+_USERNAME_TAKEN_ERROR_MARKERS = [
+    "username is already taken",
+    "username already taken",
+    "username is taken",
+    "username has been taken",
+    "this username is taken",
+    "this username has been taken",
+    "already been taken",
+    "try another username",
+]
+
+_USERNAME_INVALID_ERROR_MARKERS = [
+    "invalid username",
+    "letters and numbers with an optional hyphen",
+    "optional hyphen, underscore, or period",
+    "underscore, or period in between please",
+]
+
+_UNABLE_TO_PROCESS_ERROR_MARKERS = [
+    "we are sorry, we were unable to process your request",
+    "unable to process your request",
+    "nie udało nam się przetworzyć",
+    "przetworzyć twojego polecenia",
+]
 
 _EMAIL_INPUT_SELECTORS = [
     "input[type='email']",
@@ -42,6 +77,22 @@ _OTP_INPUT_SELECTORS = [
     "input[maxlength='6'][name*='code' i]",
     "input[placeholder*='code' i]",
     "input[data-testid*='code' i]",
+]
+
+_PHONE_COUNTRY_CODE_SELECTORS = [
+    "#countryCode",
+    "input[name='countryCode']",
+    "input[aria-label*='country code' i]",
+]
+
+_PHONE_NUMBER_SELECTORS = [
+    "#phoneNumber",
+    "input[name='phoneNumber']",
+    "input[autocomplete='tel-national']",
+    "input[autocomplete='tel']",
+    "input[inputmode='tel']",
+    "input[aria-label*='phone number' i]",
+    "input[placeholder*='phone number' i]",
 ]
 
 # ---------------------------------------------------------------------------
@@ -580,15 +631,19 @@ def _same_username(lhs: str, rhs: str) -> bool:
     return str(lhs or "").strip().lower() == str(rhs or "").strip().lower()
 
 
-async def _click_signup_submit(page, logger=None, profile_id: str = "") -> bool:
-    submit_selectors = ["button[type='submit']", "button:has-text('Agree and Continue')"]
+async def _click_signup_submit(page, logger=None, profile_id: str = "", *, fast: bool = False) -> bool:
+    submit_selectors = ["button:has-text('Agree and Continue')", "button[type='submit']"]
     submit_selector = await _visible_any(page, submit_selectors)
     submit_selector = submit_selector or "button[type='submit']"
-    await _keep_signup_page_clear(page, logger, profile_id, duration_ms=1200)
+    pre_clear_ms = SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS if fast else 800
+    post_clear_ms = SIGNUP_FAST_SUBMIT_POST_CLEAR_MS if fast else 500
+    pause_min_ms = SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS if fast else 350
+    pause_max_ms = SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS if fast else 900
+    await _keep_signup_page_clear(page, logger, profile_id, duration_ms=pre_clear_ms)
     enabled = await _wait_enabled(page, submit_selector, timeout_ms=12000)
     logger and logger.info(f"[{profile_id}] Submit button enabled={enabled}")
-    await _human_pause(page, 500, 1400)
-    await _keep_signup_page_clear(page, logger, profile_id, duration_ms=800)
+    await _human_pause(page, pause_min_ms, pause_max_ms)
+    await _keep_signup_page_clear(page, logger, profile_id, duration_ms=post_clear_ms)
     clicked = await _js_click(page, submit_selector)
     logger and logger.info(f"[{profile_id}] Submit click={clicked}")
     return clicked
@@ -610,7 +665,7 @@ async def _is_username_taken_error_visible(page) -> bool:
         return bool(
             await page.evaluate(
                 """
-                () => {
+                (usernameTakenMarkers) => {
                     const isVisible = (node) => {
                         if (!node) return false;
                         const style = window.getComputedStyle(node);
@@ -639,14 +694,15 @@ async def _is_username_taken_error_visible(page) -> bool:
                                 continue;
                             }
                             const text = String(node.innerText || node.textContent || "").trim().toLowerCase();
-                            if (text.includes("username is already taken")) {
+                            if (usernameTakenMarkers.some((marker) => text.includes(marker))) {
                                 return true;
                             }
                         }
                     }
                     return false;
                 }
-                """
+                """,
+                list(_USERNAME_TAKEN_ERROR_MARKERS) + list(_USERNAME_INVALID_ERROR_MARKERS),
             )
         )
     except Exception:
@@ -673,7 +729,7 @@ async def _is_use_email_switch_visible(page) -> bool:
         return bool(
             await page.evaluate(
                 """
-                () => {
+                (usernameTakenMarkers) => {
                     const normalize = (value) => String(value || "")
                         .replace(/\\s+/g, " ")
                         .trim()
@@ -718,13 +774,17 @@ async def _detect_signup_handoff_stage(page, logger=None, profile_id: str = "") 
         logger and logger.info(f"[{profile_id}] OTP step detected during signup handoff.")
         return "otp"
 
+    if await _is_use_email_switch_visible(page):
+        logger and logger.info(f"[{profile_id}] Use email instead switch detected during signup handoff.")
+        return "email_switch"
+
     if await _visible_any(page, _EMAIL_INPUT_SELECTORS) or await _is_email_verification_step(page):
         logger and logger.info(f"[{profile_id}] Email verification step detected during signup handoff.")
         return "email"
 
-    if await _is_use_email_switch_visible(page):
-        logger and logger.info(f"[{profile_id}] Use email instead switch detected during signup handoff.")
-        return "email_switch"
+    if await _is_phone_verification_step(page):
+        logger and logger.info(f"[{profile_id}] Phone verification step detected during signup handoff.")
+        return "phone"
 
     return ""
 
@@ -742,10 +802,16 @@ async def _emit_signup_progress(progress_callback, step: str, logger=None, profi
 
 async def _is_unable_to_process_error_visible(page) -> bool:
     try:
-        return bool(
+        if bool(
             await page.evaluate(
                 """
-                () => {
+                (payload) => {
+                    const usernameTakenMarkers = Array.isArray(payload && payload.usernameTakenMarkers)
+                        ? payload.usernameTakenMarkers
+                        : [];
+                    const unableMarkers = Array.isArray(payload && payload.unableMarkers)
+                        ? payload.unableMarkers
+                        : [];
                     const normalize = (value) => String(value || "")
                         .replace(/\\s+/g, " ")
                         .trim()
@@ -760,18 +826,47 @@ async def _is_unable_to_process_error_visible(page) -> bool:
                         const rect = node.getBoundingClientRect();
                         return rect.width > 0 && rect.height > 0;
                     };
+                    const onSignupForm = ["#firstname", "#username", "#password", "#day", "#year"].some((selector) => {
+                        const el = document.querySelector(selector);
+                        return el && isVisible(el);
+                    });
                     const nodes = Array.from(document.querySelectorAll(
-                        "p[data-testid='error-text'], [data-testid='error-text'], [class*='GenericFormLevelErrorMessage']"
+                        "p[data-testid='error-text'], [data-testid='error-text'], [class*='GenericFormLevelErrorMessage'], [role='alert'], [aria-live='assertive'], [class*='error' i]"
                     ));
                     return nodes.some((node) => {
                         if (!isVisible(node)) return false;
                         const text = normalize(node.innerText || node.textContent);
-                        return text.includes("we are sorry, we were unable to process your request.");
+                        if (usernameTakenMarkers.some((marker) => text.includes(marker))) {
+                            return false;
+                        }
+                        if (unableMarkers.some((marker) => text.includes(marker))) {
+                            return true;
+                        }
+                        return onSignupForm
+                            && text
+                            && Boolean(node.closest("[class*='GenericFormLevelErrorMessage']"));
                     });
                 }
-                """
+                """,
+                {
+                    "usernameTakenMarkers": list(_USERNAME_TAKEN_ERROR_MARKERS),
+                    "unableMarkers": list(_UNABLE_TO_PROCESS_ERROR_MARKERS),
+                },
             )
+        ):
+            return True
+    except Exception:
+        pass
+
+    try:
+        on_signup_form = bool(
+            await _visible_any(page, ["#firstname", "#username", "#password", "#day", "#year"])
         )
+        if not on_signup_form:
+            return False
+        if await _page_has_visible_text(page, _USERNAME_TAKEN_ERROR_MARKERS):
+            return False
+        return await _page_has_visible_text(page, _UNABLE_TO_PROCESS_ERROR_MARKERS)
     except Exception:
         return False
 
@@ -930,7 +1025,11 @@ async def _is_non_english_signup_page(page) -> bool:
     return False
 
 
-async def _reload_and_refill_signup(page, snap_name, birthday, username, logger=None, profile_id: str = "") -> bool:
+def _resolve_signup_password(password: str = "") -> str:
+    return str(password or "").strip() or PASSWORD
+
+
+async def _reload_and_refill_signup(page, snap_name, birthday, username, password="", logger=None, profile_id: str = "") -> bool:
     """Hard-refresh the signup page and re-enter every field, then resubmit.
 
     Used to recover a stalled form (no captcha challenge / reCAPTCHA service
@@ -952,7 +1051,7 @@ async def _reload_and_refill_signup(page, snap_name, birthday, username, logger=
         logger and logger.warning(f"[{profile_id}] Signup form did not reappear after reload.")
         return False
 
-    fill_result = await _fill_signup_form(page, snap_name, birthday, username, logger, profile_id)
+    fill_result = await _fill_signup_form(page, snap_name, birthday, username, password, logger, profile_id)
     return bool(fill_result.get("submitted"))
 
 
@@ -965,7 +1064,7 @@ async def _retry_taken_username(page, current_username: str, username_retry_prov
         clicked_email = await _click_use_email_instead(page, logger, profile_id)
         if clicked_email:
             return ""
-    elif handoff_stage in {"email", "otp", "welcome"}:
+    elif handoff_stage in {"email", "otp", "phone", "welcome"}:
         logger and logger.info(
             f"[{profile_id}] Skipping replacement username retry because signup already reached {handoff_stage!r}."
         )
@@ -1015,14 +1114,14 @@ async def _retry_taken_username(page, current_username: str, username_retry_prov
                     f"[{profile_id}] Replacement username input was not fillable, but email handoff was available."
                 )
                 return ""
-        elif handoff_stage in {"email", "otp", "welcome"}:
+        elif handoff_stage in {"email", "otp", "phone", "welcome"}:
             logger and logger.info(
                 f"[{profile_id}] Replacement username input was not fillable because signup already reached {handoff_stage!r}."
             )
             return ""
         raise RuntimeError("Could not fill the replacement Snapchat username.")
 
-    clicked = await _click_signup_submit(page, logger, profile_id)
+    clicked = await _click_signup_submit(page, logger, profile_id, fast=True)
     if not clicked:
         raise RuntimeError("Could not submit signup after replacing the Snapchat username.")
 
@@ -1030,9 +1129,10 @@ async def _retry_taken_username(page, current_username: str, username_retry_prov
 
 
 async def _fill_signup_form(
-    page, snap_name: str, birthday: dict, username: str, logger, profile_id: str
+    page, snap_name: str, birthday: dict, username: str, password: str = "", logger=None, profile_id: str = ""
 ) -> dict:
     resolved_username = _resolve_signup_username(username, logger, profile_id)
+    resolved_password = _resolve_signup_password(password)
 
     try:
         await page.bring_to_front()
@@ -1079,7 +1179,7 @@ async def _fill_signup_form(
 
     # Password
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=300)
-    await _humanized_type(page, "#password", PASSWORD, logger, f"[{profile_id}] password")
+    await _humanized_type(page, "#password", resolved_password, logger, f"[{profile_id}] password")
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=900)
 
     # Log field values to confirm React accepted them
@@ -1098,7 +1198,7 @@ async def _fill_signup_form(
     except Exception:
         pass
 
-    clicked = await _click_signup_submit(page, logger, profile_id)
+    clicked = await _click_signup_submit(page, logger, profile_id, fast=True)
     return {"submitted": clicked, "username": resolved_username}
 
 
@@ -1279,6 +1379,94 @@ async def _is_email_verification_step(page) -> bool:
         return False
 
 
+async def _is_phone_verification_step(page) -> bool:
+    try:
+        direct_selector = await _visible_any(
+            page,
+            [
+                *_PHONE_NUMBER_SELECTORS,
+                "label:has-text('Phone Number')",
+                "text='Phone Number'",
+            ],
+        )
+        if direct_selector and await _visible_any(page, _PHONE_NUMBER_SELECTORS):
+            return True
+    except Exception:
+        pass
+
+    try:
+        return bool(
+            await page.evaluate(
+                """
+                () => {
+                    const isVisible = (node) => {
+                        if (!node) return false;
+                        const style = window.getComputedStyle(node);
+                        if (!style) return false;
+                        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                            return false;
+                        }
+                        const rect = node.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    };
+
+                    const phoneInput = document.querySelector(
+                        "#phoneNumber, input[name='phoneNumber'], input[autocomplete='tel-national'], input[autocomplete='tel']"
+                    );
+                    if (phoneInput && isVisible(phoneInput)) {
+                        return true;
+                    }
+
+                    const visibleText = Array.from(document.querySelectorAll('label, span, div, h6'))
+                        .filter(isVisible)
+                        .map((node) => String(node.innerText || node.textContent || '').trim().toLowerCase())
+                        .filter(Boolean);
+                    const hasPhoneLabel = visibleText.some((text) => text === 'phone number' || text.includes('phone number'));
+                    const hasCountryCode = !!Array.from(document.querySelectorAll("#countryCode, input[name='countryCode']"))
+                        .find(isVisible);
+                    return hasPhoneLabel && hasCountryCode;
+                }
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
+def _split_phone_number(phone: str) -> tuple[str, str]:
+    raw = str(phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return "", ""
+
+    if raw.lstrip().startswith("+") and len(digits) > 10:
+        return f"+{digits[:-10]}", digits[-10:]
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+1", digits[1:]
+    return "", digits
+
+
+async def _fill_and_submit_phone_number(signup_page, phone: str, logger=None, profile_id: str = "") -> bool:
+    _country_code, local_number = _split_phone_number(phone)
+    if not local_number:
+        return False
+
+    for phone_sel in _PHONE_NUMBER_SELECTORS:
+        try:
+            loc = signup_page.locator(phone_sel).first
+            if await loc.is_visible():
+                await _humanized_type_only(signup_page, phone_sel, local_number, logger, f"[{profile_id}] phone")
+                await signup_page.wait_for_timeout(400)
+                await _wait_enabled(signup_page, "button[type='submit']", timeout_ms=5000)
+                await _human_pause(signup_page, 250, 800)
+                await _js_click(signup_page, "button[type='submit']")
+                await signup_page.wait_for_timeout(1200)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _read_success_username_from_page(page) -> str:
     selectors = [
         "h5[data-testid='username'] span",
@@ -1393,7 +1581,7 @@ async def _wait_for_signup_progress(
 ) -> str:
     email_selectors = _EMAIL_INPUT_SELECTORS
     otp_selectors = _OTP_INPUT_SELECTORS
-    submit_selectors = ["button[type='submit']", "button:has-text('Agree and Continue')"]
+    submit_selectors = ["button:has-text('Agree and Continue')", "button[type='submit']"]
     username_selectors = [
         "#username",
         "input[name='username']",
@@ -1442,11 +1630,6 @@ async def _wait_for_signup_progress(
                 "account_creation_blocked: Snapchat could not complete account creation "
                 "(\"please try again on our mobile app\")."
             )
-        if await _is_non_english_signup_page(page):
-            raise RuntimeError(
-                "signup_non_english_page: signup page rendered in a language the bot cannot drive."
-            )
-
         # reCAPTCHA service unreachable -> reload the page and re-enter details.
         if await _is_recaptcha_connect_error_visible(page):
             if await trigger_form_refresh("reCAPTCHA service unreachable", "refreshing_signup_recaptcha"):
@@ -1454,50 +1637,6 @@ async def _wait_for_signup_progress(
                 if remaining_ms is not None:
                     remaining_ms -= 1500
                 continue
-
-        handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
-        if handoff_stage and stall_state is not None:
-            # Progressed off the signup form — reset the stall timer.
-            stall_state["form_since"] = None
-        if handoff_stage == "welcome":
-            await set_progress("signup_complete")
-            return "welcome"
-
-        if handoff_stage == "otp":
-            await set_progress("awaiting_otp")
-            return "otp"
-
-        if handoff_stage == "email":
-            await set_progress("awaiting_email_verification")
-            return "email"
-
-        if handoff_stage == "email_switch":
-            await set_progress("clicking_use_email_instead")
-            clicked_email = await _click_use_email_instead(page, logger, profile_id)
-            if clicked_email:
-                await page.wait_for_timeout(900)
-                if remaining_ms is not None:
-                    remaining_ms -= 900
-                continue
-
-        if await _is_unable_to_process_error_visible(page):
-            unable_to_process_attempts += 1
-            if unable_to_process_attempts >= 15:
-                raise RuntimeError("unable_to_process: Snapchat was unable to process the signup request after 15 retries.")
-            logger and logger.warning(
-                f"[{profile_id}] Snapchat unable-to-process error detected; "
-                f"retrying Agree and Continue ({unable_to_process_attempts}/15)."
-            )
-            clicked = await _click_signup_submit(page, logger, profile_id)
-            if not clicked:
-                logger and logger.warning(
-                    f"[{profile_id}] Could not click Agree and Continue while retrying unable-to-process error."
-                )
-            await page.wait_for_timeout(1600)
-            if remaining_ms is not None:
-                remaining_ms -= 1600
-            continue
-        unable_to_process_attempts = 0
 
         current_visible_username = await _read_input_value(page, username_selectors)
         if current_visible_username and isinstance(username_state, dict):
@@ -1561,6 +1700,53 @@ async def _wait_for_signup_progress(
                 )
                 username_taken_warning_logged = True
 
+        handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
+        if handoff_stage and stall_state is not None:
+            stall_state["form_since"] = None
+        if handoff_stage == "welcome":
+            await set_progress("signup_complete")
+            return "welcome"
+
+        if handoff_stage == "otp":
+            await set_progress("awaiting_otp")
+            return "otp"
+
+        if handoff_stage == "phone":
+            await set_progress("awaiting_phone_verification")
+            return "phone"
+
+        if handoff_stage == "email":
+            await set_progress("awaiting_email_verification")
+            return "email"
+
+        if handoff_stage == "email_switch":
+            await set_progress("clicking_use_email_instead")
+            clicked_email = await _click_use_email_instead(page, logger, profile_id)
+            if clicked_email:
+                await page.wait_for_timeout(900)
+                if remaining_ms is not None:
+                    remaining_ms -= 900
+                continue
+
+        if not username_taken_visible and await _is_unable_to_process_error_visible(page):
+            unable_to_process_attempts += 1
+            if unable_to_process_attempts >= 15:
+                raise RuntimeError("unable_to_process: Snapchat was unable to process the signup request after 15 retries.")
+            logger and logger.warning(
+                f"[{profile_id}] Snapchat unable-to-process error detected; "
+                f"retrying Agree and Continue ({unable_to_process_attempts}/15)."
+            )
+            clicked = await _click_signup_submit(page, logger, profile_id, fast=True)
+            if not clicked:
+                logger and logger.warning(
+                    f"[{profile_id}] Could not click Agree and Continue while retrying unable-to-process error."
+                )
+            await page.wait_for_timeout(SIGNUP_UNABLE_TO_PROCESS_RETRY_SETTLE_MS)
+            if remaining_ms is not None:
+                remaining_ms -= SIGNUP_UNABLE_TO_PROCESS_RETRY_SETTLE_MS
+            continue
+        unable_to_process_attempts = 0
+
         submit_selector = await _visible_any(page, submit_selectors)
         if submit_selector:
             try:
@@ -1574,7 +1760,7 @@ async def _wait_for_signup_progress(
                         logger and logger.info(
                             f"[{profile_id}] Signup submit is enabled after manual username correction; submitting {current_username!r}."
                         )
-                        clicked = await _click_signup_submit(page, logger, profile_id)
+                        clicked = await _click_signup_submit(page, logger, profile_id, fast=True)
                         if clicked:
                             manual_submit_username = current_username
                             username_taken_warning_logged = False
@@ -1720,6 +1906,182 @@ async def _is_email_already_verified_error_visible(page) -> bool:
         return False
 
 
+async def _click_visible_verification_submit(signup_page, logger=None, profile_id: str = "") -> bool:
+    for btn_sel in ["button[type='submit']", "button:has-text('Verify')", "button:has-text('Confirm')", "button:has-text('Continue')", "button:has-text('Next')"]:
+        try:
+            loc = signup_page.locator(btn_sel).first
+            if await loc.is_visible():
+                await _wait_enabled(signup_page, btn_sel, timeout_ms=5000)
+                await _human_pause(signup_page, 250, 850)
+                await loc.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _wait_for_stage_after_otp(
+    signup_page,
+    logger,
+    profile_id: str,
+    username_retry_provider=None,
+    username_state=None,
+    progress_callback=None,
+    resubmit_callback=None,
+    stall_state=None,
+    max_attempts: int = 8,
+) -> str:
+    stage = ""
+    for attempt in range(max(1, int(max_attempts or 1))):
+        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
+        if attempt:
+            await signup_page.wait_for_timeout(2500)
+        stage = await _wait_for_signup_progress(
+            signup_page,
+            logger,
+            profile_id,
+            timeout_ms=300000 if attempt == 0 else 15000,
+            username_retry_provider=username_retry_provider,
+            username_state=username_state,
+            progress_callback=progress_callback,
+            resubmit_callback=resubmit_callback,
+            stall_state=stall_state,
+        )
+        if stage != "otp":
+            return stage
+    return stage
+
+
+async def _handle_optional_phone_sms_verification(
+    signup_page,
+    phone_fetcher,
+    sms_fetcher,
+    result: dict,
+    logger,
+    profile_id: str,
+    username_detected_callback=None,
+    username_retry_provider=None,
+    username_state=None,
+    progress_callback=None,
+    resubmit_callback=None,
+    stall_state=None,
+) -> dict:
+    if phone_fetcher is None:
+        logger and logger.warning(f"[{profile_id}] Phone verification requested but no SnapBoard phone fetcher is available.")
+        return result
+
+    stage = ""
+    max_attempts = max(1, int(PHONE_VERIFICATION_MAX_ATTEMPTS or 1))
+    for attempt in range(max_attempts):
+        force_new = attempt > 0
+        await _emit_signup_progress(progress_callback, "fetching_phone_verification", logger, profile_id)
+        try:
+            phone = phone_fetcher(force_new=force_new)
+        except TypeError:
+            phone = phone_fetcher()
+        if asyncio.iscoroutine(phone):
+            phone = await phone
+        phone = str(phone or "").strip()
+        if not phone:
+            logger and logger.warning(f"[{profile_id}] Could not retrieve phone number from SnapBoard.")
+            return result
+
+        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
+        await _emit_signup_progress(progress_callback, "filling_phone_verification", logger, profile_id)
+        if not await _fill_and_submit_phone_number(signup_page, phone, logger, profile_id):
+            logger and logger.warning(f"[{profile_id}] Could not submit phone number for SMS verification.")
+            if attempt + 1 < max_attempts:
+                continue
+            raise RuntimeError(
+                f"phone_verification_rejected: Could not submit phone number after {max_attempts} attempt(s)."
+            )
+        result["phone_entered"] = True
+
+        stage = await _wait_for_signup_progress(
+            signup_page,
+            logger,
+            profile_id,
+            timeout_ms=300000,
+            username_retry_provider=username_retry_provider,
+            username_state=username_state,
+            progress_callback=progress_callback,
+            resubmit_callback=resubmit_callback,
+            stall_state=stall_state,
+        )
+        if stage == "welcome":
+            result["final_username"] = await _read_success_username(signup_page)
+            await _emit_username(username_detected_callback, result["final_username"], logger, profile_id)
+            return result
+        if stage == "otp":
+            break
+        if attempt + 1 < max_attempts and stage == "phone":
+            logger and logger.warning(
+                f"[{profile_id}] Phone number was not accepted by Snapchat; requesting a replacement "
+                f"({attempt + 2}/{max_attempts})."
+            )
+            continue
+        logger and logger.warning(f"[{profile_id}] SMS OTP input did not appear after phone submission.")
+        raise RuntimeError(
+            f"phone_verification_rejected: SMS OTP input did not appear after {max_attempts} phone number attempt(s)."
+        )
+
+    if stage != "otp":
+        logger and logger.warning(f"[{profile_id}] SMS OTP input did not appear after phone submission.")
+        raise RuntimeError(
+            f"phone_verification_rejected: SMS OTP input did not appear after {max_attempts} phone number attempt(s)."
+        )
+
+    if sms_fetcher is None:
+        logger and logger.warning(f"[{profile_id}] SMS OTP requested but no SnapBoard SMS fetcher is available.")
+        return result
+
+    await _emit_signup_progress(progress_callback, "fetching_sms_otp", logger, profile_id)
+    sms_code = sms_fetcher()
+    if asyncio.iscoroutine(sms_code):
+        sms_code = await sms_code
+    sms_code = str(sms_code or "").strip()
+    if not sms_code:
+        logger and logger.warning(f"[{profile_id}] Could not retrieve SMS OTP from SnapBoard.")
+        return result
+
+    signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
+    try:
+        await signup_page.bring_to_front()
+    except Exception:
+        pass
+
+    await _type_otp_code(signup_page, _OTP_INPUT_SELECTORS, sms_code, logger, profile_id)
+    await signup_page.wait_for_timeout(500)
+    if await _click_visible_verification_submit(signup_page, logger, profile_id):
+        result["sms_otp_entered"] = True
+        logger and logger.info(f"[{profile_id}] SMS OTP submitted.")
+
+    if result.get("sms_otp_entered"):
+        final_stage = await _wait_for_stage_after_otp(
+            signup_page,
+            logger,
+            profile_id,
+            username_retry_provider=username_retry_provider,
+            username_state=username_state,
+            progress_callback=progress_callback,
+            resubmit_callback=resubmit_callback,
+            stall_state=stall_state,
+        )
+        if final_stage == "welcome":
+            result["final_username"] = await _read_success_username(signup_page)
+            await _emit_username(username_detected_callback, result["final_username"], logger, profile_id)
+        if not str(result.get("final_username") or "").strip():
+            result["final_username"] = await _wait_for_final_success_username(
+                signup_page,
+                logger,
+                profile_id,
+                timeout_ms=240000,
+            )
+            await _emit_username(username_detected_callback, result["final_username"], logger, profile_id)
+
+    return result
+
+
 async def _handle_verification(
     signup_page,
     email: str,
@@ -1733,11 +2095,20 @@ async def _handle_verification(
     progress_callback=None,
     resubmit_callback=None,
     stall_state=None,
+    phone_fetcher=None,
+    sms_fetcher=None,
 ) -> dict:
     email = str(email or "").strip()
     if not _is_valid_email(email):
         email = ""
-    result = {"reached_verification": False, "otp_entered": False, "final_username": "", "email": email}
+    result = {
+        "reached_verification": False,
+        "otp_entered": False,
+        "phone_entered": False,
+        "sms_otp_entered": False,
+        "final_username": "",
+        "email": email,
+    }
     signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
     await signup_page.wait_for_timeout(2000)
 
@@ -1757,6 +2128,22 @@ async def _handle_verification(
         result["final_username"] = await _read_success_username(signup_page)
         await _emit_username(username_detected_callback, result["final_username"], logger, profile_id)
         return result
+    if stage == "phone":
+        result["reached_verification"] = True
+        return await _handle_optional_phone_sms_verification(
+            signup_page,
+            phone_fetcher,
+            sms_fetcher,
+            result,
+            logger,
+            profile_id,
+            username_detected_callback=username_detected_callback,
+            username_retry_provider=username_retry_provider,
+            username_state=username_state,
+            progress_callback=progress_callback,
+            resubmit_callback=resubmit_callback,
+            stall_state=stall_state,
+        )
 
     # Fill email input if shown. Nyxify can start without an email; when
     # Snapchat asks for verification, fetch it from SnapBoard just in time.
@@ -1882,25 +2269,15 @@ async def _handle_verification(
     await _type_otp_code(signup_page, otp_selectors, otp, logger, profile_id)
     await signup_page.wait_for_timeout(500)
 
-    for btn_sel in ["button[type='submit']", "button:has-text('Verify')", "button:has-text('Confirm')", "button:has-text('Continue')"]:
-        try:
-            loc = signup_page.locator(btn_sel).first
-            if await loc.is_visible():
-                await _wait_enabled(signup_page, btn_sel, timeout_ms=5000)
-                await _human_pause(signup_page, 250, 850)
-                await loc.click()
-                result["otp_entered"] = True
-                logger and logger.info(f"[{profile_id}] OTP submitted.")
-                break
-        except Exception:
-            continue
+    if await _click_visible_verification_submit(signup_page, logger, profile_id):
+        result["otp_entered"] = True
+        logger and logger.info(f"[{profile_id}] OTP submitted.")
 
     if result["otp_entered"]:
-        final_stage = await _wait_for_signup_progress(
+        final_stage = await _wait_for_stage_after_otp(
             signup_page,
             logger,
             profile_id,
-            timeout_ms=300000,
             username_retry_provider=username_retry_provider,
             username_state=username_state,
             progress_callback=progress_callback,
@@ -1910,6 +2287,21 @@ async def _handle_verification(
         if final_stage == "welcome":
             result["final_username"] = await _read_success_username(signup_page)
             await _emit_username(username_detected_callback, result["final_username"], logger, profile_id)
+        elif final_stage == "phone":
+            return await _handle_optional_phone_sms_verification(
+                signup_page,
+                phone_fetcher,
+                sms_fetcher,
+                result,
+                logger,
+                profile_id,
+                username_detected_callback=username_detected_callback,
+                username_retry_provider=username_retry_provider,
+                username_state=username_state,
+                progress_callback=progress_callback,
+                resubmit_callback=resubmit_callback,
+                stall_state=stall_state,
+            )
         if not str(result.get("final_username") or "").strip():
             result["final_username"] = await _wait_for_final_success_username(
                 signup_page,
@@ -1935,10 +2327,13 @@ async def perform_snapchat_signup(
     logger,
     profile_id: str,
     otp_fetcher,
+    password: str = "",
     username_detected_callback=None,
     email_fetcher=None,
     username_retry_provider=None,
     progress_callback=None,
+    phone_fetcher=None,
+    sms_fetcher=None,
 ) -> dict:
     result = {
         "snap_name": "",
@@ -1946,6 +2341,8 @@ async def perform_snapchat_signup(
         "email": str(email or "").strip() if _is_valid_email(email) else "",
         "reached_verification": False,
         "otp_entered": False,
+        "phone_entered": False,
+        "sms_otp_entered": False,
         "error": "",
     }
 
@@ -1965,19 +2362,16 @@ async def perform_snapchat_signup(
         if not ready:
             raise RuntimeError("Signup form (#firstname) did not become visible in time.")
 
-        # A non-English signup page (Arabic, Chinese, …) breaks the text-based
-        # verification/handoff detection. Bail early so the runner rotates to a
-        # fresh profile + proxy instead of getting stuck.
         if await _is_non_english_signup_page(signup_page):
-            raise RuntimeError(
-                "signup_non_english_page: signup page rendered in a language the bot cannot drive."
+            logger and logger.info(
+                f"[{profile_id}] Signup page appears localized; continuing with language-neutral selectors."
             )
 
         snap_name = get_random_name(model, names_dir) or model
         result["snap_name"] = snap_name
         birthday = generate_birthday(model)
 
-        fill_result = await _fill_signup_form(signup_page, snap_name, birthday, username, logger, profile_id)
+        fill_result = await _fill_signup_form(signup_page, snap_name, birthday, username, password, logger, profile_id)
         result["username"] = fill_result.get("username", username)
         if not fill_result.get("submitted"):
             raise RuntimeError("Failed to submit the signup form.")
@@ -1998,6 +2392,7 @@ async def perform_snapchat_signup(
                 snap_name,
                 birthday,
                 str(username_state.get("value") or username or "").strip(),
+                password,
                 logger,
                 profile_id,
             )
@@ -2015,6 +2410,8 @@ async def perform_snapchat_signup(
             progress_callback=progress_callback,
             resubmit_callback=resubmit_callback,
             stall_state=stall_state,
+            phone_fetcher=phone_fetcher,
+            sms_fetcher=sms_fetcher,
         )
         result.update(verification)
         result["username"] = str(username_state.get("value") or result.get("username") or "").strip()
@@ -2045,6 +2442,8 @@ async def perform_snapchat_signup(
                 progress_callback=progress_callback,
                 resubmit_callback=resubmit_callback,
                 stall_state=stall_state,
+                phone_fetcher=phone_fetcher,
+                sms_fetcher=sms_fetcher,
             )
             result.update(verification)
             result["username"] = str(username_state.get("value") or result.get("username") or "").strip()

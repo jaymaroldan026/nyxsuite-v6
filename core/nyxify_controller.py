@@ -9,10 +9,8 @@ Account-creation/signup automation is untouched; this only orchestrates the
 runner process and answers queue/status queries.
 """
 
-import threading
-import time
-
 from core import runner_flags
+from core.adspower_live import annotate_rows_with_open_state
 from core.process_utils import APP_DATA_DIR, LOGS_DIR, ROOT_DIR
 from core.runner_supervisor import RunnerSpec
 from core.version import NYXIFY_VERSION_LABEL
@@ -22,7 +20,7 @@ PID_FILE = LOGS_DIR / "nyxify_runner.pid"
 RUNNER_STDOUT = LOGS_DIR / "nyxify_runner_stdout.log"
 RUNNER_STDERR = LOGS_DIR / "nyxify_runner_stderr.log"
 RUNNER_SCRIPT = ROOT_DIR / "nyxify_runner.py"
-# v4 ships its own runner exe; no v3 names, for isolation (see nyx_controller).
+# v6 ships its own runner exe; older runner names stay isolated (see nyx_controller).
 # macOS frozen builds produce .app bundles or plain executables (no .exe).
 RUNNER_EXECUTABLE_CANDIDATES = [
     ROOT_DIR / f"NyxifyRunner {NYXIFY_VERSION_LABEL}.exe",
@@ -33,7 +31,6 @@ RUNNER_EXECUTABLE_PROCESS_NAMES = [
     f"NyxifyRunner {NYXIFY_VERSION_LABEL}.exe",
     f"NyxifyRunner {NYXIFY_VERSION_LABEL}",
 ]
-ADSPOWER_USAGE_CACHE_TTL_SECONDS = 8.0
 
 
 def _load_config() -> dict:
@@ -58,12 +55,11 @@ class NyxifyController:
         if adspower is None:
             from core.adspower import AdsPowerManager
 
-            adspower = AdsPowerManager()
+            adspower = AdsPowerManager(ui_assume_presearch=True)
         self.store = store
         self.adspower = adspower
         self.supervisor = supervisor
         self.runner = supervisor.register(self._spec())
-        self._usage_cache = {"at": 0.0, "value": None, "error": "", "refreshing": False}
 
     def _spec(self) -> RunnerSpec:
         return RunnerSpec(
@@ -72,43 +68,43 @@ class NyxifyController:
             pid_file=PID_FILE,
             stdout_path=RUNNER_STDOUT,
             stderr_path=RUNNER_STDERR,
-            script_match=str(RUNNER_SCRIPT),  # full path so v4 never adopts a v3 source runner
+            script_match=str(RUNNER_SCRIPT),  # full path so v6 never adopts an older source runner
             exe_candidates=RUNNER_EXECUTABLE_CANDIDATES,
             process_names=RUNNER_EXECUTABLE_PROCESS_NAMES,
             env_builder=self._base_env,
         )
 
     def _base_env(self) -> dict:
-        return {
+        env = {
             "NYXIFY_TASK_DB_PATH": str(NYXIFY_DB_PATH),
             "NYXIFY_PAUSE_FILE": str(runner_flags.NYXIFY_PAUSE_FILE),
         }
-
-    def _adspower_usage(self):
-        """Return the cached AdsPower profile count immediately, refreshing in a
-        background thread when stale. Never blocks the caller — so the dashboard
-        status/SSE path stays responsive even if AdsPower is slow or down."""
-        cache = self._usage_cache
-        now = time.monotonic()
-        stale = (now - float(cache.get("at") or 0.0)) >= ADSPOWER_USAGE_CACHE_TTL_SECONDS
-        if stale and not cache.get("refreshing"):
-            cache["refreshing"] = True
-            threading.Thread(target=self._refresh_usage, daemon=True).start()
-        return cache.get("value"), str(cache.get("error") or "")
-
-    def _refresh_usage(self):
-        used, error = None, ""
+        # Hand the runner the SAME local-API token the NyxifyLocalApiServer
+        # resolves (env override, else the persistent agent token), so its
+        # SnapBoard requests (email fetch, AdsPower id push, proxy rotate) are
+        # authenticated from the first call instead of relying on env inheritance
+        # — a stale inherited token otherwise 401s every SnapBoard call. The
+        # runner still self-heals via /token if this is ever wrong.
         try:
-            used = self.adspower.get_profile_count()
-        except Exception as exc:
-            error = str(exc)
-        self._usage_cache.update(
-            {"at": time.monotonic(), "value": used, "error": error, "refreshing": False}
-        )
+            import os
+
+            from core.agent_token import get_or_create_token
+
+            token = (
+                os.getenv("NYXIFY_LOCAL_API_TOKEN")
+                or os.getenv("NYXSUITE_TOKEN")
+                or get_or_create_token()
+            )
+            if token:
+                env["NYXIFY_LOCAL_API_TOKEN"] = str(token)
+        except Exception:
+            pass
+        return env
 
     # ------------------------------------------------------------------ status
     def status_snapshot(self) -> dict:
         tasks = self.store.list_tasks(limit=500)
+        live = annotate_rows_with_open_state(tasks, ("adspower_profile_id", "adspower_id"))
         pending = sum(1 for r in tasks if r["status"] == "PENDING")
         waiting = sum(
             1
@@ -118,7 +114,6 @@ class NyxifyController:
         running = sum(1 for r in tasks if r["status"] == "RUNNING")
         failed = sum(1 for r in tasks if r["status"] == "FAILED")
         done = sum(1 for r in tasks if r["status"] == "DONE")
-        used_profiles, usage_error = self._adspower_usage()
 
         pid = self.runner.resolve_pid()
         paused = runner_flags.nyxify_is_paused()
@@ -142,7 +137,7 @@ class NyxifyController:
                 "recent": len(tasks),
             },
             "bot": {"state": state, "detail": detail, "pid": pid if pid else None},
-            "adspower_usage": {"used": used_profiles, "error": usage_error},
+            "adspower_live": live,
             "config": _load_config(),
         }
 
@@ -154,7 +149,9 @@ class NyxifyController:
         )
         return {
             "ok": True,
-            "message": f"Nyxify runner started (PID {pid})." if started else f"Nyxify runner already running (PID {pid}).",
+            "message": f"Nyxify runner started (PID {pid})."
+            if started
+            else f"Nyxify runner already running (PID {pid}).",
             "status": self.status_snapshot(),
         }
 
@@ -178,11 +175,21 @@ class NyxifyController:
 
     def reset_failed(self, payload=None) -> dict:
         count = self.store.reset_failed_tasks()
-        return {"ok": True, "count": count, "message": f"Reset {count} failed Nyxify row(s).", "status": self.status_snapshot()}
+        return {
+            "ok": True,
+            "count": count,
+            "message": f"Reset {count} failed Nyxify row(s).",
+            "status": self.status_snapshot(),
+        }
 
     def clear_queue(self, payload=None) -> dict:
         count = self.store.clear_all_tasks()
-        return {"ok": True, "count": count, "message": f"Cleared {count} Nyxify row(s).", "status": self.status_snapshot()}
+        return {
+            "ok": True,
+            "count": count,
+            "message": f"Cleared {count} Nyxify row(s).",
+            "status": self.status_snapshot(),
+        }
 
     def action_handlers(self) -> dict:
         """The /bot/<action> handlers consumed by NyxifyLocalApiServer.

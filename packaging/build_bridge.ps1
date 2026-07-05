@@ -2,11 +2,11 @@ param(
     [switch]$SkipUpdater
 )
 
-# Builds the Nyx Suite v4 line: the bridge tray app (with the webui/ dashboard
-# bundled) plus the Nyx and Nyxify runner exes, then assembles release\v4\.
+# Builds the Nyx Suite v6 line: the bridge tray app (with the webui/ dashboard
+# bundled) plus the Nyx and Nyxify runner exes, then assembles release\v6\.
 #
-# REQUIRES (Windows): a v4 venv with deps installed, Playwright browsers for the
-# runners, and the local license secret + .env copied in. See packaging\V4_RELEASE.md.
+# REQUIRES (Windows): a v6 venv with deps installed, Playwright browsers for the
+# runners, and the local license secret + .env copied in. See packaging\V6_RELEASE.md.
 # This script was authored from the v3 build pattern; verify the first build.
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $distRoot = Join-Path $root "dist"
 $releaseRoot = Join-Path $root "release"
-$packageRoot = Join-Path $releaseRoot "v4"
+$packageRoot = Join-Path $releaseRoot "v6"
 $bridgeSpec = Join-Path $PSScriptRoot "bridge.spec"
 $nyxBotSpec = Join-Path $PSScriptRoot "nyx_bot.spec"
 $nyxifyRunnerSpec = Join-Path $PSScriptRoot "nyxify_runner.spec"
@@ -33,7 +33,7 @@ function Resolve-PackagingPython {
     $candidates = @( (Join-Path $root "venv\Scripts\python.exe") )
     if ($env:LOCALAPPDATA) { $candidates += Join-Path $env:LOCALAPPDATA "NyxSuite\venv\Scripts\python.exe" }
     foreach ($c in $candidates) { if (Test-PythonLauncher $c) { return $c } }
-    throw "No working v4 packaging Python found. Create the venv (see packaging\V4_RELEASE.md)."
+    throw "No working v6 packaging Python found. Create the venv (see packaging\V6_RELEASE.md)."
 }
 
 $venvPython = Resolve-PackagingPython
@@ -84,13 +84,13 @@ if (Test-Path $updaterStaged) {
     Write-Warning "Updater.exe not found at $updaterStaged. Run packaging\build_updater.ps1 first for the in-app updater/rollback."
 }
 
-# v4 update_config.json -> the NEW releases repo (create it on GitHub; keep the
+# v6 update_config.json -> the public source/release repo (create it on GitHub; keep the
 # name here in sync). skip_paths includes local_update_backups so backups are
 # never overwritten or shipped.
 $updateConfig = @"
 {
   "app": "nyxsuite",
-  "repo": "jaymaroldan026/nyxsuite-releases",
+  "repo": "jaymaroldan026/nyxsuite-v6",
   "asset_pattern": "NyxSuite-v*.zip",
   "exe_to_relaunch": "$bridgeName.exe",
   "skip_paths": ["data", "logs", ".env", "local_update_backups"]
@@ -104,7 +104,7 @@ cd /d "%~dp0"
 start "" "$bridgeName.exe"
 "@ | Set-Content -Path (Join-Path $releaseApp "start_suite.bat") -Encoding ASCII
 
-Write-Host "Nyx Suite v4 release prepared at: $releaseApp"
+Write-Host "Nyx Suite v6 release prepared at: $releaseApp"
 
 # ---- create the clean release ZIP for GitHub Releases ----
 $createZipScript = Join-Path $PSScriptRoot "create_release_zip.ps1"
@@ -114,5 +114,5 @@ if (Test-Path $createZipScript) {
     & $createZipScript -Version $version
 } else {
     Write-Warning "create_release_zip.ps1 not found; skipping clean release ZIP."
-    Write-Host "Next: compress it to 'NyxSuite-$label.zip' and publish a PRE-RELEASE '$label' to nyxsuite-releases."
+    Write-Host "Next: compress it to 'NyxSuite-$label.zip' and publish release '$label' to jaymaroldan026/nyxsuite-v6."
 }

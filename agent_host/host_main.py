@@ -18,6 +18,7 @@ Token: stored at the agent's token file; we read it and hand back.
 
 import json
 import os
+import plistlib
 import struct
 import subprocess
 import sys
@@ -29,6 +30,8 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from core.agent_token import read_token as _read_agent_token, TOKEN_FILE as _AGENT_TOKEN_FILE
+
+MACOS_LAUNCHD_LABEL = "com.nyxsuite.bridge"
 
 
 def _read_message():
@@ -57,6 +60,70 @@ def _get_agent_pid(lock_port=8869):
         return False
     finally:
         sock.close()
+
+
+def _macos_launchd_agent_path():
+    return (
+        Path.home() / "Library" / "Application Support" / "NyxSuite"
+        / "launchd" / f"{MACOS_LAUNCHD_LABEL}.plist"
+    )
+
+
+def _write_macos_launchd_agent(path: Path, cmd, cwd: Path, env: dict):
+    clean_env = {
+        str(key): str(value)
+        for key, value in (env or {}).items()
+        if value not in (None, "")
+    }
+    plist = {
+        "Label": MACOS_LAUNCHD_LABEL,
+        "ProgramArguments": [str(part) for part in cmd],
+        "WorkingDirectory": str(cwd),
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "EnvironmentVariables": clean_env,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(plistlib.dumps(plist, sort_keys=False))
+    return path
+
+
+def _run_launchctl(args):
+    return subprocess.run(
+        ["launchctl", *args],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def _start_agent_via_launchd(cmd, env, root: Path):
+    """Start the bridge as a per-user launchd job on macOS.
+
+    Chrome's native-messaging host process is a poor TCC parent for GUI
+    automation: children can inherit Chrome's Accessibility trust state. Letting
+    launchd spawn the bridge gives macOS a stable Python/Nyx Suite process to
+    grant, which is what the AdsPower GUI fallback needs.
+    """
+    path = _write_macos_launchd_agent(
+        path=_macos_launchd_agent_path(),
+        cmd=cmd,
+        cwd=root,
+        env=env,
+    )
+    domain = f"gui/{os.getuid()}"
+    service = f"{domain}/{MACOS_LAUNCHD_LABEL}"
+    _run_launchctl(["bootout", service])
+    result = _run_launchctl(["bootstrap", domain, str(path)])
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        return {
+            "ok": False,
+            "error": f"launchd start failed: {message or result.returncode}",
+        }
+    _run_launchctl(["kickstart", "-k", service])
+    return {"ok": True, "message": "Agent started via launchd."}
 
 
 def _start_agent():
@@ -96,6 +163,12 @@ def _start_agent():
             python = sys.executable
         cmd = [python, str(root / "bridge_app.py")]
     try:
+        if sys.platform == "darwin":
+            launchd_result = _start_agent_via_launchd(cmd, env, root)
+            if launchd_result.get("ok"):
+                return launchd_result
+            # Fall back to the original direct spawn so Connect still has a
+            # chance to work on systems where launchctl is unavailable.
         # Detach the bridge's stdio from THIS host's pipes. Chrome connects the
         # native host's stdin/stdout to its native-messaging channel; if the
         # spawned bridge inherits them, its startup writes (logs, register()

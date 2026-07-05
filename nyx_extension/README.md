@@ -1,4 +1,4 @@
-# Nyx Chrome Extension v4.1
+# Nyx Chrome Extension v6
 
 Watches `https://snapboard.onrender.com/`, detects `AdsPower ID` and `Model`, and syncs those rows directly into the local Nyx queue.
 
@@ -20,5 +20,5 @@ Watches `https://snapboard.onrender.com/`, detects `AdsPower ID` and `Model`, an
 ## Required setup
 
 1. Start the Nyx Suite bridge agent (`python bridge_app.py` or the frozen build).
-2. The extension defaults to `http://127.0.0.1:8865` (v4 Nyx API).
+2. The extension defaults to `http://127.0.0.1:8865` (v6 Nyx API).
 3. Connect to Agent gets the per-install token automatically.

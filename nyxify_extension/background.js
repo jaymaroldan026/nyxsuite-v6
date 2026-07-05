@@ -30,7 +30,8 @@ const RUNNER_STATUS_CACHE_TTL_MS = 2500;
 const MAX_EMAIL_BRIDGE_BATCH = 50;
 const DEFAULT_TEMPORARY_PROFILE_NAME = "Snapchat:";
 const DEFAULT_ADSPOWER_GROUP = "Snapchat";
-const DEFAULT_TAG_ONE = "Snapchat";
+const DEFAULT_EXTENSION_CATEGORY = "Snap";
+const DEFAULT_TAG_ONE = "";
 
 let flushInFlight = null;
 let activeScrapeRun = null;
@@ -78,9 +79,10 @@ function normalizeConfig(config) {
     rowLimit: parsedRowLimit,
     temporaryProfileName: normalizeStringConfig(safeConfig, "temporaryProfileName", DEFAULT_TEMPORARY_PROFILE_NAME, false),
     adspowerGroup: normalizeStringConfig(safeConfig, "adspowerGroup", DEFAULT_ADSPOWER_GROUP),
+    extensionCategory: normalizeStringConfig(safeConfig, "extensionCategory", DEFAULT_EXTENSION_CATEGORY, false),
     tagOne: normalizeStringConfig(safeConfig, "tagOne", DEFAULT_TAG_ONE),
     tagTwo: String(safeConfig.tagTwo || "").trim(),
-    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled !== false,
+    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled === true,
     maxParallelProfiles: parsedMaxParallel,
     bannedProxies: bannedProxies.map((item) => String(item || "").trim()).filter(Boolean),
     blockedProxies: bannedProxies.map((item) => String(item || "").trim()).filter(Boolean),
@@ -88,9 +90,54 @@ function normalizeConfig(config) {
     proxyCheckerEnabled: safeConfig.proxyCheckerEnabled !== false,
     pushAdspowerIdEnabled: safeConfig.pushAdspowerIdEnabled !== false,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
+    continuousModeEnabled: safeConfig.continuousModeEnabled === true,
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: normalizePositiveInteger(safeConfig.autoFillAccountTarget, 0),
     lockG5: safeConfig.lockG5 === true,
+  };
+}
+
+function extensionConfigFromRunnerConfig(runnerConfig, baseConfig = {}) {
+  const runner = runnerConfig || {};
+  const base = normalizeConfig(baseConfig || {});
+  const blocked = Array.isArray(runner.blocked_proxies)
+    ? runner.blocked_proxies
+    : (Array.isArray(runner.banned_proxies) ? runner.banned_proxies : base.blockedProxies);
+  return normalizeConfig({
+    ...base,
+    maxParallelProfiles: runner.max_parallel_profiles,
+    temporaryProfileName: runner.temporary_profile_name,
+    adspowerGroup: runner.adspower_group,
+    extensionCategory: runner.extension_category,
+    tagOne: Object.prototype.hasOwnProperty.call(runner, "tag_one") ? runner.tag_one : base.tagOne,
+    tagTwo: Object.prototype.hasOwnProperty.call(runner, "tag_two") ? runner.tag_two : base.tagTwo,
+    adspowerTagsEnabled: runner.adspower_tags_enabled === true,
+    blockedProxies: blocked,
+    bannedProxies: blocked,
+    proxyBlockerEnabled: runner.proxy_blocker_enabled !== false,
+    proxyCheckerEnabled: runner.proxy_checker_enabled !== false,
+    pushAdspowerIdEnabled: runner.push_adspower_id_enabled !== false,
+    fullAutoModeEnabled: runner.full_auto_mode_enabled === true,
+    continuousModeEnabled: runner.continuous_mode_enabled === true,
+  });
+}
+
+function runnerConfigPayloadFromExtensionConfig(config) {
+  const safe = normalizeConfig(config || {});
+  return {
+    max_parallel_profiles: safe.maxParallelProfiles,
+    temporary_profile_name: safe.temporaryProfileName,
+    adspower_group: safe.adspowerGroup,
+    extension_category: safe.extensionCategory,
+    tag_one: safe.tagOne,
+    tag_two: safe.tagTwo,
+    adspower_tags_enabled: safe.adspowerTagsEnabled,
+    blocked_proxies: safe.blockedProxies || safe.bannedProxies,
+    proxy_blocker_enabled: safe.proxyBlockerEnabled,
+    proxy_checker_enabled: safe.proxyCheckerEnabled,
+    push_adspower_id_enabled: safe.pushAdspowerIdEnabled,
+    full_auto_mode_enabled: safe.fullAutoModeEnabled,
+    continuous_mode_enabled: safe.continuousModeEnabled,
   };
 }
 
@@ -1333,7 +1380,7 @@ async function saveConfigAndRunner(patch) {
   }
 
   await updateBadge();
-  syncConfigToRunner(nextConfig).catch(() => null);
+  await syncConfigToRunner(nextConfig);
   return nextConfig;
 }
 
@@ -1360,7 +1407,16 @@ async function getStatusSnapshot(forceRunnerRefresh = false) {
     };
   }
 
-  const config = normalizeConfig(syncData[STORAGE_KEYS.config] || {});
+  let config = normalizeConfig(syncData[STORAGE_KEYS.config] || {});
+  try {
+    const configPayload = await callLocalNyxify("GET", "/config");
+    if (configPayload && configPayload.config) {
+      config = extensionConfigFromRunnerConfig(configPayload.config, config);
+      await chrome.storage.sync.set({ [STORAGE_KEYS.config]: config });
+    }
+  } catch (error) {
+    // Offline popup use: keep the cached extension config until the bridge is reachable.
+  }
   const autoFillProgress = normalizeAutoFillProgress(
     localData[STORAGE_KEYS.autoFillProgress],
     config.autoFillAccountTarget,
@@ -1600,6 +1656,31 @@ async function processBridgeActionsOnce() {
   }
 
   try {
+    const phoneRequests = await collectPendingBridgeRequests("/phone/pending", MAX_EMAIL_BRIDGE_BATCH);
+    if (phoneRequests.length) {
+      await Promise.all(phoneRequests.map(async (phoneRequest) => {
+        try {
+          const phoneResponse = await sendMessageToSnapboardTab({
+            type: "NYXIFY_SNAPBOARD_ACTION",
+            action: "phone_fetch",
+            row_key: phoneRequest.row_key,
+            force_new: !!phoneRequest.force_new,
+          });
+          await callLocalNyxify("POST", "/phone/result", {
+            row_key: phoneRequest.row_key,
+            phone: phoneResponse.ok ? (phoneResponse.phone || "") : "",
+            error: phoneResponse.ok ? "" : (phoneResponse.error || "SnapBoard phone fetch failed."),
+          });
+        } catch (error) {
+          await appendEventLog(`Nyxify phone bridge error for ${phoneRequest.row_key}: ${error.message}`);
+        }
+      }));
+    }
+  } catch (error) {
+    await appendEventLog(`Nyxify phone bridge error: ${error.message}`);
+  }
+
+  try {
     const otpPayload = await callLocalNyxify("GET", "/otp/pending");
     const otpRequest = otpPayload && otpPayload.request ? otpPayload.request : null;
     if (otpRequest && otpRequest.row_key) {
@@ -1618,6 +1699,25 @@ async function processBridgeActionsOnce() {
     }
   } catch (error) {
     await appendEventLog(`Nyxify OTP bridge error: ${error.message}`);
+  }
+
+  try {
+    const smsPayload = await callLocalNyxify("GET", "/sms/pending");
+    const smsRequest = smsPayload && smsPayload.request ? smsPayload.request : null;
+    if (smsRequest && smsRequest.row_key) {
+      const smsResponse = await sendMessageToSnapboardTab({
+        type: "NYXIFY_SNAPBOARD_ACTION",
+        action: "sms",
+        row_key: smsRequest.row_key,
+      });
+      await callLocalNyxify("POST", "/sms/result", {
+        row_key: smsRequest.row_key,
+        code: smsResponse.ok ? (smsResponse.code || "") : "",
+        error: smsResponse.ok ? "" : (smsResponse.error || "SnapBoard SMS fetch failed."),
+      });
+    }
+  } catch (error) {
+    await appendEventLog(`Nyxify SMS bridge error: ${error.message}`);
   }
 
   try {
@@ -1900,19 +2000,22 @@ async function mergeDetectedEntries(rows, sourceUrl) {
       && previousRow.ip_address === row.ip_address
       && previousRow.proxy_address === row.proxy_address
       && String(previousRow.username || "").trim() === row.username
-      && String(previousRow.email || "").trim() === row.email;
+      && String(previousRow.email || "").trim() === row.email
+      && String(previousRow.password || "").trim() === row.password;
     const sameAsPending = pendingRow
       && pendingRow.model === row.model
       && pendingRow.ip_address === row.ip_address
       && pendingRow.proxy_address === row.proxy_address
       && String(pendingRow.username || "").trim() === row.username
-      && String(pendingRow.email || "").trim() === row.email;
+      && String(pendingRow.email || "").trim() === row.email
+      && String(pendingRow.password || "").trim() === row.password;
     const sameAsRunner = runnerRow
       && String(runnerRow.model || "").trim() === row.model
       && String(runnerRow.ip_address || "").trim() === row.ip_address
       && String(runnerRow.proxy_address || "").trim() === row.proxy_address
       && String(runnerRow.username || "").trim() === row.username
-      && String(runnerRow.email || "").trim() === row.email;
+      && String(runnerRow.email || "").trim() === row.email
+      && String(runnerRow.password || "").trim() === row.password;
 
     if (sameAsPending || (sameAsPrevious && sameAsRunner)) {
       continue;
@@ -1945,6 +2048,7 @@ function sanitizeEntries(rows) {
     const proxyAddress = String(row.proxy_address || "").trim() || ipAddress;
     const username = String(row.username || "").trim();
     const email = String(row.email || "").trim();
+    const password = String(row.password || "").trim();
     const adspowerId = String(row.adspower_id || "").trim();
     if (!rowKey || !model || !ipAddress || adspowerId) {
       continue;
@@ -1956,6 +2060,7 @@ function sanitizeEntries(rows) {
       proxy_address: proxyAddress,
       username,
       email,
+      password,
       adspower_id: adspowerId,
       status: "PENDING",
     });
@@ -1999,6 +2104,7 @@ async function flushPendingEntriesInternal() {
         proxy_address: entry.proxy_address,
         username: entry.username,
         email: entry.email,
+        password: entry.password,
         adspower_id: entry.adspower_id || "",
       })),
     });
@@ -2045,19 +2151,7 @@ async function banProxy(proxyValue) {
     [STORAGE_KEYS.config]: nextConfig,
   });
   try {
-    await callLocalNyxify("POST", "/config", {
-      max_parallel_profiles: nextConfig.maxParallelProfiles,
-      temporary_profile_name: nextConfig.temporaryProfileName,
-      adspower_group: nextConfig.adspowerGroup,
-      tag_one: nextConfig.tagOne,
-      tag_two: nextConfig.tagTwo,
-      adspower_tags_enabled: nextConfig.adspowerTagsEnabled,
-      blocked_proxies: nextConfig.blockedProxies || nextConfig.bannedProxies,
-      proxy_blocker_enabled: nextConfig.proxyBlockerEnabled,
-      proxy_checker_enabled: nextConfig.proxyCheckerEnabled,
-      push_adspower_id_enabled: nextConfig.pushAdspowerIdEnabled,
-      full_auto_mode_enabled: nextConfig.fullAutoModeEnabled,
-    });
+    await callLocalNyxify("POST", "/config", runnerConfigPayloadFromExtensionConfig(nextConfig));
   } catch (error) {
     await appendEventLog(`Proxy was banned locally. Runner sync pending: ${error.message}`);
   }
@@ -2067,19 +2161,7 @@ async function banProxy(proxyValue) {
 
 async function syncConfigToRunner(nextConfig) {
   try {
-    await callLocalNyxify("POST", "/config", {
-      max_parallel_profiles: nextConfig.maxParallelProfiles,
-      temporary_profile_name: nextConfig.temporaryProfileName,
-      adspower_group: nextConfig.adspowerGroup,
-      tag_one: nextConfig.tagOne,
-      tag_two: nextConfig.tagTwo,
-      adspower_tags_enabled: nextConfig.adspowerTagsEnabled,
-      blocked_proxies: nextConfig.blockedProxies || nextConfig.bannedProxies,
-      proxy_blocker_enabled: nextConfig.proxyBlockerEnabled,
-      proxy_checker_enabled: nextConfig.proxyCheckerEnabled,
-      push_adspower_id_enabled: nextConfig.pushAdspowerIdEnabled,
-      full_auto_mode_enabled: nextConfig.fullAutoModeEnabled,
-    });
+    await callLocalNyxify("POST", "/config", runnerConfigPayloadFromExtensionConfig(nextConfig));
     await flushPendingEntries();
   } catch (error) {
     await appendEventLog(`Saved Nyxify extension settings locally. Runner sync pending: ${error.message}`);

@@ -4,6 +4,10 @@ import socket
 import traceback
 from collections import deque
 
+from core.macos_dock import hide_macos_dock_icon
+
+hide_macos_dock_icon()
+
 from core.adspower import (
     AdsPowerManager,
     AdsPowerPermissionError,
@@ -107,18 +111,27 @@ async def process_task(task, store, adspower):
     try:
         await process_queued_task(task, store, adspower, logger)
     except AdsPowerProfileNotOpenError as e:
-        # No-API CDP fallback: the Local API is permission-gated but the server
-        # is fine — this profile just isn't open in the AdsPower app. Hold ONLY
-        # this row PENDING (open it in AdsPower to proceed); do NOT set the global
-        # health flag, so other already-open profiles keep running. Re-probed and
-        # auto-resumed every cycle, so no "Rerun Failed" is needed.
+        error_msg = str(e)
         profile_id = task["profile_id"]
         task_id = task["id"]
         run_token = task.get("run_token")
-        logger.info(
-            f"Profile {profile_id} is not open in AdsPower (no-API CDP mode); leaving PENDING: {e}"
-        )
-        store.update_status(task_id, "PENDING", "waiting_for_profile_open", error=str(e), run_token=run_token)
+        if "profile does not exist" in error_msg.lower():
+            # Profile was not found in the AdsPower GUI at all — it is missing
+            # from the user's AdsPower account (deleted / reset account / etc).
+            logger.warning(
+                f"Profile {profile_id} not found in AdsPower app; marking FAILED profile_missing: {e}"
+            )
+            store.update_status(task_id, "FAILED", "profile_missing", error_msg, run_token=run_token)
+        else:
+            # No-API CDP fallback: the Local API is permission-gated but the
+            # server is fine — this profile just isn't open in the AdsPower app.
+            # Hold ONLY this row PENDING (open it in AdsPower to proceed); do NOT
+            # set the global health flag, so other already-open profiles keep
+            # running. Re-probed and auto-resumed every cycle.
+            logger.info(
+                f"Profile {profile_id} is not open in AdsPower (no-API CDP mode); leaving PENDING: {e}"
+            )
+            store.update_status(task_id, "PENDING", "waiting_for_profile_open", error=error_msg, run_token=run_token)
     except (AdsPowerPermissionError, AdsPowerUnreachableError) as e:
         # AdsPower environment/config problem (no Local API permission, or the
         # app is unreachable). This is NOT a per-profile failure: never mark the
@@ -167,15 +180,15 @@ async def main():
     try:
         store = get_queue_store()
         adspower = AdsPowerManager()
+        adspower.set_ui_on_profile_missing(
+            lambda pid: store.update_status_by_profile_id(
+                pid, "FAILED", "profile_missing",
+                error="Profile not found in AdsPower GUI search",
+            )
+        )
 
-        # Global Ctrl+F8 pauses/resumes THIS (Nyx) runner, with a tone. The
-        # Bitmoji flow polls the pause flag mid-run, so it pauses the current
-        # account too — not just the next one. (core/hotkeys.py)
-        try:
-            from core.hotkeys import start_pause_hotkey
-            start_pause_hotkey("nyx")
-        except Exception as exc:
-            logger.warning(f"Nyx pause hotkey unavailable: {exc}")
+        # Ctrl+F8 is owned by the bridge so it can reuse dashboard Start/Stop
+        # actions and can start this runner even when no runner process exists.
 
         while True:
             try:

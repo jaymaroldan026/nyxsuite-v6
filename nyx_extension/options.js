@@ -8,7 +8,7 @@ const rowLimitInput = document.getElementById("rowLimit");
 const pendingThresholdInput = document.getElementById("pendingThreshold");
 const maxParallelProfilesInput = document.getElementById("maxParallelProfiles");
 const ignoreDoneProfilesInput = document.getElementById("ignoreDoneProfiles");
-const nyxifyGuardEnabledInput = document.getElementById("nyxifyGuardEnabled");
+
 const launchOnWindowsStartupInput = document.getElementById("launchOnWindowsStartup");
 const clearDetectedDataButton = document.getElementById("clearDetectedDataButton");
 const pruneCompletedButton = document.getElementById("pruneCompletedButton");
@@ -31,7 +31,7 @@ function applyStatusToSettings(status) {
   pendingThresholdInput.value = runnerConfig.pending_threshold || 10;
   maxParallelProfilesInput.value = runnerConfig.max_parallel_profiles || 5;
   ignoreDoneProfilesInput.checked = runnerConfig.ignore_done_profiles !== false;
-  nyxifyGuardEnabledInput.checked = runnerConfig.nyxify_guard_enabled !== false;
+
   launchOnWindowsStartupInput.checked = runnerConfig.launch_on_windows_startup === true;
 }
 
@@ -51,7 +51,7 @@ function saveSettings(options = {}) {
       pendingThreshold: pendingThresholdInput.value,
       maxParallelProfiles: maxParallelProfilesInput.value,
       ignoreDoneProfiles: ignoreDoneProfilesInput.checked,
-      nyxifyGuardEnabled: nyxifyGuardEnabledInput.checked,
+
       launchOnWindowsStartup: launchOnWindowsStartupInput.checked,
     },
     (response) => {
@@ -99,7 +99,7 @@ saveButton.addEventListener("click", () => saveSettings());
   pendingThresholdInput,
   maxParallelProfilesInput,
   ignoreDoneProfilesInput,
-  nyxifyGuardEnabledInput,
+
   launchOnWindowsStartupInput,
 ].forEach((input) => {
   input.addEventListener("change", scheduleSettingsSave);

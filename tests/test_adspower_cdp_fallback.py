@@ -121,6 +121,48 @@ class FindEndpointTests(unittest.TestCase):
 
         self.assertEqual(endpoint, "ws://127.0.0.1:45000/devtools/browser/abc-123")
 
+    def test_list_open_profile_endpoints_prefers_start_page_serial(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            _write_dtap(base, "weirdname_hash", 45000)
+            self._point_cache_at(base)
+
+            def fake_http(session, port, path):
+                if path == "/json/version":
+                    return {"webSocketDebuggerUrl": "ws://x"}
+                if path == "/json":
+                    return [{"url": "https://start.adspower.net/?id=k1dyapw4&host=127.0.0.1:20725"}]
+                return None
+
+            with mock.patch.object(adspower_cdp, "_port_is_listening", return_value=True), \
+                 mock.patch.object(adspower_cdp, "_http_get_json", side_effect=fake_http):
+                endpoints = adspower_cdp.list_open_profile_endpoints()
+
+        self.assertEqual(
+            endpoints,
+            {"k1dyapw4": "ws://127.0.0.1:45000/devtools/browser/abc-123"},
+        )
+
+
+class CacheBaseDirTests(unittest.TestCase):
+    def test_macos_cwd_global_source_cache_root_is_discovered(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cache = home / "Library" / "Application Support" / "adspower_global" / "cwd_global" / "source" / "cache"
+            cache.mkdir(parents=True)
+
+            with mock.patch.object(adspower_cdp.Path, "home", return_value=home), \
+                 mock.patch.object(adspower_cdp.os, "name", "posix"):
+                dirs = adspower_cdp._cache_base_dirs()
+
+        self.assertIn(cache, dirs)
+
 
 class OpenProfileFallbackTests(unittest.TestCase):
     def _manager(self, fallback_enabled=True, ui_fallback=False):
@@ -238,6 +280,34 @@ class GroupResolutionNoApiTests(unittest.TestCase):
         self.assertEqual(res.get("profile_id"), "k1new")
         fake_ui.create_profile.assert_called_once()
 
+    def test_create_profile_fallback_forwards_gui_proxy_rotator(self):
+        m = AdsPowerManager()
+        m.ui_fallback_enabled = True
+        m._create_profile_via_api = mock.Mock(side_effect=AdsPowerPermissionError("9110"))
+        fake_ui = mock.Mock()
+        fake_ui.create_profile.return_value = {
+            "profile_id": "k1new",
+            "name": "Snapchat: Pending",
+            "proxy": "2.2.2.2:2:u:p",
+        }
+        m._ui_controller = mock.Mock(return_value=fake_ui)
+        proxy_rotator = mock.Mock(return_value="2.2.2.2:2:u:p")
+
+        res = m.create_profile(
+            name="Snapchat: Pending",
+            proxy_value="1.1.1.1:1:u:p",
+            group_reference="Snapchat20",
+            proxy_rotator=proxy_rotator,
+        )
+
+        self.assertEqual(res.get("profile_id"), "k1new")
+        fake_ui.create_profile.assert_called_once_with(
+            name="Snapchat: Pending",
+            proxy="1.1.1.1:1:u:p",
+            group="Snapchat20",
+            proxy_rotator=proxy_rotator,
+        )
+
 
 class ProxyCheckNoApiTests(unittest.TestCase):
     """In no-API mode the AdsPower proxy-check API is permission-gated; the
@@ -290,7 +360,9 @@ class CloseProfileFallbackTests(unittest.TestCase):
         m._get_json.assert_not_called()              # never hits the gated stop API
         fake_ui.close_profile_by_id.assert_called_once_with("k1dyapw4")
         self.assertEqual(result.get("msg"), "closed_via_gui")
-        self.assertNotIn("k1dyapw4", m._cdp_fallback_profiles)
+        # Stays marked no-API after closing so the immediately-following rename
+        # goes straight to the GUI (Nyxify closes then renames). Cleared on delete.
+        self.assertIn("k1dyapw4", m._cdp_fallback_profiles)
 
     def test_close_leaves_open_when_ui_fallback_disabled(self):
         m = AdsPowerManager()
@@ -300,7 +372,7 @@ class CloseProfileFallbackTests(unittest.TestCase):
         result = m.close_profile("k1dyapw4")
         m._get_json.assert_not_called()
         self.assertEqual(result.get("msg"), "left_open_cdp_fallback")
-        self.assertNotIn("k1dyapw4", m._cdp_fallback_profiles)
+        self.assertIn("k1dyapw4", m._cdp_fallback_profiles)   # stays marked no-API
 
     def test_close_normal_profile_calls_stop_api(self):
         m = AdsPowerManager()
@@ -320,6 +392,45 @@ class CloseProfileFallbackTests(unittest.TestCase):
         result = m.close_profile("normal-profile")
         fake_ui.close_profile_by_id.assert_called_once_with("normal-profile")
         self.assertEqual(result.get("msg"), "closed_via_gui")
+
+    def test_close_unreachable_api_profile_closes_via_gui(self):
+        m = AdsPowerManager()
+        m.ui_fallback_enabled = True
+        m._get_json = mock.Mock(side_effect=AdsPowerUnreachableError("api down"))
+        fake_ui = self._gui(m)
+        result = m.close_profile("normal-profile")
+        fake_ui.close_profile_by_id.assert_called_once_with("normal-profile")
+        self.assertEqual(result.get("msg"), "closed_via_gui")
+
+    def test_close_gui_failure_keeps_fallback_profile_marked_open(self):
+        m = AdsPowerManager()
+        m.ui_fallback_enabled = True
+        m._cdp_fallback_profiles.add("k1dyapw4")
+        fake_ui = self._gui(m)
+        fake_ui.close_profile_by_id.side_effect = RuntimeError("button missing")
+        result = m.close_profile("k1dyapw4")
+        self.assertEqual(result.get("msg"), "gui_close_failed_left_open")
+        self.assertIn("k1dyapw4", m._cdp_fallback_profiles)
+
+
+class UiModeSelectionTests(unittest.TestCase):
+    """Nyx vs Nyxify run as separate processes and pick their own GUI mode:
+    Nyxify -> assume_presearch=True (temp-name view), Nyx/default -> False
+    (Profile-ID search). The override flows into the lazily-built controller."""
+
+    def test_mode_flag_stored(self):
+        self.assertIs(AdsPowerManager(ui_assume_presearch=True)._ui_assume_presearch, True)
+        self.assertIs(AdsPowerManager(ui_assume_presearch=False)._ui_assume_presearch, False)
+        self.assertIsNone(AdsPowerManager()._ui_assume_presearch)
+
+    def test_override_applies_to_controller_config(self):
+        import core.adspower_ui as aui
+        if not aui._PYWINAUTO:
+            self.skipTest("pywinauto not available")
+        self.assertTrue(AdsPowerManager(ui_assume_presearch=True)._ui_controller().config.assume_presearch)
+        self.assertFalse(AdsPowerManager(ui_assume_presearch=False)._ui_controller().config.assume_presearch)
+        # Default (None) leaves the config's own default (env, default False = Nyx).
+        self.assertFalse(AdsPowerManager()._ui_controller().config.assume_presearch)
 
 
 class DeleteRenameGuiFallbackTests(unittest.TestCase):
@@ -352,6 +463,16 @@ class DeleteRenameGuiFallbackTests(unittest.TestCase):
         fake_ui.delete_profile_by_id.assert_called_once_with("k1dyapw4")
         self.assertEqual(data.get("code"), 0)
 
+    def test_delete_unreachable_falls_back_to_gui(self):
+        m = self._manager()
+        m._post_json = mock.Mock(side_effect=AdsPowerUnreachableError("api down"))
+        fake_ui = mock.Mock()
+        fake_ui.delete_profile_by_id.return_value = {"code": 0, "deleted": True}
+        m._ui_controller = mock.Mock(return_value=fake_ui)
+        data = m.delete_profile("k1dyapw4")
+        fake_ui.delete_profile_by_id.assert_called_once_with("k1dyapw4")
+        self.assertEqual(data.get("code"), 0)
+
     def test_rename_fastpath_uses_gui_for_no_api_profile(self):
         m = self._manager()
         m._cdp_fallback_profiles.add("k1dyapw4")
@@ -370,6 +491,17 @@ class DeleteRenameGuiFallbackTests(unittest.TestCase):
         m = self._manager()
         m.get_profile_name = mock.Mock(return_value="Snapchat: Pending")
         m._post_json = mock.Mock(side_effect=AdsPowerPermissionError("9110"))
+        fake_ui = mock.Mock()
+        fake_ui.rename_profile_by_id.return_value = {"profile_id": "k1dyapw4", "name": "Snapchat: bob"}
+        m._ui_controller = mock.Mock(return_value=fake_ui)
+        data = m.rename_profile("k1dyapw4", "Snapchat: bob")
+        fake_ui.rename_profile_by_id.assert_called_once_with("k1dyapw4", "Snapchat: bob")
+        self.assertEqual(data.get("name"), "Snapchat: bob")
+
+    def test_rename_unreachable_falls_back_to_gui(self):
+        m = self._manager()
+        m.get_profile_name = mock.Mock(side_effect=AdsPowerUnreachableError("api down"))
+        m._post_json = mock.Mock(side_effect=AdsPowerUnreachableError("api down"))
         fake_ui = mock.Mock()
         fake_ui.rename_profile_by_id.return_value = {"profile_id": "k1dyapw4", "name": "Snapchat: bob"}
         m._ui_controller = mock.Mock(return_value=fake_ui)

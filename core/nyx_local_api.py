@@ -2,7 +2,6 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from core.nyxify_guard import get_nyxify_profile_guard
 from core.nyx_runtime_config import load_nyx_config, save_nyx_config
 from core.local_http import apply_cors
 
@@ -125,24 +124,14 @@ class NyxLocalApiServer:
                 if self.path == "/queue/upsert":
                     entries = payload.get("entries") or []
                     allow_done_requeue = payload.get("allow_done_requeue")
-                    runtime_config = load_nyx_config()
-                    nyxify_guard_enabled = bool(runtime_config.get("nyxify_guard_enabled", True))
-                    nyxify_guard_strict = bool(runtime_config.get("nyxify_guard_strict", False))
                     count = 0
                     skipped_done = 0
                     skipped_missing = 0
-                    skipped_nyxify_guard = 0
                     for entry in entries:
                         profile_id = str((entry or {}).get("profile_id", "")).strip()
                         model = str((entry or {}).get("model", "")).strip()
                         if not profile_id or not model:
                             continue
-
-                        if nyxify_guard_enabled:
-                            guard = get_nyxify_profile_guard(profile_id, strict=nyxify_guard_strict)
-                            if guard.get("locked"):
-                                skipped_nyxify_guard += 1
-                                continue
 
                         _, action = outer.store.upsert_task(
                             profile_id=profile_id,
@@ -167,7 +156,6 @@ class NyxLocalApiServer:
                             "count": count,
                             "skipped_done": skipped_done,
                             "skipped_missing": skipped_missing,
-                            "skipped_nyxify_guard": skipped_nyxify_guard,
                             "message": "Nyx queue synced locally.",
                         }
                     )
@@ -348,8 +336,6 @@ class NyxLocalApiServer:
                         "outfit_style": payload.get("outfit_style"),
                         "automation_speed": payload.get("automation_speed"),
                         "hair_randomizer_enabled": payload.get("hair_randomizer_enabled"),
-                        "nyxify_guard_enabled": payload.get("nyxify_guard_enabled"),
-                        "nyxify_guard_strict": payload.get("nyxify_guard_strict"),
                         "launch_on_windows_startup": payload.get("launch_on_windows_startup"),
                         "hubstaff_control_enabled": payload.get("hubstaff_control_enabled"),
                         "hubstaff_stop_mode": payload.get("hubstaff_stop_mode"),

@@ -1,13 +1,15 @@
 const CONFIG_KEY = "nyxifyConfig";
 const DEFAULT_TEMPORARY_PROFILE_NAME = "Snapchat:";
 const DEFAULT_ADSPOWER_GROUP = "Snapchat";
-const DEFAULT_TAG_ONE = "Snapchat";
+const DEFAULT_EXTENSION_CATEGORY = "Snap";
+const DEFAULT_TAG_ONE = "";
 const TOGGLE_OPTIONS = [
   ["proxyBlockerToggle", "proxyBlockerEnabled", "Proxy Blocker enabled.", "Proxy Blocker disabled."],
   ["proxyCheckerToggle", "proxyCheckerEnabled", "Proxy Checker enabled.", "Proxy Checker disabled."],
   ["pushAdspowerIdToggle", "pushAdspowerIdEnabled", "Push AdsPower ID enabled.", "Push AdsPower ID disabled."],
   ["adspowerTagsToggle", "adspowerTagsEnabled", "AdsPower tags enabled.", "AdsPower tags disabled."],
   ["fullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
+  ["continuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["autoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
   ["lockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
   ["enabledToggle", "enabled", "Nyxify enabled.", "Nyxify disabled."],
@@ -35,6 +37,7 @@ function normalizeConfig(config) {
     rowLimit: Number.parseInt(safeConfig.rowLimit, 10) || 20,
     temporaryProfileName: normalizeStringConfig(safeConfig, "temporaryProfileName", DEFAULT_TEMPORARY_PROFILE_NAME, false),
     adspowerGroup: normalizeStringConfig(safeConfig, "adspowerGroup", DEFAULT_ADSPOWER_GROUP),
+    extensionCategory: normalizeStringConfig(safeConfig, "extensionCategory", DEFAULT_EXTENSION_CATEGORY, false),
     tagOne: normalizeStringConfig(safeConfig, "tagOne", DEFAULT_TAG_ONE),
     tagTwo: String(safeConfig.tagTwo || "").trim(),
     maxParallelProfiles: Number.parseInt(safeConfig.maxParallelProfiles, 10) || 1,
@@ -44,8 +47,9 @@ function normalizeConfig(config) {
     proxyBlockerEnabled: safeConfig.proxyBlockerEnabled !== false,
     proxyCheckerEnabled: safeConfig.proxyCheckerEnabled !== false,
     pushAdspowerIdEnabled: safeConfig.pushAdspowerIdEnabled !== false,
-    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled !== false,
+    adspowerTagsEnabled: safeConfig.adspowerTagsEnabled === true,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
+    continuousModeEnabled: safeConfig.continuousModeEnabled === true,
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: Number.isFinite(parsedAutoFillTarget) && parsedAutoFillTarget > 0 ? parsedAutoFillTarget : 0,
     lockG5: safeConfig.lockG5 === true,
@@ -58,6 +62,7 @@ function loadOptions() {
     document.getElementById("localApiUrl").value = config.localApiUrl;
     document.getElementById("temporaryProfileName").value = config.temporaryProfileName;
     document.getElementById("adspowerGroup").value = config.adspowerGroup;
+    document.getElementById("extensionCategory").value = config.extensionCategory;
     document.getElementById("tagOne").value = config.tagOne;
     document.getElementById("tagTwo").value = config.tagTwo;
     document.getElementById("rowLimit").value = config.rowLimit;
@@ -68,6 +73,7 @@ function loadOptions() {
     document.getElementById("pushAdspowerIdToggle").checked = config.pushAdspowerIdEnabled;
     document.getElementById("adspowerTagsToggle").checked = config.adspowerTagsEnabled;
     document.getElementById("fullAutoModeToggle").checked = config.fullAutoModeEnabled === true;
+    document.getElementById("continuousModeToggle").checked = config.continuousModeEnabled === true;
     document.getElementById("autoFillRowToggle").checked = config.autoFillRow;
     document.getElementById("autoFillAccountTarget").value = config.autoFillAccountTarget > 0 ? config.autoFillAccountTarget : "";
     document.getElementById("lockG5Toggle").checked = config.lockG5;
@@ -80,6 +86,7 @@ function saveOptions() {
     localApiUrl: document.getElementById("localApiUrl").value,
     temporaryProfileName: document.getElementById("temporaryProfileName").value,
     adspowerGroup: document.getElementById("adspowerGroup").value,
+    extensionCategory: document.getElementById("extensionCategory").value,
     tagOne: document.getElementById("tagOne").value,
     tagTwo: document.getElementById("tagTwo").value,
     rowLimit: document.getElementById("rowLimit").value,
@@ -90,6 +97,7 @@ function saveOptions() {
     pushAdspowerIdEnabled: document.getElementById("pushAdspowerIdToggle").checked,
     adspowerTagsEnabled: document.getElementById("adspowerTagsToggle").checked,
     fullAutoModeEnabled: document.getElementById("fullAutoModeToggle").checked,
+    continuousModeEnabled: document.getElementById("continuousModeToggle").checked,
     autoFillRow: document.getElementById("autoFillRowToggle").checked,
     autoFillAccountTarget: document.getElementById("autoFillAccountTarget").value,
     lockG5: document.getElementById("lockG5Toggle").checked,

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Nyxify v4",
-  "version": "5.0.0",
-  "version_name": "5.0.0",
+  "name": "Nyxify v6",
+  "version": "6.0.0",
+  "version_name": "6.0.0",
   "description": "Detect new top rows from SnapBoard and create AdsPower profiles through Nyxify Runner.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvklvdGRwjRjTndBqYQ/8/6b+tG70pKlDOGvk4SPwFCutAjdCs37JObzxUETIlkg7pptRhdAqXbkpfDQL62gPJqnsSyDvHGOtrp7An1QB4IvMO0wWROTu8WY0feApnZY3hEd5Zzr90pxVyOWwJvowuR7PPIo34oTfaxHiaM95oSEb5pfrGSEjReHibNrA4Nb/7j5ohpGjoA+vIPFPs6GmB6UOU+sz5qMUfwebicvq9ESnr1whS2CUcyUfOC02wU5wu4YhWNZKbljL21oXXWOf1RcZtHddkyZ8g+aGfvehcapQlot6XbtJtPT9XjjovO5+8Ut/88Fqp9oYl522hb9WgQIDAQAB",
   "permissions": [
@@ -47,7 +47,7 @@
     }
   ],
   "action": {
-    "default_title": "Nyxify v4",
+    "default_title": "Nyxify v6",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons8-origami-50-gray.png",

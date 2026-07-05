@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# v4 ("Nyx Suite") line: isolated app-data namespace so it never collides with
+# v6 ("Nyx Suite") line: isolated app-data namespace so it never collides with
 # the frozen v3 install, which uses %LOCALAPPDATA%/Nyx. Change this one constant
 # to rebrand the data folder.
 APP_DATA_DIR_NAME = "NyxSuite"

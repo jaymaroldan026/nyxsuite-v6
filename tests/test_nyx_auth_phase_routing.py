@@ -16,11 +16,15 @@ from core import task_runner
 class _FakeStore:
     def __init__(self):
         self.status_calls = []
+        self.last_step_calls = []
+        self.begin_calls = 0
 
     def begin_run(self, task_id, run_token, step=""):
+        self.begin_calls += 1
         return True
 
     def update_last_step(self, task_id, step, run_token=None):
+        self.last_step_calls.append({"step": step, "run_token": run_token})
         return True
 
     def is_current_run(self, task_id, run_token):
@@ -77,6 +81,47 @@ class AuthPhaseRoutingTests(unittest.TestCase):
         call = store.status_calls[0]
         self.assertEqual(call["status"], "FAILED")
         self.assertEqual(call["step"], "manual_terminate")
+
+    def test_nyx_holds_profile_when_nyxify_has_not_reached_success(self):
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
+        run_calls = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            run_calls.append(args)
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason", lambda profile_id: "waiting_for_nyxify_success"):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(run_calls, [])
+        self.assertEqual(store.begin_calls, 0)
+        self.assertEqual(len(store.status_calls), 1)
+        self.assertEqual(store.status_calls[0]["status"], "PENDING")
+        self.assertEqual(store.status_calls[0]["step"], "waiting_for_nyxify_success")
+
+    def test_guard_allows_profile_after_nyxify_queued_for_nyx(self):
+        fake_store = mock.Mock()
+        fake_store.get_task_by_adspower_profile_id.return_value = {
+            "status": "DONE",
+            "last_step": "queued_for_nyx",
+        }
+        fake_store.has_inflight_signups.return_value = True
+
+        with mock.patch.object(task_runner, "NyxifyTaskStore", return_value=fake_store):
+            self.assertEqual(task_runner._get_nyxify_hold_reason("k1abc"), "")
+
+    def test_guard_holds_matching_profile_before_nyxify_success(self):
+        fake_store = mock.Mock()
+        fake_store.get_task_by_adspower_profile_id.return_value = {
+            "status": "RUNNING",
+            "last_step": "running_signup",
+        }
+        fake_store.has_inflight_signups.return_value = True
+
+        with mock.patch.object(task_runner, "NyxifyTaskStore", return_value=fake_store):
+            self.assertEqual(task_runner._get_nyxify_hold_reason("k1abc"), "waiting_for_nyxify_success")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-# Nyx Suite v5
+# Nyx Suite v6
 
-First release (5.0.0) of the **no-API** Nyx Suite — it drives the AdsPower desktop
+Current release line (6.0.0) of the **no-API** Nyx Suite — it drives the AdsPower desktop
 app directly when the Local API is permission-gated, so it works on AdsPower
 Employee/sub-accounts. This is an **open build with no license/activation**.
 
@@ -27,7 +27,7 @@ back to GUI automation (Windows) — see **No-API mode** below.
 - `nyx_extension/`, `nyxify_extension/` — MV3 browser extension sources
 - `snap_selectors/` — model selector definitions
 - `data/signup_names/`, `data/full_auto_usernames/` — committed lists the flows require
-- `packaging/` — Windows build scripts
+- `packaging/` — Windows and source-ZIP release scripts
 
 ## Run locally (Windows, macOS, Linux)
 
@@ -110,10 +110,12 @@ Tags and extension-category are not set on GUI-created profiles — they are
 organizational metadata only and neither runner depends on them.
 
 This path is **resolution-, DPI- and window-position-independent**: it locates
-controls by Windows UI Automation and clicks their real on-screen rectangles
-(`core/win_focus.py` forces the AdsPower window foreground first). A cross-
+controls by platform accessibility APIs (Windows UI Automation on Windows,
+AXUIElement on macOS) and clicks their real on-screen rectangles
+(`core/win_focus.py` forces the AdsPower window foreground first on Windows;
+the macOS backend raises the AdsPower Global window through AppKit). A cross-
 platform OpenCV template-matching fallback (`core/ui_vision.py`) covers the rare
-case UI Automation can't see a control; templates auto-capture into
+case accessibility can't see a control; templates auto-capture into
 `ui_templates/adspower/elements/`.
 
 Controls:
@@ -125,27 +127,21 @@ Controls:
   (create → open → rename → close → delete). Single ops: `--rename ID:Name`,
   `--close ID`, `--delete ID`.
 
-## Keyboard shortcut — pause / resume
+## Keyboard shortcut — stop / start
 
 Press **Ctrl+F8** anywhere (a global hotkey — it works even while the AdsPower
-window is focused) to pause/resume the running bot. It toggles the same pause
-flags the dashboard/tray use, so the dashboard state stays in sync, and it plays
-a distinct built-in tone for each action (a low descending double-beep for
-**pause**, a higher rising one for **resume**) so you know the key was caught.
+window is focused) to stop the running bot gracefully. It plays a distinct
+built-in tone (a low descending double-beep for **stop**) so you know the key
+was caught.
 
 The listener runs **inside each runner process** (`core/hotkeys.py`, started by
 `main.py` for Nyx and `nyxify_runner.py` for Nyxify) — so only a *running* bot
-responds, and pressing the key pauses whatever is running. Effect by runner:
-
-- **Nyx (Bitmoji):** pauses the **current** account mid-run — the flow checks the
-  pause flag at each step (`wait_if_paused`).
-- **Nyxify (signup):** pauses **between accounts** — the in-flight signup runs to
-  completion, then no new ones start until you resume.
+responds, and pressing the key stops whatever is running immediately.
 
 > **macOS:** global hotkeys require the host app (Terminal, or the bundled Nyx
 > Suite app) to have **Accessibility** permission — grant it under *System
 > Settings → Privacy & Security → Accessibility*. Without it the suite still
-> runs; only the Ctrl+F8 shortcut is inactive (the dashboard pause buttons work
+> runs; only the Ctrl+F8 shortcut is inactive (the dashboard/tray controls work
 > regardless).
 
 ## Browser extension host (optional)
@@ -164,11 +160,28 @@ macOS `~/Library/Application Support/.../NativeMessagingHosts` / Linux `~/.confi
 - AdsPower must be installed and running on the target machine.
 - **No license/activation** — this open build runs unconditionally.
 - **Cross-OS:** the suite installs and runs on Windows, macOS and Linux (Local API
-  + Playwright). The **no-API GUI fallback is Windows-only** (it drives the AdsPower
-  desktop app via Windows UI Automation); on macOS/Linux those deps are skipped by
-  `requirements.txt` and the suite uses the AdsPower Local API instead.
+  + Playwright). The **no-API GUI fallback works on Windows and macOS** (Windows
+  UI Automation on Windows, AXUIElement Accessibility on macOS); Linux continues
+  to use the AdsPower Local API path.
 - **Run on login** is cross-platform (Settings → Start on Login): Windows `Run`
   key, macOS LaunchAgent, Linux XDG autostart.
 - `data/signup_names/` and `data/full_auto_usernames/` are intentionally versioned —
   the signup and Full Auto flows depend on them.
 - Runtime databases, config, and logs are created locally and kept out of Git via `.gitignore`.
+
+## Release updates
+
+Nyx Suite v6 uses one public GitHub repo for source and update releases:
+`jaymaroldan026/nyxsuite-v6`. The dashboard updater checks that repo's GitHub
+Releases for an asset matching `NyxSuite-v*.zip`.
+
+Release checklist for future agents:
+
+1. Update `core/version.py`.
+2. Run `python scripts/sync_version.py` so both extension manifests match.
+3. Build a source release ZIP:
+   - macOS/Linux: `bash packaging/create_release_zip.sh --version <version>`
+   - Windows: `powershell -ExecutionPolicy Bypass -File .\packaging\create_release_zip.ps1 -Version <version>`
+4. Create/publish a GitHub release in `jaymaroldan026/nyxsuite-v6` with tag `v<version>`.
+5. Upload `dist/NyxSuite-v<version>.zip` to that release.
+6. From an older install on Windows and macOS, open Dashboard -> Settings -> Check for Update -> Apply Update.

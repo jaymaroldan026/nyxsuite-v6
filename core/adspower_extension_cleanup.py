@@ -1,10 +1,80 @@
 import asyncio
+import os
+import random
+import time
 
 SNAPCHAT_SIGNUP_URL = "https://accounts.snapchat.com/v2/signup"
 SNAPCHAT_PAGE_READY_TIMEOUT_MS = 120000
 SNAPCHAT_POLL_INTERVAL_MS = 500
 SNAPCHAT_HANDOFF_TIMEOUT_SECONDS = 300
 SNAPCHAT_HANDOFF_LOG_INTERVAL_SECONDS = 30
+
+
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return int(default)
+
+
+COOKIE_WARMUP_ENABLED = str(os.getenv("NYXIFY_COOKIE_WARMUP_ENABLED", "1")).strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+COOKIE_WARMUP_MIN_SITES = max(1, _env_int("NYXIFY_COOKIE_WARMUP_MIN_SITES", 5))
+COOKIE_WARMUP_MAX_SITES = max(COOKIE_WARMUP_MIN_SITES, _env_int("NYXIFY_COOKIE_WARMUP_MAX_SITES", 10))
+COOKIE_WARMUP_MIN_SECONDS = max(0, _env_int("NYXIFY_COOKIE_WARMUP_MIN_SECONDS", 60))
+COOKIE_WARMUP_MAX_SECONDS = max(COOKIE_WARMUP_MIN_SECONDS, _env_int("NYXIFY_COOKIE_WARMUP_MAX_SECONDS", 120))
+COOKIE_WARMUP_MAX_CONCURRENT_TABS = max(1, _env_int("NYXIFY_COOKIE_WARMUP_MAX_CONCURRENT_TABS", 4))
+COOKIE_WARMUP_GOOD_WEBSITES = (
+    "https://wikipedia.org/",
+    "https://cnn.com/",
+    "https://nytimes.com/",
+    "https://washingtonpost.com/",
+    "https://nbcnews.com/",
+    "https://cbsnews.com/",
+    "https://abcnews.go.com/",
+    "https://apnews.com/",
+    "https://reuters.com/",
+    "https://usatoday.com/",
+    "https://npr.org/",
+    "https://foxnews.com/",
+    "https://bloomberg.com/",
+    "https://wsj.com/",
+    "https://forbes.com/",
+    "https://businessinsider.com/",
+    "https://theverge.com/",
+    "https://wired.com/",
+    "https://techcrunch.com/",
+    "https://medium.com/",
+    "https://quora.com/",
+    "https://hulu.com/",
+    "https://disneyplus.com/",
+    "https://max.com/",
+    "https://paramountplus.com/",
+    "https://peacocktv.com/",
+    "https://spotify.com/",
+    "https://soundcloud.com/",
+    "https://imdb.com/",
+    "https://rottentomatoes.com/",
+    "https://homedepot.com/",
+    "https://lowes.com/",
+    "https://costco.com/",
+    "https://macys.com/",
+    "https://kohls.com/",
+    "https://wayfair.com/",
+    "https://gap.com/",
+    "https://nordstrom.com/",
+    "https://chewy.com/",
+    "https://yelp.com/",
+    "https://starbucks.com/",
+    "https://weather.com/",
+    "https://accuweather.com/",
+    "https://opentable.com/",
+    "https://alltrails.com/",
+)
 
 from playwright.async_api import async_playwright
 from core.browser_window import maximize_browser_window
@@ -443,7 +513,258 @@ async def _open_snapchat_signup_with_timeout(context, logger, profile_id):
     return await _open_snapchat_signup_in_new_tab(context, logger, profile_id)
 
 
-async def disable_profile_extensions(adspower, profile_id, logger, keep_open=True, keep_playwright=False):
+async def open_snapchat_signup(context, logger, profile_id):
+    return await _open_snapchat_signup_with_timeout(context, logger, profile_id)
+
+
+async def _safe_close_page(page):
+    try:
+        if page is not None and not page.is_closed():
+            await page.close()
+    except Exception:
+        pass
+
+
+async def accept_cookie_consent_if_present(page, logger=None, profile_id="", site_url=""):
+    try:
+        clicked = await page.evaluate(
+            """
+            () => {
+                const strongAcceptPatterns = [
+                    /^accept$/i,
+                    /^accept all$/i,
+                    /accept (all )?(cookies|cookie)/i,
+                    /allow all/i,
+                    /^agree$/i,
+                    /i agree/i,
+                    /consent/i,
+                ];
+                const contextualAcceptPatterns = [/got it/i, /^ok$/i, /^okay$/i, /continue/i];
+                const avoidPatterns = [
+                    /reject/i,
+                    /decline/i,
+                    /deny/i,
+                    /manage/i,
+                    /settings/i,
+                    /preferences/i,
+                    /customi[sz]e/i,
+                    /learn more/i,
+                    /subscribe/i,
+                    /sign in/i,
+                    /log in/i,
+                ];
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const style = window.getComputedStyle(node);
+                    if (!style || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+                        return false;
+                    }
+                    const rect = node.getBoundingClientRect();
+                    return rect.width > 8 && rect.height > 8;
+                };
+                const textOf = (node) => [
+                    node.innerText,
+                    node.textContent,
+                    node.getAttribute && node.getAttribute("aria-label"),
+                    node.getAttribute && node.getAttribute("title"),
+                    node.getAttribute && node.getAttribute("value"),
+                ].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+                const contextText = (node) => {
+                    let parent = node;
+                    for (let i = 0; i < 4 && parent; i += 1) {
+                        const text = textOf(parent);
+                        if (/cookie|privacy|consent|gdpr|ccpa/i.test(text)) return text;
+                        parent = parent.parentElement;
+                    }
+                    return "";
+                };
+                const nodes = Array.from(document.querySelectorAll(
+                    "button, [role='button'], input[type='button'], input[type='submit'], a[href]"
+                ));
+                const candidates = nodes
+                    .filter(isVisible)
+                    .map((node) => ({ node, text: textOf(node), ctx: contextText(node) }))
+                    .filter(({ text, ctx }) => text && (
+                        strongAcceptPatterns.some((pattern) => pattern.test(text)) ||
+                        (
+                            /cookie|privacy|consent|gdpr|ccpa/i.test(ctx) &&
+                            contextualAcceptPatterns.some((pattern) => pattern.test(text))
+                        )
+                    ))
+                    .filter(({ text }) => !avoidPatterns.some((pattern) => pattern.test(text)))
+                    .sort((a, b) => Number(/cookie|privacy|consent|gdpr|ccpa/i.test(b.ctx))
+                        - Number(/cookie|privacy|consent|gdpr|ccpa/i.test(a.ctx)));
+                if (!candidates.length) return false;
+                const target = candidates[0].node;
+                target.scrollIntoView({ block: "center", inline: "center" });
+                target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, view: window }));
+                target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+                target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+                target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+                try { target.click(); } catch (_error) {}
+                return true;
+            }
+            """
+        )
+    except Exception as exc:
+        if logger:
+            logger.debug(
+                f"Cookie consent scan failed for {profile_id} at {site_url}: {exc}"
+            )
+        return False
+
+    if clicked and logger:
+        logger.info(f"Accepted cookie prompt during warm-up for {profile_id} at {site_url}.")
+    return bool(clicked)
+
+
+async def _warm_one_cookie_site(context, url, duration_seconds, logger, profile_id):
+    page = await context.new_page()
+    try:
+        await apply_dark_mode_to_page(page, logger=logger)
+    except Exception:
+        pass
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    except Exception as exc:
+        if logger:
+            logger.warning(f"Cookie warm-up navigation failed for {profile_id} at {url}: {exc}")
+        await _safe_close_page(page)
+        return False
+
+    consent_clicked = await accept_cookie_consent_if_present(page, logger, profile_id, url)
+    deadline = time.monotonic() + max(2, float(duration_seconds or 0))
+    while time.monotonic() < deadline:
+        try:
+            await page.evaluate(
+                "(amount) => window.scrollBy({ top: amount, behavior: 'smooth' })",
+                random.randint(180, 900),
+            )
+        except Exception:
+            pass
+
+        if not consent_clicked:
+            consent_clicked = await accept_cookie_consent_if_present(page, logger, profile_id, url)
+
+        if random.random() < 0.35:
+            try:
+                await page.evaluate(
+                    """
+                    () => {
+                        const isVisible = (node) => {
+                            if (!node) return false;
+                            const style = window.getComputedStyle(node);
+                            if (!style || style.display === "none" || style.visibility === "hidden") {
+                                return false;
+                            }
+                            const rect = node.getBoundingClientRect();
+                            return rect.width > 8
+                                && rect.height > 8
+                                && rect.top >= 0
+                                && rect.top < window.innerHeight
+                                && rect.left >= 0
+                                && rect.left < window.innerWidth;
+                        };
+                        const sameOrigin = (node) => {
+                            if (!node || node.tagName !== "A") return true;
+                            try {
+                                const next = new URL(node.href, window.location.href);
+                                return next.origin === window.location.origin;
+                            } catch (_error) {
+                                return false;
+                            }
+                        };
+                        const candidates = Array.from(document.querySelectorAll("a[href], button, [role='button']"))
+                            .filter((node) => isVisible(node) && sameOrigin(node));
+                        if (!candidates.length) return false;
+                        const target = candidates[Math.floor(Math.random() * candidates.length)];
+                        target.scrollIntoView({ block: "center", inline: "center" });
+                        target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, view: window }));
+                        target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+                        target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+                        target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+                        try { target.click(); } catch (_error) {}
+                        return true;
+                    }
+                    """
+                )
+            except Exception:
+                pass
+
+        try:
+            await page.wait_for_timeout(random.randint(900, 2600))
+        except Exception:
+            break
+
+    await _safe_close_page(page)
+    return True
+
+
+async def _warm_ads_profile_cookies(context, logger, profile_id):
+    if not COOKIE_WARMUP_ENABLED or COOKIE_WARMUP_MAX_SECONDS <= 0:
+        return {"enabled": False, "visited": []}
+
+    site_count = random.randint(
+        COOKIE_WARMUP_MIN_SITES,
+        min(COOKIE_WARMUP_MAX_SITES, len(COOKIE_WARMUP_GOOD_WEBSITES)),
+    )
+    total_seconds = random.randint(COOKIE_WARMUP_MIN_SECONDS, COOKIE_WARMUP_MAX_SECONDS)
+    selected_sites = random.sample(list(COOKIE_WARMUP_GOOD_WEBSITES), site_count)
+    seconds_per_site = max(2, total_seconds / max(1, site_count))
+    concurrency = max(1, min(COOKIE_WARMUP_MAX_CONCURRENT_TABS, site_count))
+    baseline_pages = set(getattr(context, "pages", []) or [])
+    visited = []
+
+    if logger:
+        logger.info(
+            f"Starting AdsPower cookie warm-up for {profile_id}: "
+            f"{site_count} sites over ~{total_seconds}s, max {concurrency} tabs at once."
+        )
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def visit_site(url):
+        async with semaphore:
+            try:
+                ok = await _warm_one_cookie_site(context, url, seconds_per_site, logger, profile_id)
+            except Exception as exc:
+                if logger:
+                    logger.warning(f"Cookie warm-up worker failed for {profile_id} at {url}: {exc}")
+                return None
+            return url if ok else None
+
+    try:
+        results = await asyncio.gather(*(visit_site(url) for url in selected_sites))
+        visited = [url for url in results if url]
+    finally:
+        for page in list(getattr(context, "pages", []) or []):
+            if page not in baseline_pages:
+                await _safe_close_page(page)
+
+    if logger:
+        logger.info(
+            f"Finished AdsPower cookie warm-up for {profile_id}: visited={visited}"
+        )
+    return {"enabled": True, "visited": visited}
+
+
+async def warm_ads_profile_cookies(context, logger, profile_id):
+    return await _warm_ads_profile_cookies(context, logger, profile_id)
+
+
+async def _warm_then_open_snapchat_signup(context, logger, profile_id):
+    return await open_snapchat_signup(context, logger, profile_id)
+
+
+async def disable_profile_extensions(
+    adspower,
+    profile_id,
+    logger,
+    keep_open=True,
+    keep_playwright=False,
+    open_signup=True,
+):
     normalized_profile_id = str(profile_id or "").strip()
     if not normalized_profile_id:
         raise ValueError("AdsPower profile id is required.")
@@ -659,8 +980,10 @@ async def disable_profile_extensions(adspower, profile_id, logger, keep_open=Tru
                         f"already_disabled={result.get('already_disabled', [])}, "
                         f"kept_enabled={result.get('kept_enabled', [])}"
                     )
-                signup_result = await _open_snapchat_signup_with_timeout(
-                    context, logger, normalized_profile_id
+                signup_result = (
+                    await open_snapchat_signup(context, logger, normalized_profile_id)
+                    if open_signup
+                    else {}
                 )
                 payload = {
                     "profile_id": normalized_profile_id,
@@ -698,8 +1021,10 @@ async def disable_profile_extensions(adspower, profile_id, logger, keep_open=Tru
                 f"last_result={last_result}"
             )
 
-        signup_result = await _open_snapchat_signup_with_timeout(
-            context, logger, normalized_profile_id
+        signup_result = (
+            await open_snapchat_signup(context, logger, normalized_profile_id)
+            if open_signup
+            else {}
         )
         payload = {
             "profile_id": normalized_profile_id,

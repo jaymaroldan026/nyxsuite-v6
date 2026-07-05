@@ -165,7 +165,7 @@ Write-Host "  + VERSION ($Version)"
 $updateConfig = @"
 {
   "app": "nyxsuite",
-  "repo": "jaymaroldan026/nyxsuite-releases",
+  "repo": "jaymaroldan026/nyxsuite-v6",
   "asset_pattern": "NyxSuite-v*.zip",
   "exe_to_relaunch": "",
   "data_preserve_paths": [
@@ -248,4 +248,4 @@ Write-Host "[create_release_zip] Done: $zipPath"
 Write-Host "[create_release_zip] Size: $((Get-Item $zipPath).Length / 1KB) KB"
 Write-Host ""
 Write-Host "Upload to GitHub Releases:"
-Write-Host "  gh release upload $label `"$zipPath`" --repo jaymaroldan026/nyxsuite-releases"
+Write-Host "  gh release upload $label `"$zipPath`" --repo jaymaroldan026/nyxsuite-v6"

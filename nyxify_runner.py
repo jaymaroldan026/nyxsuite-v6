@@ -10,14 +10,23 @@ from pathlib import Path
 import requests as _requests
 from dotenv import load_dotenv
 
+from core.macos_dock import hide_macos_dock_icon
+
+hide_macos_dock_icon()
+
 from core.adspower import AdsPowerManager
-from core.adspower_extension_cleanup import disable_profile_extensions
+from core.adspower_extension_cleanup import (
+    disable_profile_extensions,
+    open_snapchat_signup,
+    warm_ads_profile_cookies,
+)
 from core.logger import logger
 from core.nyxify_cleanup import (
     CLEANUP_DELETE_FAILED_STEP,
     cleanup_delete_failed_error,
     close_and_delete_profile,
 )
+from core.nyx_handoff import enqueue_profile_for_nyx
 from core.nyxify_runtime_config import load_nyxify_config
 from core.nyxify_task_store import NyxifyTaskStore
 from core.process_utils import APP_DATA_DIR, LOGS_DIR
@@ -114,6 +123,9 @@ def _classify_failure_last_step(created, last_step, error_message):
     normalized_error = str(error_message or "").strip().lower()
     normalized_step = str(last_step or "").strip()
 
+    if _is_macos_accessibility_permission_error(error_message):
+        return "adspower_accessibility_permission_missing"
+
     if _is_unable_to_process_error(error_message):
         return "unable_to_process"
 
@@ -128,6 +140,8 @@ def _classify_failure_last_step(created, last_step, error_message):
         return "signup_stuck_retry_exhausted"
     if "email_order_unavailable" in normalized_error:
         return "email_order_unavailable"
+    if "phone_verification_rejected" in normalized_error:
+        return "phone_verification_rejected"
 
     if "number of imported accounts exceeds the limit" in normalized_error:
         return "adspower_account_limit_reached"
@@ -165,6 +179,9 @@ def _classify_failure_last_step(created, last_step, error_message):
     ):
         return "signup_handoff_failed"
 
+    if last_step == "cookie_warmup" or "cookie warm" in normalized_error:
+        return "cookie_warmup_failed"
+
     if "accounts.snapchat.com/v2/signup" in normalized_error or "err_socks_connection_failed" in normalized_error:
         return "signup_navigation_failed"
 
@@ -175,8 +192,12 @@ def _classify_failure_last_step(created, last_step, error_message):
         "fetching_email",
         "fetching_replacement_email",
         "filling_email_verification",
+        "awaiting_phone_verification",
+        "fetching_phone_verification",
+        "filling_phone_verification",
         "awaiting_otp",
         "fetching_otp",
+        "fetching_sms_otp",
         "retrying_otp",
         "submitting_otp",
         "waiting_for_signup_handoff",
@@ -218,6 +239,14 @@ def _is_unable_to_process_error(error_message):
     )
 
 
+def _is_macos_accessibility_permission_error(error_message):
+    normalized_error = str(error_message or "").strip().lower()
+    return (
+        "macos accessibility permission is required" in normalized_error
+        and "adspower no-api gui automation" in normalized_error
+    )
+
+
 def _is_proxy_navigation_error(error_message):
     normalized_error = str(error_message or "").strip().lower()
     return any(
@@ -240,6 +269,7 @@ def _should_cleanup_failed_created_profile(failure_last_step, error_message):
     if normalized_step in {
         "signup_navigation_failed",
         "signup_handoff_failed",
+        "cookie_warmup_failed",
         "signup_automation_failed",
         "signup_username_retry_failed",
         "retrying_signup_username",
@@ -248,8 +278,12 @@ def _should_cleanup_failed_created_profile(failure_last_step, error_message):
         "fetching_email",
         "fetching_replacement_email",
         "filling_email_verification",
+        "awaiting_phone_verification",
+        "fetching_phone_verification",
+        "filling_phone_verification",
         "awaiting_otp",
         "fetching_otp",
+        "fetching_sms_otp",
         "retrying_otp",
         "submitting_otp",
         "waiting_for_signup_handoff",
@@ -259,6 +293,7 @@ def _should_cleanup_failed_created_profile(failure_last_step, error_message):
         "signup_non_english_page",
         "signup_stuck_retry_exhausted",
         "email_order_unavailable",
+        "phone_verification_rejected",
     }:
         return True
     # Keep cleanup consistent for any signup sub-step the classifier now
@@ -322,7 +357,7 @@ def _build_waiting_step(missing_fields):
     return "waiting_for_" + "_and_".join(missing_fields)
 
 
-async def _request_snapboard_rotation(row_key, timeout_seconds=40, max_clicks=None):
+def _request_snapboard_rotation_sync(row_key, timeout_seconds=40, max_clicks=None):
     """Ask the SnapBoard content script (via local API) to click the rotate button and return the new proxy."""
     payload = {"row_key": row_key}
     if max_clicks is not None:
@@ -344,7 +379,7 @@ async def _request_snapboard_rotation(row_key, timeout_seconds=40, max_clicks=No
         return None
 
     for _ in range(timeout_seconds):
-        await asyncio.sleep(1)
+        time.sleep(1)
         try:
             resp = _requests.get(
                 f"{NYXIFY_LOCAL_API_URL}/proxy/rotate_status",
@@ -363,6 +398,15 @@ async def _request_snapboard_rotation(row_key, timeout_seconds=40, max_clicks=No
 
     logger.warning(f"SnapBoard proxy rotation timed out for {row_key}")
     return None
+
+
+async def _request_snapboard_rotation(row_key, timeout_seconds=40, max_clicks=None):
+    return await asyncio.to_thread(
+        _request_snapboard_rotation_sync,
+        row_key,
+        timeout_seconds,
+        max_clicks,
+    )
 
 
 def _post_with_retries(path, payload, *, attempts=4, label=""):
@@ -744,6 +788,114 @@ async def _request_snapboard_email(row_key, timeout_seconds=75, force_new=False)
     return ""
 
 
+async def _request_snapboard_phone(row_key, timeout_seconds=120, force_new=False):
+    normalized_row_key = str(row_key or "").strip()
+    if not normalized_row_key:
+        return ""
+
+    token = _ensure_local_api_token()
+    headers = {}
+    payload = {"row_key": normalized_row_key, "force_new": bool(force_new)}
+    if token:
+        headers["X-Nyxify-Token"] = token
+        payload["token"] = token
+    try:
+        response = _requests.post(
+            f"{NYXIFY_LOCAL_API_URL}/phone/request",
+            json=payload,
+            headers=headers or None,
+            timeout=5,
+        )
+        if not response.ok:
+            logger.warning(f"Could not request SnapBoard phone fetch for {normalized_row_key}: HTTP {response.status_code}")
+            return ""
+    except Exception as exc:
+        logger.warning(f"Could not request SnapBoard phone fetch for {normalized_row_key}: {exc}")
+        return ""
+
+    deadline = time.monotonic() + max(1, int(timeout_seconds or 120))
+    last_error = ""
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1)
+        try:
+            response = _requests.get(
+                f"{NYXIFY_LOCAL_API_URL}/phone/status",
+                params={"row_key": normalized_row_key},
+                timeout=5,
+            )
+            if not response.ok:
+                last_error = f"HTTP {response.status_code}"
+                continue
+            data = response.json()
+            if data.get("done"):
+                phone = str(data.get("phone") or "").strip()
+                if phone:
+                    return phone
+                last_error = str(data.get("error") or "Phone fetch failed.").strip()
+        except Exception as exc:
+            last_error = str(exc)
+
+    logger.warning(
+        f"Timed out waiting for SnapBoard phone fetch for {normalized_row_key}"
+        + (f": {last_error}" if last_error else ".")
+    )
+    return ""
+
+
+async def _request_snapboard_sms(row_key, timeout_seconds=150):
+    normalized_row_key = str(row_key or "").strip()
+    if not normalized_row_key:
+        return ""
+
+    token = _ensure_local_api_token()
+    headers = {}
+    payload = {"row_key": normalized_row_key}
+    if token:
+        headers["X-Nyxify-Token"] = token
+        payload["token"] = token
+    try:
+        response = _requests.post(
+            f"{NYXIFY_LOCAL_API_URL}/sms/request",
+            json=payload,
+            headers=headers or None,
+            timeout=5,
+        )
+        if not response.ok:
+            logger.warning(f"Could not request SnapBoard SMS fetch for {normalized_row_key}: HTTP {response.status_code}")
+            return ""
+    except Exception as exc:
+        logger.warning(f"Could not request SnapBoard SMS fetch for {normalized_row_key}: {exc}")
+        return ""
+
+    deadline = time.monotonic() + max(1, int(timeout_seconds or 150))
+    last_error = ""
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1)
+        try:
+            response = _requests.get(
+                f"{NYXIFY_LOCAL_API_URL}/sms/status",
+                params={"row_key": normalized_row_key},
+                timeout=5,
+            )
+            if not response.ok:
+                last_error = f"HTTP {response.status_code}"
+                continue
+            data = response.json()
+            if data.get("done"):
+                code = str(data.get("code") or "").strip()
+                if code:
+                    return code
+                last_error = str(data.get("error") or "SMS fetch failed.").strip()
+        except Exception as exc:
+            last_error = str(exc)
+
+    logger.warning(
+        f"Timed out waiting for SnapBoard SMS fetch for {normalized_row_key}"
+        + (f": {last_error}" if last_error else ".")
+    )
+    return ""
+
+
 def _build_final_adspower_name(final_username):
     normalized_username = str(final_username or "").strip()
     if not normalized_username:
@@ -828,6 +980,7 @@ async def process_task(task, store, adspower):
     proxy_value = str(task.get("proxy_address") or task.get("ip_address") or "").strip()
     username = str(task.get("username") or "").strip()
     email = str(task.get("email") or "").strip()
+    signup_password = str(task.get("password") or "").strip()
     task_adspower_id = str(task.get("adspower_id") or "").strip()
     config = load_nyxify_config()
     blocked_proxies = config.get("blocked_proxies", [])
@@ -852,17 +1005,20 @@ async def process_task(task, store, adspower):
     extension_category = str(config.get("extension_category") or "Snap").strip()
     push_adspower_id_enabled = bool(config.get("push_adspower_id_enabled", True))
     full_auto_mode_enabled = bool(config.get("full_auto_mode_enabled", False))
+    continuous_mode_enabled = bool(config.get("continuous_mode_enabled", False))
     names_dir = _resolve_names_dir(config)
     created = None
     final_adspower_name = ""
     final_username_applied = False
     final_profile_renamed = False
+    final_profile_rename_pending = False
     snapboard_username_synced = False
     snapboard_adspower_id_synced = not push_adspower_id_enabled
     snapboard_adspower_name_synced = False
     close_profile_after_completion = False
     close_profile_id = ""
     last_step = "checking_proxy"
+    completion_error = ""
     playwright_instance = None
     signup_completed = False
 
@@ -936,6 +1092,34 @@ async def process_task(task, store, adspower):
             logger.warning(f"Timed out waiting for OTP for task {task_id}.")
             return ""
 
+        async def phone_fetcher(force_new=False):
+            if not task_row_key:
+                logger.warning(f"Task {task_id} is missing row_key for phone retrieval.")
+                return ""
+            store.update_task_state(
+                task_id,
+                last_step="fetching_phone_verification",
+            )
+            phone = await _request_snapboard_phone(
+                task_row_key,
+                timeout_seconds=120,
+                force_new=force_new,
+            )
+            if phone:
+                logger.info(f"Task {task_id}: fetched verification phone from SnapBoard.")
+            return phone
+
+        async def sms_fetcher():
+            if not task_row_key:
+                logger.warning(f"Task {task_id} is missing row_key for SMS retrieval.")
+                return ""
+            store.update_task_state(task_id, last_step="fetching_sms_otp")
+            logger.info(f"Task {task_id} requesting SMS OTP from SnapBoard bridge.")
+            code = await _request_snapboard_sms(task_row_key, timeout_seconds=150)
+            if code:
+                logger.info(f"Received SMS OTP for task {task_id} from SnapBoard bridge.")
+            return code
+
         proxy_value, proxy_check = await _rotate_proxy_until_usable(
             task_id=task_id,
             task_row_key=task_row_key,
@@ -950,6 +1134,39 @@ async def process_task(task, store, adspower):
         last_step = "creating_adspower_profile"
         store.update_task_state(task_id, last_step=last_step)
 
+        def gui_proxy_rotator(**_kwargs):
+            nonlocal proxy_value
+            if not task_row_key:
+                logger.warning(
+                    f"Task {task_id}: AdsPower GUI proxy check failed, but row_key is missing; "
+                    "cannot request SnapBoard proxy rotation."
+                )
+                return ""
+            store.update_task_state(
+                task_id,
+                last_step="refreshing_proxy_after_gui_proxy_check_failed",
+            )
+            old_proxy = str(proxy_value or _kwargs.get("current_proxy") or "").strip()
+            new_proxy = _request_snapboard_rotation_sync(
+                task_row_key,
+                timeout_seconds=55,
+                max_clicks=1,
+            )
+            new_proxy = str(new_proxy or "").strip()
+            if not new_proxy:
+                logger.warning(
+                    f"Task {task_id}: SnapBoard did not return a rotated proxy after "
+                    "AdsPower GUI proxy check failure."
+                )
+                return ""
+            proxy_value = new_proxy
+            store.update_task_proxy(task_id, new_proxy)
+            logger.info(
+                f"Task {task_id}: rotated proxy after AdsPower GUI check failure: "
+                f"{old_proxy[:40]!r} -> {new_proxy[:40]!r}"
+            )
+            return new_proxy
+
         created = await asyncio.to_thread(
             adspower.create_profile,
             name=temporary_name,
@@ -958,6 +1175,7 @@ async def process_task(task, store, adspower):
             tags=tags,
             user_proxy_config=proxy_check.get("proxy"),
             extension_category_reference=extension_category,
+            proxy_rotator=gui_proxy_rotator,
         )
 
         tag_result = created.get("tag_confirmation") or {
@@ -995,19 +1213,28 @@ async def process_task(task, store, adspower):
         # keep_playwright=True — we own the playwright instance and use it for signup too
         cleanup_result = await disable_profile_extensions(
             adspower, created.get("profile_id"), logger,
-            keep_open=True, keep_playwright=True,
+            keep_open=True, keep_playwright=True, open_signup=False,
         )
 
         playwright_instance = cleanup_result.get("playwright_instance")
-        signup_page = cleanup_result.get("signup_page")
         context = cleanup_result.get("context")
-        signup_url = cleanup_result.get("signup_url", "")
 
         last_step = "extensions_disabled"
         store.update_task_state(task_id, last_step=last_step)
 
+        if context is None:
+            raise RuntimeError("AdsPower browser context was missing after extension cleanup.")
+
+        last_step = "cookie_warmup"
+        store.update_task_state(task_id, last_step=last_step)
+        await warm_ads_profile_cookies(context, logger, created.get("profile_id"))
+
         last_step = "signup_handoff"
         store.update_task_state(task_id, last_step=last_step)
+
+        signup_result = await open_snapchat_signup(context, logger, created.get("profile_id"))
+        signup_page = signup_result.get("page")
+        signup_url = signup_result.get("url", "")
 
         logger.info(
             f"Nyxify signup handoff for task {task_id}: "
@@ -1025,7 +1252,6 @@ async def process_task(task, store, adspower):
             )
 
         if signup_url and signup_page and context:
-            signup_completed = True
             last_step = "signup_opened"
             store.update_task_state(task_id, last_step=last_step)
 
@@ -1046,6 +1272,7 @@ async def process_task(task, store, adspower):
                 nonlocal username
                 nonlocal final_adspower_name
                 nonlocal final_username_applied, final_profile_renamed
+                nonlocal final_profile_rename_pending
                 nonlocal snapboard_username_synced, snapboard_adspower_id_synced
                 nonlocal snapboard_adspower_name_synced
                 normalized = str(detected_username or "").strip()
@@ -1064,28 +1291,18 @@ async def process_task(task, store, adspower):
                 if profile_id_value:
                     renamed_profile_name = _build_final_adspower_name(normalized)
                     if renamed_profile_name:
-                        try:
-                            renamed = await asyncio.to_thread(
-                                adspower.rename_profile,
-                                profile_id_value,
-                                renamed_profile_name,
-                            )
-                            final_adspower_name = str(renamed.get("name") or renamed_profile_name).strip()
-                            created["name"] = final_adspower_name
-                            final_profile_renamed = True
-                            store.update_task_state(
-                                task_id,
-                                adspower_name=final_adspower_name,
-                            )
-                            logger.info(
-                                f"Task {task_id}: renamed AdsPower profile {profile_id_value} "
-                                f"to {final_adspower_name!r} (early)."
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                f"Task {task_id}: could not rename AdsPower profile {profile_id_value} "
-                                f"to {renamed_profile_name!r}: {exc}"
-                            )
+                        final_adspower_name = renamed_profile_name
+                        final_profile_rename_pending = True
+                        final_profile_renamed = False
+                        store.update_task_state(
+                            task_id,
+                            adspower_name=final_adspower_name,
+                        )
+                        rename_timing = "before Nyx handoff" if continuous_mode_enabled else "after close"
+                        logger.info(
+                            f"Task {task_id}: scheduled AdsPower profile {profile_id_value} "
+                            f"rename to {final_adspower_name!r} {rename_timing}."
+                        )
 
                 row_key_value = str(task.get("row_key") or "").strip()
                 if row_key_value:
@@ -1129,6 +1346,46 @@ async def process_task(task, store, adspower):
                     username = retry_username
                 return retry_username
 
+            async def _rename_final_profile_if_pending(reason: str = ""):
+                nonlocal final_adspower_name
+                nonlocal completion_error
+                nonlocal final_profile_renamed, final_profile_rename_pending
+                profile_id_value = str(created.get("profile_id") or "").strip()
+                if final_profile_renamed:
+                    return True
+                if not final_profile_rename_pending:
+                    return False
+                if not profile_id_value or not final_adspower_name:
+                    return False
+
+                try:
+                    renamed = await asyncio.to_thread(
+                        adspower.rename_profile,
+                        profile_id_value,
+                        final_adspower_name,
+                    )
+                except Exception as exc:
+                    completion_error = str(exc) or f"{type(exc).__name__}: {exc!r}"
+                    logger.warning(
+                        f"Task {task_id}: could not rename AdsPower profile {profile_id_value} "
+                        f"to {final_adspower_name!r} before Nyx handoff: {completion_error}"
+                    )
+                    return False
+                final_adspower_name = str(renamed.get("name") or final_adspower_name).strip()
+                created["name"] = final_adspower_name
+                final_profile_renamed = True
+                final_profile_rename_pending = False
+                store.update_task_state(
+                    task_id,
+                    adspower_name=final_adspower_name,
+                )
+                suffix = f" {reason}" if reason else ""
+                logger.info(
+                    f"Task {task_id}: renamed AdsPower profile {profile_id_value} "
+                    f"to {final_adspower_name!r}{suffix}."
+                )
+                return True
+
             async def _signup_progress(step: str):
                 nonlocal last_step
                 normalized_step = str(step or "").strip()
@@ -1146,10 +1403,13 @@ async def process_task(task, store, adspower):
                 logger=logger,
                 profile_id=str(task_id),
                 otp_fetcher=otp_fetcher,
+                password=signup_password,
                 username_detected_callback=_apply_final_username,
                 email_fetcher=email_fetcher,
                 username_retry_provider=_request_signup_retry_username if full_auto_mode_enabled else None,
                 progress_callback=_signup_progress,
+                phone_fetcher=phone_fetcher,
+                sms_fetcher=sms_fetcher,
             )
 
             signup_error = str(creds.get("error") or "").strip()
@@ -1161,15 +1421,29 @@ async def process_task(task, store, adspower):
             # final_username through a non-callback code path), still apply.
             if final_username:
                 await _apply_final_username(final_username)
+                signup_completed = True
             elif signup_error:
                 raise RuntimeError(signup_error)
 
-            if final_username or creds.get("otp_entered"):
+            if final_username:
                 last_step = "signup_complete"
-            elif creds.get("reached_verification"):
-                last_step = "awaiting_email_verification"
+            elif creds.get("otp_entered") or creds.get("reached_verification"):
+                last_step = "awaiting_welcome_username"
             else:
                 last_step = "signup_form_submitted"
+
+            if (
+                continuous_mode_enabled
+                and last_step == "signup_complete"
+                and final_username_applied
+                and final_profile_rename_pending
+            ):
+                store.update_task_state(task_id, last_step="renaming_profile_for_nyx")
+                if await _rename_final_profile_if_pending("before Nyx handoff"):
+                    store.update_task_state(task_id, last_step=last_step)
+                else:
+                    last_step = "profile_rename_failed"
+                    store.update_task_state(task_id, last_step=last_step, error=completion_error)
 
             if (
                 push_adspower_id_enabled
@@ -1186,14 +1460,47 @@ async def process_task(task, store, adspower):
                             row_key_value,
                             "AdsPower id",
                         )
+
+            if (
+                continuous_mode_enabled
+                and last_step == "signup_complete"
+                and final_username_applied
+                and final_profile_renamed
+            ):
+                profile_id_value = str(created.get("profile_id") or "").strip()
+                handoff_model = model_tag or str(task.get("model") or "").strip()
+                store.update_task_state(task_id, last_step="queueing_nyx")
+                handoff_result = await asyncio.to_thread(
+                    enqueue_profile_for_nyx,
+                    profile_id_value,
+                    handoff_model,
+                    logger,
+                )
+                if handoff_result.get("ok"):
+                    last_step = "queued_for_nyx"
+                else:
+                    last_step = "nyx_handoff_failed"
+                    completion_error = str(
+                        handoff_result.get("error")
+                        or handoff_result.get("api_error")
+                        or "Could not queue profile for Nyx."
+                    )
+                    logger.warning(
+                        f"Task {task_id}: Nyx handoff failed for AdsPower profile {profile_id_value}: "
+                        f"{completion_error}"
+                    )
         else:
             logger.warning(f"Signup page or context missing after extension cleanup for task {task_id}.")
 
+        completion_status = "DONE" if last_step in {"signup_complete", "queued_for_nyx"} else "FAILED"
+        if completion_status != "DONE" and not completion_error:
+            completion_error = "Signup did not reach the Snapchat welcome page with a final username."
+
         store.update_task_state(
             task_id,
-            status="DONE",
+            status=completion_status,
             last_step=last_step,
-            error="",
+            error=completion_error,
             adspower_profile_id=created.get("profile_id"),
             adspower_name=final_adspower_name or str(created.get("name") or "").strip(),
             adspower_group=adspower_group,
@@ -1205,8 +1512,9 @@ async def process_task(task, store, adspower):
         close_profile_after_completion = bool(
             close_profile_id
             and last_step == "signup_complete"
+            and not continuous_mode_enabled
             and final_username_applied
-            and final_profile_renamed
+            and (final_profile_renamed or final_profile_rename_pending)
         )
         if close_profile_id and not close_profile_after_completion:
             logger.info(
@@ -1282,8 +1590,43 @@ async def process_task(task, store, adspower):
         if close_profile_after_completion and close_profile_id:
             try:
                 await asyncio.to_thread(adspower.close_profile, close_profile_id)
-                store.update_task_state(task_id, last_step="profile_closed")
                 logger.info(f"Task {task_id}: closed completed AdsPower profile {close_profile_id}.")
+                if final_profile_rename_pending and final_adspower_name:
+                    try:
+                        renamed = await asyncio.to_thread(
+                            adspower.rename_profile,
+                            close_profile_id,
+                            final_adspower_name,
+                        )
+                        final_adspower_name = str(renamed.get("name") or final_adspower_name).strip()
+                        created["name"] = final_adspower_name
+                        final_profile_renamed = True
+                        final_profile_rename_pending = False
+                        store.update_task_state(
+                            task_id,
+                            adspower_name=final_adspower_name,
+                        )
+                        logger.info(
+                            f"Task {task_id}: renamed closed AdsPower profile {close_profile_id} "
+                            f"to {final_adspower_name!r}."
+                        )
+                        if (
+                            push_adspower_id_enabled
+                            and not snapboard_adspower_id_synced
+                            and task_row_key
+                        ):
+                            if _request_snapboard_adspower_id_update(task_row_key, close_profile_id):
+                                snapboard_adspower_id_synced = await _wait_for_snapboard_update(
+                                    "/adspower_update/status",
+                                    task_row_key,
+                                    "AdsPower id",
+                                )
+                    except Exception as rename_exc:
+                        logger.warning(
+                            f"Task {task_id}: could not rename closed AdsPower profile "
+                            f"{close_profile_id} to {final_adspower_name!r}: {rename_exc}"
+                        )
+                store.update_task_state(task_id, last_step="profile_closed")
             except Exception as exc:
                 logger.warning(f"Task {task_id}: could not close AdsPower profile {close_profile_id}: {exc}")
 
@@ -1303,15 +1646,10 @@ async def main():
 
     try:
         store = NyxifyTaskStore(db_path=TASK_DB_PATH)
-        adspower = AdsPowerManager()
+        adspower = AdsPowerManager(ui_assume_presearch=True)
 
-        # Global Ctrl+F8 pauses/resumes THIS (Nyxify) runner, with a tone.
-        # (core/hotkeys.py)
-        try:
-            from core.hotkeys import start_pause_hotkey
-            start_pause_hotkey("nyxify")
-        except Exception as exc:
-            logger.warning(f"Nyxify pause hotkey unavailable: {exc}")
+        # Ctrl+F8 is owned by the bridge so it can reuse dashboard Start/Stop
+        # actions and can start this runner even when no runner process exists.
 
         # Orphan recovery: any row still RUNNING at startup belongs to a previous
         # run that crashed/stopped (the RunnerLock guarantees no live runner owns

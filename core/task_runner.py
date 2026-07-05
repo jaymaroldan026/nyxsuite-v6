@@ -4,48 +4,111 @@ import uuid
 
 from core.bitmoji_creator import BitmojiCreator
 from core.adspower import AdsPowerManager
-from core.nyx_runtime_config import load_nyx_config
-from core.nyxify_guard import get_nyxify_profile_guard
+from core.nyxify_runtime_config import load_nyxify_config
+from core.nyxify_task_store import NyxifyTaskStore
 
-PROFILE_START_CONCURRENCY = max(1, int(os.getenv("PROFILE_START_CONCURRENCY", "3")))
-PROFILE_START_STAGGER_SECONDS = max(0.0, float(os.getenv("PROFILE_START_STAGGER_SECONDS", "0.8")))
+
+# How many profile *starts* (GUI open + Playwright attach) may overlap, and how
+# far apart to space them. With the no-API GUI path a whole batch now opens in one
+# toolbar click, so opens no longer need to be spread out to avoid GUI races —
+# letting them overlap is what lets the AdsPower bulk search/open serve all
+# ``max_parallel`` at once instead of one-by-one. The start concurrency therefore
+# defaults to ``max_parallel_profiles`` (so 5 parallel -> 5 reach the bulk search
+# together); a small stagger only de-thunders the CDP pre-check. Both stay
+# env-overridable for tuning.
+_ENV_START_CONCURRENCY = os.getenv("PROFILE_START_CONCURRENCY")
+PROFILE_START_STAGGER_SECONDS = max(0.0, float(os.getenv("PROFILE_START_STAGGER_SECONDS", "0.15")))
+_TERMINAL_CLOSE_RESULTS = {"already_has_bitmoji", "banned_snap", "proxy_error"}
 # Bind these to the *running* loop, not the import-time loop. On Python 3.9 a
 # module-level asyncio primitive binds to the loop present at import, which is a
 # different loop than the one asyncio.run(main()) creates -> "got Future attached
 # to a different loop" and every concurrent task but one fails. Build lazily and
-# rebuild if the running loop changes.
+# rebuild if the running loop (or the desired size) changes.
 _profile_start_semaphore: "asyncio.Semaphore | None" = None
 _profile_start_stagger_lock: "asyncio.Lock | None" = None
 _profile_start_loop = None
+_profile_start_size = None
+
+
+def _profile_start_concurrency():
+    """Desired overlap for profile starts: one-by-one unless explicitly tuned."""
+    if _ENV_START_CONCURRENCY:
+        try:
+            return max(1, int(_ENV_START_CONCURRENCY))
+        except ValueError:
+            pass
+    return 1
 
 
 def _profile_start_guards():
     global _profile_start_semaphore, _profile_start_stagger_lock, _profile_start_loop
+    global _profile_start_size
     loop = asyncio.get_running_loop()
-    if _profile_start_loop is not loop:
-        _profile_start_semaphore = asyncio.Semaphore(PROFILE_START_CONCURRENCY)
+    desired = _profile_start_concurrency()
+    if _profile_start_loop is not loop or _profile_start_size != desired:
+        _profile_start_semaphore = asyncio.Semaphore(desired)
         _profile_start_stagger_lock = asyncio.Lock()
         _profile_start_loop = loop
+        _profile_start_size = desired
     return _profile_start_semaphore, _profile_start_stagger_lock
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _should_close_profile_after_bitmoji(success: bool, last_result: str) -> bool:
+    """Close only after Bitmoji is done or the result is a known terminal state.
+
+    Unexpected selector/time-out failures are left open by default so the user can
+    inspect the browser and retry without the GUI automation closing it first.
+    Set NYX_CLOSE_PROFILE_ON_FAILURE=1 to restore the old always-close behavior.
+    """
+    if success:
+        return True
+    if str(last_result or "").strip() in _TERMINAL_CLOSE_RESULTS:
+        return True
+    return _env_bool("NYX_CLOSE_PROFILE_ON_FAILURE", False)
+
+
 DEFAULT_SNAPCHAT_PASSWORD = "ABC123wgmi*"
-
-
-def _nyxify_guard_enabled():
-    return bool(load_nyx_config().get("nyxify_guard_enabled", True))
+NYXIFY_READY_FOR_NYX_STEPS = {"signup_complete", "profile_closed", "queued_for_nyx"}
 
 
 def _get_nyxify_hold_reason(profile_id):
-    config = load_nyx_config()
-    if not bool(config.get("nyxify_guard_enabled", True)):
+    """Return a hold step when Nyxify still owns this profile.
+
+    Nyxify is allowed to create/login the Snapchat account first. Nyx must not
+    open the same AdsPower profile until Nyxify has reached the Snapchat welcome
+    page and recorded a final success step.
+    """
+    normalized_profile_id = str(profile_id or "").strip()
+    if not normalized_profile_id:
         return ""
 
-    strict = bool(config.get("nyxify_guard_strict", False))
-    guard = get_nyxify_profile_guard(profile_id, strict=strict)
-    if not guard.get("locked"):
+    try:
+        nyxify_store = NyxifyTaskStore()
+        nyxify_task = nyxify_store.get_task_by_adspower_profile_id(normalized_profile_id)
+        if nyxify_task:
+            status = str(nyxify_task.get("status") or "").strip().upper()
+            last_step = str(nyxify_task.get("last_step") or "").strip()
+            if status == "DONE" and last_step in NYXIFY_READY_FOR_NYX_STEPS:
+                return ""
+            return "waiting_for_nyxify_success"
+
+        try:
+            continuous_mode = bool(load_nyxify_config().get("continuous_mode_enabled", False))
+        except Exception:
+            continuous_mode = False
+        if continuous_mode and nyxify_store.has_inflight_signups():
+            return "waiting_for_nyxify_profile_sync"
+    except Exception:
         return ""
-    return str(guard.get("reason") or "Nyxify is still creating this account.").strip()
+
+    return ""
 
 
 def resolve_snapchat_credentials(profile_id, logger):
@@ -78,6 +141,8 @@ async def run_profile_task(
     snapchat_credentials = resolve_snapchat_credentials(profile_id, logger)
     creator = None
     profile_opened = False
+    should_close_profile = False
+    last_result = "normal"
     try:
         _semaphore, _stagger_lock = _profile_start_guards()
         async with _semaphore:
@@ -102,11 +167,23 @@ async def run_profile_task(
             progress_callback=progress_callback,
             manual_queue_mode=manual_queue_mode,
         )
-        return success, creator.last_result
+        last_result = getattr(creator, "last_result", "normal")
+        should_close_profile = _should_close_profile_after_bitmoji(success, last_result)
+        return success, last_result
+    except Exception:
+        if creator is not None:
+            last_result = getattr(creator, "last_result", last_result)
+        should_close_profile = _should_close_profile_after_bitmoji(False, last_result)
+        raise
     finally:
         if profile_opened:
             try:
-                if owns_run is None or owns_run():
+                if not should_close_profile:
+                    logger.info(
+                        f"Left AdsPower profile {profile_id} open because Bitmoji "
+                        f"did not finish cleanly (last_result={last_result})."
+                    )
+                elif owns_run is None or owns_run():
                     await asyncio.to_thread(manager.close_profile, profile_id)
                     logger.info(f"Closed AdsPower profile {profile_id}")
                 else:
@@ -124,24 +201,18 @@ async def process_queued_task(task, store, adspower, logger):
     source = str(task.get("source", "") or "").strip().lower()
     manual_queue_mode = source == "manual_queue"
 
+    hold_reason = _get_nyxify_hold_reason(profile_id)
+    if hold_reason:
+        logger.info(f"Holding Nyx profile {profile_id}: {hold_reason}")
+        store.update_status(task_id, "PENDING", hold_reason, error="")
+        return
+
     logger.info(f"Starting task for profile {profile_id}")
     run_token = uuid.uuid4().hex
     task["run_token"] = run_token
 
-    hold_reason = _get_nyxify_hold_reason(profile_id)
-    if hold_reason:
-        store.update_status(task_id, "PENDING", "waiting_for_nyxify_completion", error=hold_reason)
-        logger.info(f"Held profile {profile_id}: {hold_reason}")
-        return
-
     if not store.begin_run(task_id, run_token, step="opening_profile"):
         logger.info(f"Skipped stale or already-claimed task for profile {profile_id}")
-        return
-
-    hold_reason = _get_nyxify_hold_reason(profile_id)
-    if hold_reason:
-        store.update_status(task_id, "PENDING", "waiting_for_nyxify_completion", error=hold_reason, run_token=run_token)
-        logger.info(f"Held profile {profile_id} after claim: {hold_reason}")
         return
 
     store.update_last_step(task_id, "connecting_playwright", run_token=run_token)

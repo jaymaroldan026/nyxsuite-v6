@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Nyxify v4</title>
+  <title>Nyxify v6</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="nyxify-body">
@@ -11,7 +11,7 @@
       <div class="popup-header">
         <div class="popup-title-row">
           <img src="icons8-origami-50-gray.png" alt="Nyxify logo" class="popup-logo">
-          <h1>Nyxify v4</h1>
+          <h1>Nyxify v6</h1>
         </div>
         <a class="settings-link" href="options.html" target="_blank" rel="noreferrer">Settings</a>
       </div>
@@ -59,9 +59,23 @@
               </label>
             </div>
             <div class="toggle-row">
+              <span class="toggle-text">Proxy Blocker</span>
+              <label class="toggle-switch" for="popupProxyBlockerToggle">
+                <input id="popupProxyBlockerToggle" type="checkbox" checked>
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-text">Proxy Checker <span class="muted">(uses AdsPower check)</span></span>
+              <label class="toggle-switch" for="popupProxyCheckerToggle">
+                <input id="popupProxyCheckerToggle" type="checkbox" checked>
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
               <span class="toggle-text">Apply AdsPower tags <span class="muted">(off = create profiles with no tags)</span></span>
               <label class="toggle-switch" for="popupAdspowerTagsToggle">
-                <input id="popupAdspowerTagsToggle" type="checkbox" checked>
+                <input id="popupAdspowerTagsToggle" type="checkbox">
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
             </div>
@@ -69,6 +83,13 @@
               <span class="toggle-text">Full Auto Mode</span>
               <label class="toggle-switch toggle-switch-danger" for="popupFullAutoModeToggle">
                 <input id="popupFullAutoModeToggle" type="checkbox">
+                <span class="toggle-slider" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-text">Continuous Mode <span class="muted">(send completed signups to Nyx)</span></span>
+              <label class="toggle-switch" for="popupContinuousModeToggle">
+                <input id="popupContinuousModeToggle" type="checkbox">
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
             </div>
@@ -114,8 +135,12 @@
                   <input id="popupGroup" class="input" type="text" placeholder="Snapchat">
                 </div>
                 <div class="setting-field">
+                  <label class="label" for="popupExtensionCategory">Extension category</label>
+                  <input id="popupExtensionCategory" class="input" type="text" placeholder="Snap">
+                </div>
+                <div class="setting-field">
                   <label class="label" for="popupTagOne">Tag 1</label>
-                  <input id="popupTagOne" class="input" type="text" placeholder="Snapchat">
+                  <input id="popupTagOne" class="input" type="text" placeholder="Optional tag">
                 </div>
                 <div class="setting-field">
                   <label class="label" for="popupTagTwo">Tag 2</label>

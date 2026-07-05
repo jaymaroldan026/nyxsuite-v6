@@ -5,6 +5,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+PYTHON_BIN="$ROOT/.venv/bin/python3"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+fi
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+fi
+
 # ---- parse args ----
 VERSION=""
 OUTPUT_DIR=""
@@ -18,14 +26,10 @@ done
 
 # ---- resolve version ----
 if [[ -z "$VERSION" ]]; then
-  VENV_PYTHON="$ROOT/.venv/bin/python3"
-  if [[ ! -x "$VENV_PYTHON" ]]; then
-    VENV_PYTHON="$ROOT/.venv/bin/python"
-  fi
-  if [[ -x "$VENV_PYTHON" ]]; then
-    VERSION="$("$VENV_PYTHON" -c "from core.version import NYX_VERSION; print(NYX_VERSION)")"
+  if [[ -n "$PYTHON_BIN" && -x "$PYTHON_BIN" ]]; then
+    VERSION="$("$PYTHON_BIN" -c "from core.version import NYX_VERSION; print(NYX_VERSION)")"
   else
-    echo "No venv python found. Either create '.venv' or pass --version." >&2
+    echo "No Python found. Either create '.venv', install python3, or pass --version." >&2
     exit 1
   fi
 fi
@@ -60,6 +64,23 @@ for d in "${DIRS[@]}"; do
     echo "  + $d/"
   fi
 done
+
+# Native-messaging registration rewrites this path per device. Never ship a
+# machine-specific absolute path in the release ZIP.
+AGENT_MANIFEST="$STAGE/agent_host/com.nyxsuite.agent.json"
+if [[ -f "$AGENT_MANIFEST" ]]; then
+  "$PYTHON_BIN" - "$AGENT_MANIFEST" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["path"] = "agent_host/host_main.py"
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  echo "  ~ reset agent_host manifest path to template"
+fi
 
 # ---- browser extensions ----
 for ext in "nyx_extension" "nyxify_extension"; do
@@ -111,13 +132,14 @@ echo "  + VERSION ($VERSION)"
 cat > "$STAGE/update_config.json" << 'JSONEOF'
 {
   "app": "nyxsuite",
-  "repo": "jaymaroldan026/nyxsuite-releases",
+  "repo": "jaymaroldan026/nyxsuite-v6",
   "asset_pattern": "NyxSuite-v*.zip",
   "exe_to_relaunch": "",
   "data_preserve_paths": [
     "data/*.db",
     "data/nyx_config.json",
     "data/nyxify_config.json",
+    "data/bitmoji_models.json",
     "data/full_auto_usernames/*",
     "data/signup_names/*",
     "data/logs/*"
@@ -125,6 +147,34 @@ cat > "$STAGE/update_config.json" << 'JSONEOF'
 }
 JSONEOF
 echo "  + update_config.json"
+
+# SECURITY: never publish license-generation/admin artifacts or local secrets.
+FORBIDDEN_PATHS=(
+  "$STAGE/tools"
+  "$STAGE/activator.html"
+  "$STAGE/activator_server.py"
+  "$STAGE/run_activator_ui.ps1"
+  "$STAGE/run_activator_ui.bat"
+  "$STAGE/run_activator_ui.sh"
+  "$STAGE/run_activator_ui.command"
+  "$STAGE/core/license_runtime_secret.py"
+  "$STAGE/core/license_signing_key.py"
+)
+for forbidden in "${FORBIDDEN_PATHS[@]}"; do
+  if [[ -e "$forbidden" ]]; then
+    rm -rf "$forbidden"
+    echo "  - stripped (never publish): $forbidden"
+  fi
+done
+
+if find "$STAGE" -iname '*activator*' -print -quit | grep -q .; then
+  echo "Refusing to build: activator/license-generation files found in release stage." >&2
+  exit 1
+fi
+if find "$STAGE" -type f \( -name '*runtime_secret*' -o -name '*signing_key*' \) -print -quit | grep -q .; then
+  echo "Refusing to build: license secret/private key found in release stage." >&2
+  exit 1
+fi
 
 # ---- create ZIP ----
 ZIP_PATH="$OUTPUT_DIR/$ZIP_NAME"
@@ -141,4 +191,4 @@ echo "[create_release_zip] Done: $ZIP_PATH"
 echo "[create_release_zip] Size: ${SIZE} KB"
 echo ""
 echo "Upload to GitHub Releases:"
-echo "  gh release upload $LABEL '$ZIP_PATH' --repo jaymaroldan026/nyxsuite-releases"
+echo "  gh release upload $LABEL '$ZIP_PATH' --repo jaymaroldan026/nyxsuite-v6"

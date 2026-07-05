@@ -42,9 +42,6 @@ def _resolve_launch_command():
             return f'{_quote(str(python))} {_quote(str(ROOT_DIR / "bridge_app.py"))}'
     else:
         if launcher_sh.exists():
-            env = os.environ.copy()
-            env["NYXSUITE_NO_TRAY"] = "1"
-            env["NYXSUITE_NO_OPEN"] = "1"
             return f"{_quote(str(launcher_sh))} bridge_app.py"
         python = resolve_python_executable(gui=False)
         if python.exists():
@@ -112,7 +109,6 @@ def _set_macos(enabled):
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><false/>
 <key>EnvironmentVariables</key><dict>
-<key>NYXSUITE_NO_TRAY</key><string>1</string>
 <key>NYXSUITE_NO_OPEN</key><string>1</string>
 </dict>
 </dict></plist>

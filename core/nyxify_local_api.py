@@ -296,6 +296,97 @@ class _EmailFetchStore:
             return dict(self._results[row_key]) if row_key in self._results else None
 
 
+class _PhoneFetchStore:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._pending = {}
+        self._results = {}
+
+    def request(self, row_key, force_new=False):
+        with self._lock:
+            self._pending[row_key] = {
+                "created_at": time.monotonic(),
+                "dispatched": False,
+                "dispatched_at": 0.0,
+                "force_new": bool(force_new),
+            }
+            self._results.pop(row_key, None)
+
+    def pop_pending(self):
+        with self._lock:
+            now = time.monotonic()
+            for row_key, payload in list(self._pending.items()):
+                if payload.get("dispatched") and (now - float(payload.get("dispatched_at") or 0.0)) < 5.0:
+                    continue
+                payload["dispatched"] = True
+                payload["dispatched_at"] = now
+                return {"row_key": row_key, "force_new": bool(payload.get("force_new"))}
+            return None
+
+    def store_result(self, row_key, phone="", error=None):
+        with self._lock:
+            normalized_phone = str(phone or "").strip()
+            self._results[row_key] = {
+                "phone": normalized_phone,
+                "error": str(error or "").strip(),
+                "done_at": time.monotonic(),
+            }
+            if normalized_phone:
+                self._pending.pop(row_key, None)
+            elif row_key in self._pending:
+                self._pending[row_key]["dispatched"] = False
+                self._pending[row_key]["dispatched_at"] = 0.0
+
+    def get_result(self, row_key):
+        with self._lock:
+            return dict(self._results[row_key]) if row_key in self._results else None
+
+
+class _SmsFetchStore:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._pending = {}
+        self._results = {}
+
+    def request(self, row_key):
+        with self._lock:
+            self._pending[row_key] = {
+                "created_at": time.monotonic(),
+                "dispatched": False,
+                "dispatched_at": 0.0,
+            }
+            self._results.pop(row_key, None)
+
+    def pop_pending(self):
+        with self._lock:
+            now = time.monotonic()
+            for row_key, payload in list(self._pending.items()):
+                if payload.get("dispatched") and (now - float(payload.get("dispatched_at") or 0.0)) < 5.0:
+                    continue
+                payload["dispatched"] = True
+                payload["dispatched_at"] = now
+                return {"row_key": row_key}
+            return None
+
+    def store_result(self, row_key, code="", error=None):
+        with self._lock:
+            normalized_code = str(code or "").strip()
+            self._results[row_key] = {
+                "code": normalized_code,
+                "error": str(error or "").strip(),
+                "done_at": time.monotonic(),
+            }
+            if normalized_code:
+                self._pending.pop(row_key, None)
+            elif row_key in self._pending:
+                self._pending[row_key]["dispatched"] = False
+                self._pending[row_key]["dispatched_at"] = 0.0
+
+    def get_result(self, row_key):
+        with self._lock:
+            return dict(self._results[row_key]) if row_key in self._results else None
+
+
 class NyxifyLocalApiServer:
 
     def __init__(self, store, host="127.0.0.1", port=8866, token="", status_provider=None, action_handlers=None):
@@ -311,6 +402,8 @@ class NyxifyLocalApiServer:
         self.adspower_name_update_store = _AdspowerNameUpdateStore()
         self.status_update_store = _StatusUpdateStore()
         self.email_fetch_store = _EmailFetchStore()
+        self.phone_fetch_store = _PhoneFetchStore()
+        self.sms_fetch_store = _SmsFetchStore()
         self.full_auto_username_store = FullAutoUsernameStore()
         self._server = None
         self._thread = None
@@ -367,6 +460,14 @@ class NyxifyLocalApiServer:
 
                 if self.path == "/email/pending":
                     self._write_json(200, {"ok": True, "request": outer.email_fetch_store.pop_pending()})
+                    return
+
+                if self.path == "/phone/pending":
+                    self._write_json(200, {"ok": True, "request": outer.phone_fetch_store.pop_pending()})
+                    return
+
+                if self.path == "/sms/pending":
+                    self._write_json(200, {"ok": True, "request": outer.sms_fetch_store.pop_pending()})
                     return
 
                 if self.path == "/config":
@@ -481,6 +582,44 @@ class NyxifyLocalApiServer:
                         self._write_json(200, {"ok": True, "done": False})
                     return
 
+                if parsed_path.path == "/phone/status":
+                    params = parse_qs(parsed_path.query)
+                    row_key = str((params.get("row_key") or [""])[0]).strip()
+                    result = outer.phone_fetch_store.get_result(row_key) if row_key else None
+                    if result:
+                        phone = str(result.get("phone") or "").strip()
+                        self._write_json(
+                            200,
+                            {
+                                "ok": True,
+                                "done": True,
+                                "phone": phone,
+                                "error": result.get("error", "") if not phone else "",
+                            },
+                        )
+                    else:
+                        self._write_json(200, {"ok": True, "done": False})
+                    return
+
+                if parsed_path.path == "/sms/status":
+                    params = parse_qs(parsed_path.query)
+                    row_key = str((params.get("row_key") or [""])[0]).strip()
+                    result = outer.sms_fetch_store.get_result(row_key) if row_key else None
+                    if result:
+                        code = str(result.get("code") or "").strip()
+                        self._write_json(
+                            200,
+                            {
+                                "ok": True,
+                                "done": True,
+                                "code": code,
+                                "error": result.get("error", "") if not code else "",
+                            },
+                        )
+                    else:
+                        self._write_json(200, {"ok": True, "done": False})
+                    return
+
                 if parsed_path.path == "/models":
                     usernames_dir = DEFAULT_FULL_AUTO_USERNAMES_DIR
                     signup_dir = ensure_signup_names_dir()
@@ -562,6 +701,7 @@ class NyxifyLocalApiServer:
                         proxy_address = str((entry or {}).get("proxy_address", "")).strip()
                         username = str((entry or {}).get("username", "")).strip()
                         email = str((entry or {}).get("email", "")).strip()
+                        password = str((entry or {}).get("password", "")).strip()
                         adspower_id = str((entry or {}).get("adspower_id", "")).strip()
                         if not row_key or not model or not ip_address:
                             continue
@@ -573,6 +713,7 @@ class NyxifyLocalApiServer:
                             proxy_address=proxy_address,
                             username=username,
                             email=email,
+                            password=password,
                             adspower_id=adspower_id,
                             source="nyxify-extension",
                         )
@@ -686,6 +827,47 @@ class NyxifyLocalApiServer:
                         outer.store.update_task_email(row_key, email)
                     outer.email_fetch_store.store_result(row_key, email=email, error=error)
                     self._write_json(200, {"ok": True, "message": "Email fetch result stored."})
+                    return
+
+                if self.path == "/phone/request":
+                    row_key = str(payload.get("row_key", "")).strip()
+                    force_new = bool(payload.get("force_new"))
+                    if not row_key:
+                        self._write_json(400, {"ok": False, "error": "Row key is required."})
+                        return
+                    outer.phone_fetch_store.request(row_key, force_new=force_new)
+                    self._write_json(200, {"ok": True, "message": "Phone fetch requested."})
+                    return
+
+                if self.path == "/phone/result":
+                    row_key = str(payload.get("row_key", "")).strip()
+                    phone = str(payload.get("phone", "")).strip()
+                    error = str(payload.get("error", "")).strip()
+                    if not row_key:
+                        self._write_json(400, {"ok": False, "error": "Row key is required."})
+                        return
+                    outer.phone_fetch_store.store_result(row_key, phone=phone, error=error)
+                    self._write_json(200, {"ok": True, "message": "Phone fetch result stored."})
+                    return
+
+                if self.path == "/sms/request":
+                    row_key = str(payload.get("row_key", "")).strip()
+                    if not row_key:
+                        self._write_json(400, {"ok": False, "error": "Row key is required."})
+                        return
+                    outer.sms_fetch_store.request(row_key)
+                    self._write_json(200, {"ok": True, "message": "SMS fetch requested."})
+                    return
+
+                if self.path == "/sms/result":
+                    row_key = str(payload.get("row_key", "")).strip()
+                    code = str(payload.get("code", "")).strip()
+                    error = str(payload.get("error", "")).strip()
+                    if not row_key:
+                        self._write_json(400, {"ok": False, "error": "Row key is required."})
+                        return
+                    outer.sms_fetch_store.store_result(row_key, code=code, error=error)
+                    self._write_json(200, {"ok": True, "message": "SMS fetch result stored."})
                     return
 
                 if self.path == "/full_auto/reserve":
@@ -857,6 +1039,7 @@ class NyxifyLocalApiServer:
                         "max_parallel_profiles",
                         "temporary_profile_name",
                         "adspower_group",
+                        "extension_category",
                         "tag_one",
                         "tag_two",
                         "adspower_tags_enabled",
@@ -866,6 +1049,7 @@ class NyxifyLocalApiServer:
                         "proxy_checker_enabled",
                         "push_adspower_id_enabled",
                         "full_auto_mode_enabled",
+                        "continuous_mode_enabled",
                         "launch_on_windows_startup",
                     ):
                         if key in payload:

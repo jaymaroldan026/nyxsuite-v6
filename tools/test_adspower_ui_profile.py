@@ -18,11 +18,12 @@ Usage:
     python tools/test_adspower_ui_profile.py --rename k1e0mqys:Snapchat:bob   # rename only
     python tools/test_adspower_ui_profile.py --close k1e0mqys    # close only
     python tools/test_adspower_ui_profile.py --delete k1e0mqys   # delete only
-    python tools/test_adspower_ui_profile.py --lifecycle         # create->open->rename->close->delete
+    python tools/test_adspower_ui_profile.py --lifecycle         # create->open->close->delete
 
 Requires the AdsPower desktop app to be running and signed in.
 """
 import argparse
+import importlib.util
 import json
 import sys
 import time
@@ -31,6 +32,42 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.adspower_ui import AdsPowerUIController
+
+
+def _module_exists(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def _ax_is_trusted() -> bool:
+    try:
+        from ApplicationServices import AXIsProcessTrusted
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return False
+
+
+def _macos_preflight_message(platform=sys.platform,
+                             import_check=_module_exists,
+                             ax_trusted=_ax_is_trusted):
+    if platform != "darwin":
+        return None
+    required = ("ApplicationServices", "Quartz", "AppKit")
+    missing = [name for name in required if not import_check(name)]
+    if missing:
+        return (
+            "Missing macOS PyObjC modules for AdsPower AXUI automation: "
+            + ", ".join(missing)
+            + ". Run the launcher setup again so requirements.txt installs the "
+            "macOS-only PyObjC dependencies."
+        )
+    if not ax_trusted():
+        return (
+            "macOS Accessibility permission is required for the live AdsPower GUI "
+            "test. Grant Accessibility permission to Terminal, Codex, or the "
+            "bundled Nyx Suite app in System Settings -> Privacy & Security -> "
+            "Accessibility, then run this command again."
+        )
+    return None
 
 
 def main():
@@ -44,8 +81,13 @@ def main():
     ap.add_argument("--close", default="", help="Close only: PROFILE_ID")
     ap.add_argument("--delete", default="", help="Delete only: PROFILE_ID")
     ap.add_argument("--lifecycle", action="store_true",
-                    help="Full no-API account lifecycle: create -> open -> rename -> close -> delete")
+                    help="Full no-API account lifecycle: create -> open -> close -> delete")
     args = ap.parse_args()
+
+    preflight = _macos_preflight_message()
+    if preflight:
+        print("FAIL:", preflight, flush=True)
+        return 1
 
     ctrl = AdsPowerUIController()
 
@@ -103,9 +145,10 @@ def main():
 
 
 def _lifecycle(ctrl, args):
-    """Full no-API account lifecycle, exactly as the runners drive it:
-    create -> open (CDP) -> rename (post-signup) -> close (run finished) -> delete."""
-    print(f"== [1/5] Create  name={args.name!r} group={args.group!r} ==", flush=True)
+    """Full no-API smoke lifecycle. In Nyxify temp-dashboard mode, close/delete
+    happen before any rename because the rename removes the row from the active
+    Name-contains dashboard."""
+    print(f"== [1/4] Create  name={args.name!r} group={args.group!r} ==", flush=True)
     info = ctrl.create_profile(name=args.name, proxy=args.proxy, group=args.group)
     pid = info.get("profile_id") or ""
     print("  created:", pid, flush=True)
@@ -113,25 +156,20 @@ def _lifecycle(ctrl, args):
         print("FAIL: no profile id", flush=True)
         return 1
 
-    print(f"== [2/5] Open {pid} via search ==", flush=True)
+    print(f"== [2/4] Open {pid} via search/dashboard ==", flush=True)
     endpoint = ctrl.open_profile_by_id(pid)
     print("  CDP:", endpoint, flush=True)
 
-    final_name = "Snapchat: e2e_lifecycle"
-    print(f"== [3/5] Rename {pid} -> {final_name!r} (post-signup) ==", flush=True)
-    ctrl.rename_profile_by_id(pid, final_name)
-    print("  renamed", flush=True)
-
-    print(f"== [4/5] Close {pid} (run finished) ==", flush=True)
+    print(f"== [3/4] Close {pid} (run finished) ==", flush=True)
     closed = ctrl.close_profile_by_id(pid)
     print(f"  closed={closed}", flush=True)
     time.sleep(1.0)
 
-    print(f"== [5/5] Delete {pid} (cleanup) ==", flush=True)
+    print(f"== [4/4] Delete {pid} (cleanup) ==", flush=True)
     ctrl.delete_profile_by_id(pid)
     print("  deleted", flush=True)
 
-    print(f"\nLIFECYCLE OK: {pid} created -> opened -> renamed -> closed -> deleted, no API.", flush=True)
+    print(f"\nLIFECYCLE OK: {pid} created -> opened -> closed -> deleted, no API.", flush=True)
     return 0
 
 

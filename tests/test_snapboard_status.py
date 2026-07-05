@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from core.nyxify_local_api import NyxifyLocalApiServer, _StatusUpdateStore
 from core.nyxify_task_store import NyxifyTaskStore
@@ -92,6 +93,51 @@ class StatusUpdateApiTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._post("/status_update/request", {"row_key": "snapboard:1"})
         self.assertEqual(ctx.exception.code, 400)
+
+    def test_phone_fetch_request_pending_result_flow(self):
+        resp = self._post("/phone/request", {"row_key": "snapboard:99"})
+        self.assertTrue(resp["ok"])
+
+        pending = self._get("/phone/pending")
+        self.assertEqual(pending["request"], {"row_key": "snapboard:99", "force_new": False})
+
+        self._post("/phone/result", {"row_key": "snapboard:99", "phone": "+15551234567"})
+        status = self._get("/phone/status?row_key=snapboard:99")
+        self.assertTrue(status["done"])
+        self.assertEqual(status["phone"], "+15551234567")
+
+    def test_sms_request_pending_result_flow(self):
+        resp = self._post("/sms/request", {"row_key": "snapboard:99"})
+        self.assertTrue(resp["ok"])
+
+        pending = self._get("/sms/pending")
+        self.assertEqual(pending["request"], {"row_key": "snapboard:99"})
+
+        self._post("/sms/result", {"row_key": "snapboard:99", "code": "654321"})
+        status = self._get("/sms/status?row_key=snapboard:99")
+        self.assertTrue(status["done"])
+        self.assertEqual(status["code"], "654321")
+
+    def test_config_accepts_extension_category_setting(self):
+        captured = {}
+
+        def fake_save(updates):
+            captured.update(updates)
+            return dict(updates)
+
+        with mock.patch("core.nyxify_local_api.save_nyxify_config", side_effect=fake_save):
+            resp = self._post("/config", {
+                "temporary_profile_name": "Snapchat: from-settings",
+                "adspower_group": "",
+                "extension_category": "Snapchat Extensions",
+                "continuous_mode_enabled": True,
+            })
+
+        self.assertTrue(resp["ok"])
+        self.assertEqual(captured["temporary_profile_name"], "Snapchat: from-settings")
+        self.assertEqual(captured["adspower_group"], "")
+        self.assertEqual(captured["extension_category"], "Snapchat Extensions")
+        self.assertTrue(captured["continuous_mode_enabled"])
 
 
 if __name__ == "__main__":

@@ -1,8 +1,15 @@
 # Changelog
 
-## 5.0.0 — First release (no-API build)
+## 6.0.0 — Public v6 source and release line
 
-First public release of Nyx Suite v5. Runs without the AdsPower Local API and
+- Rebrands source-visible older line labels to v6.
+- Uses the public `jaymaroldan026/nyxsuite-v6` repo for both source and dashboard update releases.
+- Nyxify signup now uses each SnapBoard row's Password column, with the old default password retained only as a blank-row fallback.
+- Keeps the no-API AdsPower GUI automation path for Windows and macOS.
+
+## 5.0.0 — First no-API build
+
+First public no-API release. Runs without the AdsPower Local API and
 without any license/activation.
 
 ### No-API AdsPower automation (Windows)
@@ -24,5 +31,5 @@ serialized across the Nyx and Nyxify processes by a cross-process lock.
 ### Other
 - License/activation removed — runners start unconditionally.
 - Cross-OS: installs and runs on Windows, macOS and Linux (Local API + Playwright);
-  the no-API GUI fallback is Windows-only.
+  the no-API GUI fallback works on Windows and macOS.
 - The Bitmoji and Snapchat-signup automation (Playwright) is unchanged.
