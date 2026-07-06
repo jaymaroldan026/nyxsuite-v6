@@ -53,7 +53,7 @@ mkdir -p "$STAGE"
 echo "[create_release_zip] Assembling $ARCHIVE_NAME ..."
 
 # ---- Python source directories ----
-DIRS=("core" "webui" "agent_host" "utils" "snap_selectors" "scripts")
+DIRS=("core" "webui" "agent_host" "utils" "snap_selectors" "scripts" "ui_templates")
 for d in "${DIRS[@]}"; do
   SRC="$ROOT/$d"
   if [[ -d "$SRC" ]]; then

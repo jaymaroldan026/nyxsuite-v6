@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.0.1 — AdsPower control mode selector
+
+- Adds a dashboard Settings control for AdsPower mode: Auto, API, or GUI.
+- GUI mode skips Local API create/open/close/delete/rename attempts and drives the AdsPower desktop app first, reducing cold-start delay on no-API accounts.
+- API mode disables GUI/CDP fallback for devices where Local API-only behavior is preferred.
+- Ships the AdsPower GUI template assets in the release ZIP for safer first-run setup on new devices.
+
 ## 6.0.0 — Public v6 source and release line
 
 - Rebrands source-visible older line labels to v6.

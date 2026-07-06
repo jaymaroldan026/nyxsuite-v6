@@ -341,6 +341,7 @@ class NyxLocalApiServer:
                         "hubstaff_stop_mode": payload.get("hubstaff_stop_mode"),
                         "hubstaff_timer_minutes": payload.get("hubstaff_timer_minutes"),
                         "hubstaff_cli_path": payload.get("hubstaff_cli_path"),
+                        "adspower_control_mode": payload.get("adspower_control_mode"),
                         "adspower_host": payload.get("adspower_host"),
                         "adspower_port": payload.get("adspower_port"),
                     }

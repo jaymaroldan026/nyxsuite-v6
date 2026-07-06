@@ -141,6 +141,14 @@ def _coerce_bool(*values, default=False):
     return default
 
 
+def _coerce_control_mode(*values, default="auto"):
+    for value in values:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"auto", "api", "gui"}:
+            return normalized
+    return default
+
+
 class AdsPowerManager:
 
     def __init__(self, ui_assume_presearch=None):
@@ -210,10 +218,15 @@ class AdsPowerManager:
             or os.getenv("ADSP_API_KEY")
             or ""
         )
+        self.control_mode = _coerce_control_mode(
+            cfg.get("adspower_control_mode"),
+            os.getenv("ADSPOWER_CONTROL_MODE"),
+            default="auto",
+        )
         # No-API CDP fallback: when /browser/start is permission-gated (9110),
         # attach to a profile the user opened in the AdsPower GUI over CDP. On by
         # default; disable with adspower_cdp_fallback=false or ADSPOWER_CDP_FALLBACK=0.
-        self.cdp_fallback_enabled = _coerce_bool(
+        cdp_fallback_enabled = _coerce_bool(
             cfg.get("adspower_cdp_fallback"),
             os.getenv("ADSPOWER_CDP_FALLBACK"),
             default=True,
@@ -221,14 +234,29 @@ class AdsPowerManager:
         # No-API GUI fallback: when the Local API is permission-gated (9110),
         # drive the AdsPower desktop app to CREATE and OPEN profiles (see
         # core/adspower_ui.py). On by default; disable with adspower_ui_fallback=
-        # false or ADSPOWER_UI_FALLBACK=0. Windows-only (pywinauto).
-        self.ui_fallback_enabled = _coerce_bool(
+        # false or ADSPOWER_UI_FALLBACK=0. Uses Windows UIA or macOS AXUI.
+        ui_fallback_enabled = _coerce_bool(
             cfg.get("adspower_ui_fallback"),
             os.getenv("ADSPOWER_UI_FALLBACK"),
             default=True,
         )
+        if self.control_mode == "api":
+            self.cdp_fallback_enabled = False
+            self.ui_fallback_enabled = False
+        elif self.control_mode == "gui":
+            self.cdp_fallback_enabled = True
+            self.ui_fallback_enabled = True
+        else:
+            self.cdp_fallback_enabled = cdp_fallback_enabled
+            self.ui_fallback_enabled = ui_fallback_enabled
         self._ui_controller_obj = None
         self._ui_on_profile_missing = None
+
+    def _is_gui_control_mode(self):
+        return str(getattr(self, "control_mode", "auto") or "auto").strip().lower() == "gui"
+
+    def _is_api_control_mode(self):
+        return str(getattr(self, "control_mode", "auto") or "auto").strip().lower() == "api"
 
     def set_ui_on_profile_missing(self, callback):
         """Register a ``callback(profile_id: str)`` invoked when the UI controller
@@ -485,6 +513,22 @@ class AdsPowerManager:
     def _post_json(self, path, payload=None, timeout=30, **params):
         return self._request_json("POST", path, payload=payload, timeout=timeout, **params)
 
+    def _desktop_app_http_running(self, timeout=2):
+        """Best-effort check for AdsPower's desktop HTTP server.
+
+        The no-API GUI path does not require the Local API port to be available,
+        but the desktop app itself must be running. AdsPower exposes a lightweight
+        local server on 20725 while the app is open.
+        """
+        for host in self._iter_hosts():
+            try:
+                response = self.session.get(f"http://{host}:20725/", timeout=timeout)
+            except Exception:
+                continue
+            if getattr(response, "status_code", None) == 200:
+                return True
+        return False
+
     def preflight_check(self):
         """Lightweight auto-connect probe for the AdsPower Local API.
 
@@ -507,6 +551,13 @@ class AdsPowerManager:
         with self._api_lock:
             self._respect_rate_limit()
             last_error = None
+
+            if self._is_gui_control_mode() and self._desktop_app_http_running(timeout=2):
+                return {
+                    "ok": True,
+                    "code": "ok",
+                    "message": "AdsPower desktop app OK (GUI control mode selected).",
+                }
 
             for host in self._iter_hosts():
                 url = f"{self._build_root_url(host)}/status"
@@ -532,34 +583,48 @@ class AdsPowerManager:
                     data = {}
 
                 if _is_permission_error(data):
+                    if self._is_gui_control_mode():
+                        return {
+                            "ok": True,
+                            "code": "ok",
+                            "message": f"AdsPower Local API is permission-gated, continuing in GUI control mode. (raw: {data})",
+                        }
                     return {
                         "ok": False,
                         "code": "adspower_permission",
                         "message": f"{ADSPOWER_PERMISSION_HELP} (raw: {data})",
                     }
                 # code 0 (or any non-permission response) means we're connected.
+                if self._is_gui_control_mode():
+                    return {
+                        "ok": True,
+                        "code": "ok",
+                        "message": "Connected to AdsPower; GUI control mode selected.",
+                    }
                 return {"ok": True, "code": "ok", "message": "Connected to AdsPower Local API."}
 
             # Local API port (50325) is unreachable. Fall back to probing the
             # AdsPower desktop app HTTP server on port 20725 — if it answers,
             # AdsPower is running; the runner will drive it via the GUI fallback.
             _FALLBACK_PORT = 20725
-            for host in self._iter_hosts():
-                url = f"http://{host}:{_FALLBACK_PORT}/"
-                try:
-                    response = self.session.get(url, timeout=5)
-                except Exception:
-                    continue
-                if response.status_code == 200:
-                    logger.info(
-                        f"AdsPower desktop app is running (port {_FALLBACK_PORT}); "
-                        f"Local API on port {self.port} is not available — will use GUI fallback."
-                    )
-                    return {
-                        "ok": True,
-                        "code": "ok",
-                        "message": f"AdsPower app OK (GUI-fallback mode; Local API port {self.port} unreachable).",
-                    }
+            if not self._is_api_control_mode():
+                for host in self._iter_hosts():
+                    url = f"http://{host}:{_FALLBACK_PORT}/"
+                    try:
+                        response = self.session.get(url, timeout=5)
+                    except Exception:
+                        continue
+                    if response.status_code == 200:
+                        logger.info(
+                            f"AdsPower desktop app is running (port {_FALLBACK_PORT}); "
+                            f"Local API on port {self.port} is not available — will use GUI fallback."
+                        )
+                        mode = "GUI control mode" if self._is_gui_control_mode() else "GUI-fallback mode"
+                        return {
+                            "ok": True,
+                            "code": "ok",
+                            "message": f"AdsPower app OK ({mode}; Local API port {self.port} unreachable).",
+                        }
 
             return {
                 "ok": False,
@@ -602,6 +667,8 @@ class AdsPowerManager:
         endpoint. If the API is permission-gated (9110) or unreachable, fall back
         to attaching over CDP to a profile the user already opened in the AdsPower
         GUI (no API needed) — see ``core/adspower_cdp.py``."""
+        if self._is_gui_control_mode():
+            return self._open_profile_via_gui_first(profile_id)
         try:
             return self._open_profile_via_api(profile_id, retries)
         except AdsPowerError as api_error:
@@ -642,6 +709,40 @@ class AdsPowerManager:
                     time.sleep(3)
                 else:
                     raise
+
+    def _open_profile_via_gui_first(self, profile_id):
+        """GUI-selected mode: skip /browser/start and open through AdsPower UI."""
+        endpoint = ""
+        try:
+            from core.adspower_cdp import find_open_profile_cdp_endpoint
+
+            endpoint = find_open_profile_cdp_endpoint(profile_id, session=self.session)
+        except Exception as scan_error:
+            logger.debug(f"GUI control mode CDP scan failed for {profile_id}: {scan_error}")
+
+        if endpoint:
+            self._cdp_fallback_profiles.add(str(profile_id))
+            logger.info(f"Attached to already-open AdsPower profile {profile_id} in GUI control mode: {endpoint}")
+            return endpoint
+
+        ui_error_text = ""
+        try:
+            endpoint = self._ui_controller().open_profile_by_id(profile_id)
+        except Exception as ui_error:
+            logger.error(f"AdsPower GUI open failed for {profile_id} in GUI control mode: {ui_error}")
+            ui_error_text = str(ui_error)
+            endpoint = ""
+
+        if endpoint:
+            self._cdp_fallback_profiles.add(str(profile_id))
+            logger.info(f"Opened AdsPower profile {profile_id} via GUI control mode: {endpoint}")
+            return endpoint
+
+        raise AdsPowerProfileNotOpenError(
+            f"GUI control mode is selected, but profile {profile_id} could not be opened "
+            f"through the AdsPower desktop app. Make sure AdsPower is open and visible. "
+            f"(UI error: {ui_error_text or 'n/a'})"
+        )
 
     def _open_profile_via_cdp_fallback(self, profile_id, api_error):
         """The Local API could not start the profile. If the fallback is enabled
@@ -710,6 +811,17 @@ class AdsPowerManager:
     def close_profile(self, profile_id):
         pid = str(profile_id)
 
+        if self._is_gui_control_mode() and self.ui_fallback_enabled:
+            try:
+                closed = self._ui_controller().close_profile_by_id(pid)
+                if closed is False:
+                    raise RuntimeError("AdsPower GUI did not confirm the profile closed.")
+                logger.info(f"Closed AdsPower profile {pid} via GUI control mode.")
+                return {"code": 0, "msg": "closed_via_gui"}
+            except Exception as ui_error:
+                logger.warning(f"Could not GUI-close AdsPower profile {pid}: {ui_error}")
+                return {"code": 0, "msg": "gui_close_failed_left_open"}
+
         # No-API mode: this profile was opened by driving the AdsPower GUI (the
         # /browser/stop API is the same 9110-gated endpoint), so close it the same
         # way — click the row's Close button. The browser window should actually
@@ -767,6 +879,13 @@ class AdsPowerManager:
             self.close_profile(normalized_profile_id)
         except Exception as exc:
             logger.debug(f"Close-before-delete for {normalized_profile_id} (already closed?): {exc}")
+
+        if self._is_gui_control_mode() and self.ui_fallback_enabled:
+            logger.warning(
+                f"Deleting AdsPower profile {normalized_profile_id} via GUI control mode.")
+            data = self._ui_controller().delete_profile_by_id(normalized_profile_id)
+            self._cdp_fallback_profiles.discard(normalized_profile_id)
+            return data
 
         # Fast path: a profile we opened in no-API mode -> the delete API is the
         # same 9110-gated endpoint, so skip it and delete through the GUI.
@@ -952,6 +1071,18 @@ class AdsPowerManager:
             raise ValueError("AdsPower profile id is required.")
         if not normalized_name:
             raise ValueError("AdsPower profile name is required.")
+
+        if self._is_gui_control_mode() and self.ui_fallback_enabled:
+            logger.warning(
+                f"Renaming AdsPower profile {normalized_profile_id} -> {normalized_name!r} "
+                f"via GUI control mode.")
+            info = self._ui_controller().rename_profile_by_id(normalized_profile_id, normalized_name)
+            return {
+                "profile_id": normalized_profile_id,
+                "previous_name": "",
+                "name": str(info.get("name") or normalized_name).strip(),
+                "raw": info,
+            }
 
         # Fast path: a profile we created in no-API mode -> the update API is the
         # same 9110-gated endpoint, so rename straight through the GUI.
@@ -2339,6 +2470,17 @@ class AdsPowerManager:
         (9110) or unreachable (Local API not running) and the GUI fallback is
         enabled, drive the AdsPower desktop app instead (no-API mode) — same
         return shape so callers are unaffected."""
+        if self._is_gui_control_mode():
+            return self._create_profile_via_ui(
+                name,
+                proxy_value,
+                group_reference,
+                user_proxy_config,
+                AdsPowerPermissionError("GUI control mode selected; Local API create skipped."),
+                tags=tags,
+                extension_category_reference=extension_category_reference,
+                proxy_rotator=proxy_rotator,
+            )
         try:
             return self._create_profile_via_api(
                 name, proxy_value, group_reference, tags,

@@ -433,11 +433,51 @@ async function renderSettings() {
   const asEl = el("autostart-toggle");
   if (autostart.ok) asEl.checked = autostart.enabled;
 
+  await refreshConfig("nyx");
+  renderAdsPowerModeControls();
   renderUpdatesCard();
   // Refresh backup availability so Roll Back only shows when there's a restore point.
   const backups = await callBridge("list_backups");
   state.update.backups = backups.ok ? (backups.backups || []) : [];
   renderUpdatesCard();
+}
+
+function currentAdsPowerControlMode() {
+  const mode = String((state.nyx.config || {}).adspower_control_mode || "auto").trim().toLowerCase();
+  return ["auto", "api", "gui"].includes(mode) ? mode : "auto";
+}
+
+function renderAdsPowerModeControls() {
+  const current = currentAdsPowerControlMode();
+  document.querySelectorAll("[data-adspower-mode]").forEach(btn => {
+    const active = btn.dataset.adspowerMode === current;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const feedback = el("adspower-mode-feedback");
+  if (feedback && !feedback.dataset.busy) {
+    const labels = { auto: "Auto: use API first, then GUI when AdsPower blocks the API.", api: "API: Local API only; GUI fallback disabled.", gui: "GUI: use AdsPower desktop automation first on this device." };
+    feedback.textContent = labels[current] || labels.auto;
+  }
+}
+
+async function saveAdsPowerControlMode(mode) {
+  const normalized = String(mode || "").trim().toLowerCase();
+  if (!["auto", "api", "gui"].includes(normalized)) return;
+  const feedback = el("adspower-mode-feedback");
+  if (feedback) {
+    feedback.dataset.busy = "1";
+    feedback.textContent = "Saving AdsPower control mode...";
+  }
+  const result = await callAction("nyx", "/config", { adspower_control_mode: normalized });
+  if (result && result.config) state.nyx.config = result.config;
+  renderAdsPowerModeControls();
+  if (feedback) {
+    feedback.dataset.busy = "";
+    feedback.textContent = result && result.ok !== false
+      ? "AdsPower control mode saved: " + normalized.toUpperCase() + ". Restart running bots to apply immediately."
+      : (result && (result.error || result.message)) || "Could not save AdsPower control mode.";
+  }
 }
 
 // Reflect state.update into the Updates card: Apply only shows when an update
@@ -514,6 +554,8 @@ function renderNyxAdvanced() {
   if (!body) return;
   const v = state.nyx.config || {};
   const opt = (val, label) => `<option value="${val}" ${v.outfit_style === val ? "selected" : ""}>${label}</option>`;
+  const mode = currentAdsPowerControlMode();
+  const modeOpt = (val, label) => `<option value="${val}" ${mode === val ? "selected" : ""}>${label}</option>`;
   body.innerHTML = `
     <div class="adv-grid">
       <label class="adv-field"><span>Pending threshold</span><input id="cfg-pending_threshold" class="input" value="${escapeAttr(v.pending_threshold || 1)}"></label>
@@ -528,6 +570,9 @@ function renderNyxAdvanced() {
     <div class="adv-section-label">AdsPower Local API</div>
     <p class="adv-note">NyxSuite connects to AdsPower automatically — just keep the AdsPower app open and logged in. No API key needed. The fields below are optional, only for a custom host/port or an AdsPower that requires a key.</p>
     <div class="adv-grid">
+      <label class="adv-field"><span>Control mode</span><select id="cfg-adspower_control_mode" class="input">
+        ${modeOpt("auto", "Auto")}${modeOpt("api", "API only")}${modeOpt("gui", "GUI first")}
+      </select></label>
       <label class="adv-field"><span>API key (optional)</span><input id="cfg-adspower_api_key" class="input" type="password" autocomplete="off" placeholder="${v.adspower_api_key_set ? "•••••• (saved — leave blank to keep)" : "optional — only if AdsPower requires one"}"></label>
       <label class="adv-field"><span>Host (optional)</span><input id="cfg-adspower_host" class="input" value="${escapeAttr(v.adspower_host || "")}" placeholder="127.0.0.1"></label>
       <label class="adv-field"><span>Port (optional)</span><input id="cfg-adspower_port" class="input" value="${escapeAttr(v.adspower_port || "")}" placeholder="50325"></label>
@@ -691,6 +736,7 @@ document.addEventListener("click", async (e) => {
       outfit_style: el("cfg-outfit_style").value,
       hair_randomizer_enabled: el("cfg-hair_randomizer_enabled").checked,
 
+      adspower_control_mode: el("cfg-adspower_control_mode") ? el("cfg-adspower_control_mode").value : "auto",
       adspower_host: el("cfg-adspower_host") ? el("cfg-adspower_host").value.trim() : "",
       adspower_port: el("cfg-adspower_port") ? el("cfg-adspower_port").value.trim() : "",
     };
@@ -700,7 +746,12 @@ document.addEventListener("click", async (e) => {
     const typedKey = apiKeyInput ? apiKeyInput.value.trim() : "";
     if (typedKey) cfg.adspower_api_key = typedKey;
     const r = await callAction("nyx", "/config", cfg);
+    if (r && r.config) state.nyx.config = r.config;
+    renderAdsPowerModeControls();
     el("config-feedback").textContent = "Config saved.";
+  }
+  if (e.target && e.target.dataset && e.target.dataset.adspowerMode) {
+    await saveAdsPowerControlMode(e.target.dataset.adspowerMode);
   }
   if (e.target.id === "cfg-adspower-test-btn") {
     const out = el("cfg-adspower-test-result");

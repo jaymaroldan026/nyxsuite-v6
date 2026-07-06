@@ -214,6 +214,8 @@ tr.group-header td{background:rgba(99,102,241,.08);font-weight:600;font-size:13p
 .release-notes summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:12px;font-family:"Fira Code",monospace}
 .release-notes pre{font:11px/1.6 "Fira Code",Consolas,monospace;color:var(--text);white-space:pre-wrap;margin:8px 0 0;padding:0;max-height:220px;overflow-y:auto}
 .setting-label{font-size:12px;color:var(--muted);min-width:70px}
+.mode-button-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.mode-btn.active{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:var(--accent2);color:#fff;box-shadow:var(--glow)}
 .label{display:block;margin:6px 0 3px;font-size:12px;color:var(--muted)}
 .label-inline{font-size:13px;color:var(--text);margin-right:8px}
 .input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text);outline:none;font-size:13px;transition:border-color 180ms ease,box-shadow 180ms ease;font-family:"Fira Sans",sans-serif}

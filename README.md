@@ -1,6 +1,6 @@
 # Nyx Suite v6
 
-Current release line (6.0.0) of the **no-API** Nyx Suite — it drives the AdsPower desktop
+Current release line (6.0.1) of the **no-API** Nyx Suite — it drives the AdsPower desktop
 app directly when the Local API is permission-gated, so it works on AdsPower
 Employee/sub-accounts. This is an **open build with no license/activation**.
 
@@ -120,6 +120,9 @@ case accessibility can't see a control; templates auto-capture into
 
 Controls:
 
+- Dashboard mode selector: Settings -> AdsPower Control -> `Auto`, `API`, or `GUI`.
+  `Auto` keeps the smart API-first fallback behavior, `API` uses the Local API
+  only, and `GUI` drives the AdsPower desktop app first for no-API devices.
 - `ADSPOWER_UI_FALLBACK=0` (or `adspower_ui_fallback=false` in settings) disables it.
 - Smoke test: `python tools/test_adspower_ui_profile.py`
   (create + find + open + Playwright attach, fully no-API).

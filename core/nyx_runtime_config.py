@@ -18,6 +18,7 @@ DEFAULTS = {
     "hubstaff_cli_path": "",
     # AdsPower Local API credentials/overrides. Empty = fall back to
     # ADSPOWER_*/ADSP_* env vars and defaults (host 127.0.0.1, port 50325).
+    "adspower_control_mode": "auto",
     "adspower_api_key": "",
     "adspower_host": "",
     "adspower_port": "",
@@ -25,6 +26,7 @@ DEFAULTS = {
 
 VALID_OUTFIT_STYLES = {"default", "mixed", "casual", "sexy", "no_dresses"}
 VALID_HUBSTAFF_STOP_MODES = {"queue_finished", "timer"}
+VALID_ADSPOWER_CONTROL_MODES = {"auto", "api", "gui"}
 
 
 def _safe_int(value, default):
@@ -69,6 +71,11 @@ def _safe_timer_minutes(value, default):
 def _safe_hubstaff_stop_mode(value, default):
     normalized = str(value or "").strip().lower()
     return normalized if normalized in VALID_HUBSTAFF_STOP_MODES else default
+
+
+def _safe_adspower_control_mode(value, default):
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in VALID_ADSPOWER_CONTROL_MODES else default
 
 
 def _safe_text(value, default=""):
@@ -116,6 +123,10 @@ def load_nyx_config():
             raw.get("hubstaff_timer_minutes"), DEFAULTS["hubstaff_timer_minutes"]
         ),
         "hubstaff_cli_path": _safe_text(raw.get("hubstaff_cli_path"), DEFAULTS["hubstaff_cli_path"]),
+        "adspower_control_mode": _safe_adspower_control_mode(
+            raw.get("adspower_control_mode"),
+            DEFAULTS["adspower_control_mode"],
+        ),
         "adspower_api_key": _safe_text(raw.get("adspower_api_key"), DEFAULTS["adspower_api_key"]),
         "adspower_host": _safe_text(raw.get("adspower_host"), DEFAULTS["adspower_host"]),
         "adspower_port": _safe_text(raw.get("adspower_port"), DEFAULTS["adspower_port"]),
@@ -149,6 +160,10 @@ def save_nyx_config(updates):
             current["hubstaff_timer_minutes"],
         ),
         "hubstaff_cli_path": _safe_text(updates.get("hubstaff_cli_path"), current["hubstaff_cli_path"]),
+        "adspower_control_mode": _safe_adspower_control_mode(
+            updates.get("adspower_control_mode", current["adspower_control_mode"]),
+            current["adspower_control_mode"],
+        ),
         # API key: absent (None) keeps the saved key; a non-empty value updates it.
         # The dashboard omits this field when its masked input is left blank, so a
         # routine save never wipes the key.

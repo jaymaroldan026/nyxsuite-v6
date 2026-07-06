@@ -70,7 +70,8 @@ $dirs = @(
     "agent_host",
     "utils",
     "snap_selectors",
-    "scripts"
+    "scripts",
+    "ui_templates"
 )
 foreach ($d in $dirs) {
     $src = Join-Path $root $d

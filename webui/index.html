@@ -175,6 +175,17 @@
           <span id="autostart-feedback" class="feedback"></span>
         </div>
 
+        <div class="settings-card">
+          <h2>AdsPower Control</h2>
+          <p class="hint">Choose how NyxSuite controls AdsPower on this device. Auto keeps the normal smart fallback; GUI skips Local API create/open calls for no-API accounts.</p>
+          <div class="mode-button-row" role="group" aria-label="AdsPower control mode">
+            <button id="adspower-mode-auto" class="btn mode-btn" type="button" data-adspower-mode="auto">Auto</button>
+            <button id="adspower-mode-api" class="btn mode-btn" type="button" data-adspower-mode="api">API</button>
+            <button id="adspower-mode-gui" class="btn mode-btn" type="button" data-adspower-mode="gui">GUI</button>
+          </div>
+          <span id="adspower-mode-feedback" class="feedback"></span>
+        </div>
+
         <div class="settings-card" id="card-setup">
           <h2>Setup &amp; Install</h2>
           <p class="hint">First-time setup: installs the Python packages and the Playwright browser engine. Run this once on a fresh machine before starting the bot. The live log appears below — it can take a few minutes.</p>
