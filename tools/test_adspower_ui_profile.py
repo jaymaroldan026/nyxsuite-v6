@@ -3,7 +3,7 @@
 Drives the full flow the production runner uses when the Local API is gated:
 
   1. Create a profile through the AdsPower desktop GUI
-       - name  : "Snapchat: Pending"  (temp name)
+       - name  : "Snapchat: xyz"  (temp name)
        - group : "Snapchat20"
        - proxy : pasted into the Host field (AdsPower auto-parses user:pass)
        - Check Proxy -> OK
@@ -72,7 +72,7 @@ def _macos_preflight_message(platform=sys.platform,
 
 def main():
     ap = argparse.ArgumentParser(description="AdsPower no-API GUI automation E2E test")
-    ap.add_argument("--name", default="Snapchat: Pending")
+    ap.add_argument("--name", default="Snapchat: xyz")
     ap.add_argument("--group", default="Snapchat20")
     ap.add_argument("--proxy", default="48.45.190.63:42438:hwwrghLD:j432NPbg")
     ap.add_argument("--open", default="", help="Skip create; just open this profile id")

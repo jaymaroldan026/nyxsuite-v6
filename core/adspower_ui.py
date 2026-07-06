@@ -1956,27 +1956,53 @@ class AdsPowerUIController:
         whole dropdown, so 'Name contains' never matched and the search fell back
         to AdsPower's default 'Profile No./ID is' — searching by id, not name.)"""
         # Collect suggestion labels (below the search bar, in the suggestion
-        # column) then group them into ROWS by top-proximity. A suggestion's
-        # field/operator/value labels share a row top; rows are ~34px apart.
-        # (Fixed 6px-bucket rounding split same-row labels across a boundary, so
-        # the field+operator match failed intermittently and fell back to Enter —
-        # which is why id/name search was flaky and slow.)
+        # column). A suggestion's field/operator/value labels share a row band.
+        # The row grouping + click point are computed by the pure, zoom-agnostic
+        # ``_dropdown_click_target`` so they can be regression-tested at every
+        # resolution/zoom without a live AdsPower (see tests).
         items = []
         for t in self._win.descendants(control_type="Text"):
             try:
                 s = (t.window_text() or "").strip()
                 r = t.rectangle()
-                if s and r.width() > 0 and r.top > below_top and r.left >= left_min:
+                if (s and r.width() > 0 and r.height() > 0
+                        and r.top > below_top and r.left >= left_min):
                     items.append((r.top, r.left, r.right, r.bottom, s.lower()))
             except Exception:
                 continue
-        items.sort()
-        rows = []
-        for it in items:
-            if rows and abs(it[0] - rows[-1][0][0]) <= 12:   # same visual row
-                rows[-1].append(it)
-            else:
-                rows.append([it])
+        target = self._dropdown_click_target(items, field, operator, value=value)
+        if target is None:
+            return False
+        cx, cy = target
+        try:
+            self._click_xy(cx, cy)
+            return True
+        except AdsPowerUIError:
+            return False
+
+    @staticmethod
+    def _dropdown_click_target(items, field: str, operator: str, value: str = ""):
+        """Pure geometry: from the dropdown's Text rects ``(top, left, right,
+        bottom, lower_label)`` (already filtered to the suggestion region),
+        return the ``(x, y)`` to click for the ``field``+``operator`` suggestion
+        row, or ``None`` when no row matches.
+
+        Two macOS hardening changes over the old union-box-centre click, which
+        could land *beside* the row — the reported "clicking on the side of Name
+        contains":
+
+        * Rows are grouped by **vertical-overlap ratio**, not a fixed pixel gap.
+          The old ``abs(top - prev_top) <= 12`` merged two adjacent suggestions
+          into one "row" whenever AdsPower was zoomed out (rows sit <12px apart),
+          and the click then landed in the seam between "Name contains" and
+          "Profile ID is". Overlap-ratio grouping is scale-free, so it holds at
+          any window zoom and screen resolution.
+        * For a Name search we click the matched **field-label element itself**
+          (the "Name contains" text), which always sits on the real clickable
+          row — never in the gap between the field label and the echoed value.
+          The Profile-ID (Nyx) path keeps its original row-centre click so that
+          working flow is untouched.
+        """
         fl, op = field.lower(), operator.lower()
 
         def field_matches(label: str) -> bool:
@@ -1993,6 +2019,27 @@ class AdsPowerUIController:
                 return "name" in label
             return label == fl
 
+        # Group into visual rows by vertical-span overlap (zoom-independent):
+        # two labels share a row when their [top, bottom] intervals overlap by
+        # more than half the shorter label's height. Text on one line overlaps
+        # ~fully; distinct rows never overlap, so no fixed threshold is needed.
+        rows = []
+        bands = []                                   # parallel (band_top, band_bottom)
+        for it in sorted(items):                     # by top, then left
+            top, bottom = it[0], it[3]
+            placed = False
+            if rows:
+                band_top, band_bottom = bands[-1]
+                overlap = min(bottom, band_bottom) - max(top, band_top)
+                shorter = max(1, min(bottom - top, band_bottom - band_top))
+                if overlap >= 0.5 * shorter:
+                    rows[-1].append(it)
+                    bands[-1] = (min(band_top, top), max(band_bottom, bottom))
+                    placed = True
+            if not placed:
+                rows.append([it])
+                bands.append((top, bottom))
+
         expected_tokens = [
             tok for tok in re.findall(r"[a-z0-9]+", str(value or "").lower())
             if tok
@@ -2003,20 +2050,25 @@ class AdsPowerUIController:
             operator_matches = op in labels or re.search(
                 rf"(^|[^a-z0-9]){re.escape(op)}([^a-z0-9]|$)", row_text
             )
-            if not any(field_matches(label) for label in labels):
+            field_elems = [it for it in row if field_matches(it[4])]
+            if not field_elems:
                 continue
             if not operator_matches:
                 continue
             if expected_tokens and not all(tok in row_text for tok in expected_tokens):
                 continue
-            cx = (min(x[1] for x in row) + max(x[2] for x in row)) // 2
-            cy = (min(x[0] for x in row) + max(x[3] for x in row)) // 2
-            try:
-                self._click_xy(cx, cy)
-                return True
-            except AdsPowerUIError:
-                return False
-        return False
+            if fl == "name":
+                # Click the field-label element itself — dead-centre on the real
+                # "Name contains" row, never in the seam beside it.
+                target = min(field_elems, key=lambda el: el[1])   # leftmost match
+                cx = (target[1] + target[2]) // 2
+                cy = (target[0] + target[3]) // 2
+            else:
+                # Nyx Profile-ID search: original row-centre click, unchanged.
+                cx = (min(x[1] for x in row) + max(x[2] for x in row)) // 2
+                cy = (min(x[0] for x in row) + max(x[3] for x in row)) // 2
+            return (cx, cy)
+        return None
 
     def _wait_list_settled(self, timeout: float = 15.0):
         """Wait until the Profiles list finishes (re)loading: either rows appear

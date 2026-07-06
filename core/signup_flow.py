@@ -19,6 +19,11 @@ PASSWORD = "ABC123wgmi*"
 # progress we raise a classified error so the Nyxify runner runs its standard
 # cleanup/retry (delete profile, rotate proxy, requeue as PENDING).
 SIGNUP_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_STALL_SECONDS", "300"))  # ~5 minutes
+# Backstop for the "stuck on the signup page for a very long time and can't even
+# click Agree and Continue" case: when the form has been sitting for this long
+# and the submit button never became clickable, reload + re-enter as a last
+# resort — even if a captcha is present (which suppresses the normal stall).
+SIGNUP_HARD_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_HARD_STALL_SECONDS", "600"))  # ~10 minutes
 SIGNUP_MAX_REFRESH_ATTEMPTS = int(os.getenv("NYXIFY_SIGNUP_MAX_REFRESH_ATTEMPTS", "3"))
 # How many times to (re-)order a verification email from SnapBoard when it has
 # "no pending email order" before giving up and letting the runner retry.
@@ -976,6 +981,38 @@ async def _recaptcha_widget_present(page) -> bool:
         return True
 
 
+async def _submit_is_clickable(page, submit_selectors) -> bool:
+    """True when an "Agree and Continue" / submit button is both visible AND
+    enabled — i.e. it could actually be clicked right now. A button that stays
+    disabled forever is the "can't even click Agree and Continue" stall."""
+    selector = await _visible_any(page, submit_selectors)
+    if not selector:
+        return False
+    try:
+        return not bool(await page.evaluate(_JS_IS_DISABLED, selector))
+    except Exception:
+        return False
+
+
+async def _signup_form_is_blank(page) -> bool:
+    """True when the signup form is showing but its key fields are empty — the
+    state after a hard page refresh (commonly a manual operator refresh) that
+    clears every React-controlled input. Signals that the saved credentials
+    should be re-entered without waiting out the stall timer."""
+    try:
+        if not await _visible_any(page, ["#firstname"]):
+            return False
+        if str(await _read_input_value(page, ["#firstname"]) or "").strip():
+            return False
+        username_val = await _read_input_value(
+            page,
+            ["#username", "input[name='username']", "input[placeholder*='username' i]"],
+        )
+        return not str(username_val or "").strip()
+    except Exception:
+        return False
+
+
 async def _is_non_english_signup_page(page) -> bool:
     """True when the signup page is clearly rendered in a language the bot's
     text-based handoff detection can't read (Arabic, Chinese, Cyrillic, …).
@@ -1784,9 +1821,40 @@ async def _wait_for_signup_progress(
         if stall_state is not None and resubmit_callback is not None:
             on_form = bool(await _visible_any(page, ["#firstname", "#username", *submit_selectors]))
             if on_form:
+                # The page was (re)loaded and Snapchat cleared every field —
+                # usually a manual operator refresh. Re-enter the saved
+                # credentials right away instead of waiting out the stall timer.
+                refill_callback = stall_state.get("refill")
+                if refill_callback is not None and await _signup_form_is_blank(page):
+                    refill_attempts = int(stall_state.get("blank_refill_attempts", 0)) + 1
+                    stall_state["blank_refill_attempts"] = refill_attempts
+                    if refill_attempts <= SIGNUP_MAX_REFRESH_ATTEMPTS:
+                        logger and logger.info(
+                            f"[{profile_id}] Signup form is blank (page was refreshed); "
+                            f"re-entering the saved details "
+                            f"(refill {refill_attempts}/{SIGNUP_MAX_REFRESH_ATTEMPTS})."
+                        )
+                        await set_progress("refilling_signup_form")
+                        try:
+                            await refill_callback()
+                        except Exception as exc:
+                            logger and logger.warning(
+                                f"[{profile_id}] Blank-form refill failed: {exc}"
+                            )
+                        stall_state["form_since"] = time.monotonic()
+                        await page.wait_for_timeout(1200)
+                        if remaining_ms is not None:
+                            remaining_ms -= 1200
+                        continue
+                else:
+                    # Form has content again — reset the consecutive-refill guard
+                    # so a later manual refresh is honored afresh.
+                    stall_state["blank_refill_attempts"] = 0
+
                 if stall_state.get("form_since") is None:
                     stall_state["form_since"] = time.monotonic()
                 elapsed = time.monotonic() - float(stall_state.get("form_since") or time.monotonic())
+                # Standard stall: no captcha challenge ever rendered.
                 if elapsed >= SIGNUP_STALL_SECONDS and not await _recaptcha_widget_present(page):
                     if await trigger_form_refresh(
                         "signup form stalled with no captcha challenge", "refreshing_stalled_signup"
@@ -1795,8 +1863,23 @@ async def _wait_for_signup_progress(
                         if remaining_ms is not None:
                             remaining_ms -= 1500
                         continue
+                # Hard-stall backstop: stuck on the signup page for a very long
+                # time and Agree and Continue never became clickable — even with
+                # a captcha present. Reload + re-enter as a last resort.
+                elif elapsed >= SIGNUP_HARD_STALL_SECONDS and not await _submit_is_clickable(
+                    page, submit_selectors
+                ):
+                    if await trigger_form_refresh(
+                        "signup stuck; Agree and Continue never became clickable",
+                        "refreshing_stuck_signup",
+                    ):
+                        await page.wait_for_timeout(1500)
+                        if remaining_ms is not None:
+                            remaining_ms -= 1500
+                        continue
             else:
                 stall_state["form_since"] = None
+                stall_state["blank_refill_attempts"] = 0
 
         await page.wait_for_timeout(1000)
         if remaining_ms is not None:
@@ -2381,9 +2464,10 @@ async def perform_snapchat_signup(
             "manual_override": False,
         }
 
-        # Shared across every verification pass so the refresh budget (A1/A2)
-        # and the "time on form" stall timer persist for the whole signup.
-        stall_state = {"refresh_attempts": 0, "form_since": None}
+        # Shared across every verification pass so the refresh budget (A1/A2),
+        # the "time on form" stall timer, and the blank-form refill guard persist
+        # for the whole signup.
+        stall_state = {"refresh_attempts": 0, "form_since": None, "blank_refill_attempts": 0}
 
         async def resubmit_callback():
             active = await _resolve_active_signup_page(signup_page, logger, profile_id)
@@ -2396,6 +2480,23 @@ async def perform_snapchat_signup(
                 logger,
                 profile_id,
             )
+
+        async def refill_callback():
+            # Re-enter the saved credentials into an already-loaded (blank) form
+            # WITHOUT a page reload — used when the signup page was refreshed out
+            # from under us and the empty form reappeared.
+            active = await _resolve_active_signup_page(signup_page, logger, profile_id)
+            return await _fill_signup_form(
+                active,
+                snap_name,
+                birthday,
+                str(username_state.get("value") or username or "").strip(),
+                password,
+                logger,
+                profile_id,
+            )
+
+        stall_state["refill"] = refill_callback
 
         verification = await _handle_verification(
             signup_page,

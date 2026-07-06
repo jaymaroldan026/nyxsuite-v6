@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.2 — macOS search-click fix + signup stall recovery
+
+- Fixes the Nyxify temp-name search on macOS ("Name contains &lt;temp&gt;") clicking beside the suggestion instead of on it. The dropdown row is now grouped by vertical-overlap ratio and the click lands on the field label itself, so it stays accurate across AdsPower window zoom levels and screen resolutions. The Nyx Profile-ID search is unchanged.
+- Nyxify signup: when the page is stuck for a very long time and "Agree and Continue" never becomes clickable — even with a captcha present — the form is reloaded and re-filled from the saved credentials as a last resort.
+- Nyxify signup: when the form is detected blank (for example after a manual page refresh), the saved credentials are re-entered immediately instead of waiting out the stall timer.
+
 ## 6.0.1 — AdsPower control mode selector
 
 - Adds a dashboard Settings control for AdsPower mode: Auto, API, or GUI.
