@@ -130,22 +130,29 @@ Controls:
   (create → open → rename → close → delete). Single ops: `--rename ID:Name`,
   `--close ID`, `--delete ID`.
 
-## Keyboard shortcut — stop / start
+## Keyboard shortcuts — stop / start
 
-Press **Ctrl+F8** anywhere (a global hotkey — it works even while the AdsPower
-window is focused) to stop the running bot gracefully. It plays a distinct
-built-in tone (a low descending double-beep for **stop**) so you know the key
-was caught.
+Each product has its own dedicated global hotkey (they work even while the
+AdsPower window is focused):
 
-The listener runs **inside each runner process** (`core/hotkeys.py`, started by
-`main.py` for Nyx and `nyxify_runner.py` for Nyxify) — so only a *running* bot
-responds, and pressing the key stops whatever is running immediately.
+- **Ctrl+F8** — stop/start **Nyx** (Bitmoji runner)
+- **Ctrl+F7** — stop/start **Nyxify** (profile-creation runner)
+
+A key always controls its own product: if that runner is active it performs the
+same **full Stop** as the dashboard Stop button (the whole runner process tree
+is killed, force-killed if it survives); if it is stopped, the key starts it. A
+distinct built-in tone plays per action (low descending double-beep = stopped,
+higher rising double-beep = started) so you know the key was caught.
+
+The listener runs in the **bridge** process (`core/hotkeys.py`, started by
+`bridge_app.py`), which is what lets a hotkey also *start* a runner that has no
+process yet.
 
 > **macOS:** global hotkeys require the host app (Terminal, or the bundled Nyx
 > Suite app) to have **Accessibility** permission — grant it under *System
 > Settings → Privacy & Security → Accessibility*. Without it the suite still
-> runs; only the Ctrl+F8 shortcut is inactive (the dashboard/tray controls work
-> regardless).
+> runs; only the Ctrl+F7/F8 shortcuts are inactive (the dashboard/tray controls
+> work regardless).
 
 ## Browser extension host (optional)
 

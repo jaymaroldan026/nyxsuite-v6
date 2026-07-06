@@ -76,14 +76,58 @@ def _should_close_profile_after_bitmoji(success: bool, last_result: str) -> bool
 
 DEFAULT_SNAPCHAT_PASSWORD = "ABC123wgmi*"
 NYXIFY_READY_FOR_NYX_STEPS = {"signup_complete", "profile_closed", "queued_for_nyx"}
+# Post-signup steps that can only be reached AFTER the Snapchat account really
+# exists (welcome page confirmed the final username). A FAILED row on one of
+# these means only the AdsPower bookkeeping (rename/close/handoff) hiccuped —
+# the Bitmoji run must still proceed instead of holding forever.
+NYXIFY_POST_SIGNUP_FAILURE_STEPS = {
+    "profile_rename_failed",
+    "nyx_handoff_failed",
+    "profile_close_failed",
+}
+# Transient bookkeeping steps a DONE row passes through while Nyxify is still
+# closing/renaming the profile. Nyx holds during these so its GUI open and CDP
+# attach never race Nyxify's close/rename clicks on the same row.
+NYXIFY_BOOKKEEPING_STEPS = {
+    "closing_profile",
+    "renaming_profile_for_nyx",
+    "queueing_nyx",
+}
+# Safety valves so a crashed/wedged Nyxify can never park Nyx rows forever:
+# a DONE row stuck on a bookkeeping step goes stale after this long...
+NYXIFY_BOOKKEEPING_STALE_SECONDS = float(
+    os.getenv("NYXIFY_BOOKKEEPING_STALE_SECONDS", "600"))
+# ...and an unmatched Nyx row is only held for the id-sync window this long
+# (measured from the Nyx row's created_at, which holds never rewrite).
+NYXIFY_PROFILE_SYNC_HOLD_MAX_SECONDS = float(
+    os.getenv("NYXIFY_PROFILE_SYNC_HOLD_MAX_SECONDS", "900"))
 
 
-def _get_nyxify_hold_reason(profile_id):
-    """Return a hold step when Nyxify still owns this profile.
+def _iso_age_seconds(value):
+    """Seconds since an ISO-8601 UTC timestamp; None when unparseable."""
+    from datetime import datetime, timezone
 
-    Nyxify is allowed to create/login the Snapchat account first. Nyx must not
-    open the same AdsPower profile until Nyxify has reached the Snapchat welcome
-    page and recorded a final success step.
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+    except Exception:
+        return None
+
+
+def _get_nyxify_hold_reason(profile_id, nyx_task=None):
+    """Return a hold step while Nyxify still owns this profile, or a
+    ``fail:<reason>`` marker when the profile's signup terminally failed.
+
+    Nyxify is allowed to create/login the Snapchat account first — Nyx must
+    never interrupt an in-flight signup or Nyxify's close/rename bookkeeping on
+    the same profile. But every hold here is bounded: once the account really
+    exists (or Nyxify demonstrably moved on) the Bitmoji run proceeds, so a
+    profile can never sit at "waiting for Nyxify" forever.
     """
     normalized_profile_id = str(profile_id or "").strip()
     if not normalized_profile_id:
@@ -95,16 +139,48 @@ def _get_nyxify_hold_reason(profile_id):
         if nyxify_task:
             status = str(nyxify_task.get("status") or "").strip().upper()
             last_step = str(nyxify_task.get("last_step") or "").strip()
-            if status == "DONE" and last_step in NYXIFY_READY_FOR_NYX_STEPS:
+
+            if status == "DONE":
+                if last_step in NYXIFY_BOOKKEEPING_STEPS:
+                    # Signup succeeded; close/rename still in flight. Hold —
+                    # unless the row went stale (Nyxify crashed mid-bookkeeping),
+                    # in which case the account is real and Nyx may proceed.
+                    age = _iso_age_seconds(nyxify_task.get("updated_at"))
+                    if age is not None and age < NYXIFY_BOOKKEEPING_STALE_SECONDS:
+                        return "waiting_for_nyxify_success"
+                # Any other DONE step means the signup completed and Nyxify is
+                # finished with the profile (ready steps, or an unknown step
+                # from a newer/older Nyxify) — proceed.
                 return ""
+
+            if status == "FAILED":
+                if last_step in NYXIFY_POST_SIGNUP_FAILURE_STEPS:
+                    # The Snapchat account exists; only AdsPower bookkeeping
+                    # failed. Continue with the Bitmoji run.
+                    return ""
+                # The signup itself failed — there is no account to put a
+                # Bitmoji on. Fail the Nyx row (visibly, rerunnable) instead of
+                # re-holding it every poll forever.
+                return "fail:nyxify_signup_failed"
+
+            # PENDING / RUNNING: account creation is (or may soon be) in
+            # progress — never interrupt it.
             return "waiting_for_nyxify_success"
 
         try:
             continuous_mode = bool(load_nyxify_config().get("continuous_mode_enabled", False))
         except Exception:
             continuous_mode = False
-        if continuous_mode and nyxify_store.has_inflight_signups():
-            return "waiting_for_nyxify_profile_sync"
+        if continuous_mode and nyxify_store.has_running_signups():
+            # No Nyxify row matches this profile. Only an actively RUNNING
+            # signup can have created a profile whose id hasn't synced yet, and
+            # that window is short — so bound the hold by the Nyx row's age
+            # instead of holding every unmatched profile for as long as Nyxify
+            # has any work queued (which starved old profiles indefinitely).
+            # An unreadable age counts as old: progress beats an unbounded hold.
+            age = _iso_age_seconds((nyx_task or {}).get("created_at"))
+            if age is not None and age < NYXIFY_PROFILE_SYNC_HOLD_MAX_SECONDS:
+                return "waiting_for_nyxify_profile_sync"
     except Exception:
         return ""
 
@@ -201,10 +277,31 @@ async def process_queued_task(task, store, adspower, logger):
     source = str(task.get("source", "") or "").strip().lower()
     manual_queue_mode = source == "manual_queue"
 
-    hold_reason = _get_nyxify_hold_reason(profile_id)
+    hold_reason = _get_nyxify_hold_reason(profile_id, task)
+    if hold_reason.startswith("fail:"):
+        failed_step = hold_reason.split(":", 1)[1] or "nyxify_signup_failed"
+        logger.error(
+            f"Nyx profile {profile_id} cannot run: the Nyxify signup for it failed "
+            f"before an account existed. Marking FAILED ({failed_step})."
+        )
+        store.update_status(
+            task_id, "FAILED", failed_step,
+            error="Nyxify signup failed for this profile before the Snapchat account was created.",
+        )
+        return
     if hold_reason:
         logger.info(f"Holding Nyx profile {profile_id}: {hold_reason}")
         store.update_status(task_id, "PENDING", hold_reason, error="")
+        # A hold consumes this batch's flush latch; re-arm it so the row is
+        # retried on the next poll even when the queue sits below the start
+        # threshold (otherwise the last continuous-mode handoff of a batch
+        # could park below the threshold forever after its one hold).
+        try:
+            from core import runner_flags
+
+            runner_flags.nyx_request_flush()
+        except Exception:
+            pass
         return
 
     logger.info(f"Starting task for profile {profile_id}")

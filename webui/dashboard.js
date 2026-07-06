@@ -422,7 +422,6 @@ function setActive(p) {
   if (p === "settings") renderSettings();
   if (p === "bitmoji") loadBitmoji();
   if (p === "nyx" || p === "nyxify") {
-    callBridge("hotkey_product", { product: p }).catch(() => {});
     render();
   }
 }

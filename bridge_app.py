@@ -83,7 +83,6 @@ class BridgeApp:
         self._tray_icon = None
         self._stop = threading.Event()
         self.token = ""
-        self._hotkey_product = "nyx"
 
     # ------------------------------------------------------------------ build
     def _version(self) -> str:
@@ -152,11 +151,17 @@ class BridgeApp:
         self.dashboard.start()
         log(f"Dashboard on {DASHBOARD_URL}")
         try:
-            from core.hotkeys import start_stop_hotkey
+            from core.hotkeys import start_product_hotkeys
 
-            start_stop_hotkey("bridge", action=lambda _scope: self._toggle_hotkey_product())
+            # Dedicated key per product: Ctrl+F8 always controls Nyx and
+            # Ctrl+F7 always controls Nyxify — no shared key, no dashboard-tab
+            # dependent target, so stopping one product can never start the other.
+            start_product_hotkeys({
+                "f8": ("nyx", lambda _scope: self._toggle_product("nyx")),
+                "f7": ("nyxify", lambda _scope: self._toggle_product("nyxify")),
+            })
         except Exception as exc:
-            log(f"Ctrl+F8 stop/start hotkey unavailable: {exc}")
+            log(f"Ctrl+F7/F8 stop/start hotkeys unavailable: {exc}")
 
     def _bridge_actions(self) -> dict:
         return {
@@ -176,14 +181,20 @@ class BridgeApp:
         }
 
     def _action_hotkey_product(self, payload=None) -> dict:
-        product = str((payload or {}).get("product") or "").strip().lower()
-        if product not in {"nyx", "nyxify"}:
-            return {"ok": False, "error": "Hotkey product must be nyx or nyxify."}
-        self._hotkey_product = product
-        return {"ok": True, "product": product}
+        # Kept only so older cached dashboards calling this endpoint don't get an
+        # error. Hotkeys are fixed now: Ctrl+F8 = Nyx, Ctrl+F7 = Nyxify.
+        return {
+            "ok": True,
+            "message": "Hotkeys are fixed per product: Ctrl+F8 controls Nyx, Ctrl+F7 controls Nyxify.",
+        }
 
-    def _toggle_hotkey_product(self, _scope=None) -> dict:
-        product = str(getattr(self, "_hotkey_product", "nyx") or "nyx").strip().lower()
+    def _toggle_product(self, product) -> dict:
+        """Hotkey action: stop ``product`` if it is active, else start it.
+
+        Stop goes through the same controller.stop() the dashboard Stop button
+        uses (full process-tree kill via the supervisor), so the hotkey stops the
+        runner exactly as the button does."""
+        product = str(product or "").strip().lower()
         if product not in {"nyx", "nyxify"}:
             product = "nyx"
 
@@ -210,7 +221,7 @@ class BridgeApp:
         result["action"] = action
         result["product"] = product
         result.setdefault("message", f"{product} {action} requested.")
-        log(f"Ctrl+F8 {action} {product}: {result.get('message')}")
+        log(f"Hotkey {action} {product}: {result.get('message')}")
         return result
 
     def _action_adspower_test(self, payload=None) -> dict:

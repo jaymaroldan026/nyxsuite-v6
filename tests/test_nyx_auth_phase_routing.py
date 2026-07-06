@@ -54,7 +54,7 @@ def _run(last_result):
         return (False, last_result)
 
     with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
-         mock.patch.object(task_runner, "_get_nyxify_hold_reason", lambda profile_id: ""):
+         mock.patch.object(task_runner, "_get_nyxify_hold_reason", lambda profile_id, nyx_task=None: ""):
         asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
     return store
 
@@ -86,13 +86,16 @@ class AuthPhaseRoutingTests(unittest.TestCase):
         store = _FakeStore()
         task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
         run_calls = []
+        flush_calls = []
 
         async def fake_run_profile_task(*args, **kwargs):
             run_calls.append(args)
             return (True, "normal")
 
         with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
-             mock.patch.object(task_runner, "_get_nyxify_hold_reason", lambda profile_id: "waiting_for_nyxify_success"):
+             mock.patch("core.runner_flags.nyx_request_flush", lambda: flush_calls.append(1)), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: "waiting_for_nyxify_success"):
             asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
 
         self.assertEqual(run_calls, [])
@@ -100,28 +103,89 @@ class AuthPhaseRoutingTests(unittest.TestCase):
         self.assertEqual(len(store.status_calls), 1)
         self.assertEqual(store.status_calls[0]["status"], "PENDING")
         self.assertEqual(store.status_calls[0]["step"], "waiting_for_nyxify_success")
+        # A hold must re-arm the flush latch so the held row is retried on the
+        # next poll even when the queue sits below the start threshold.
+        self.assertEqual(flush_calls, [1])
+
+    def test_nyx_fails_row_when_nyxify_signup_terminally_failed(self):
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
+        run_calls = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            run_calls.append(args)
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: "fail:nyxify_signup_failed"):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(run_calls, [])
+        self.assertEqual(len(store.status_calls), 1)
+        self.assertEqual(store.status_calls[0]["status"], "FAILED")
+        self.assertEqual(store.status_calls[0]["step"], "nyxify_signup_failed")
+
+    def _guard(self, nyxify_row, nyx_task=None, running_signups=False, continuous=True):
+        fake_store = mock.Mock()
+        fake_store.get_task_by_adspower_profile_id.return_value = nyxify_row
+        fake_store.has_running_signups.return_value = running_signups
+
+        with mock.patch.object(task_runner, "NyxifyTaskStore", return_value=fake_store), \
+             mock.patch.object(task_runner, "load_nyxify_config",
+                               return_value={"continuous_mode_enabled": continuous}):
+            return task_runner._get_nyxify_hold_reason("k1abc", nyx_task)
 
     def test_guard_allows_profile_after_nyxify_queued_for_nyx(self):
-        fake_store = mock.Mock()
-        fake_store.get_task_by_adspower_profile_id.return_value = {
-            "status": "DONE",
-            "last_step": "queued_for_nyx",
-        }
-        fake_store.has_inflight_signups.return_value = True
-
-        with mock.patch.object(task_runner, "NyxifyTaskStore", return_value=fake_store):
-            self.assertEqual(task_runner._get_nyxify_hold_reason("k1abc"), "")
+        self.assertEqual(
+            self._guard({"status": "DONE", "last_step": "queued_for_nyx"}), "")
 
     def test_guard_holds_matching_profile_before_nyxify_success(self):
-        fake_store = mock.Mock()
-        fake_store.get_task_by_adspower_profile_id.return_value = {
-            "status": "RUNNING",
-            "last_step": "running_signup",
-        }
-        fake_store.has_inflight_signups.return_value = True
+        self.assertEqual(
+            self._guard({"status": "RUNNING", "last_step": "running_signup"}),
+            "waiting_for_nyxify_success")
 
-        with mock.patch.object(task_runner, "NyxifyTaskStore", return_value=fake_store):
-            self.assertEqual(task_runner._get_nyxify_hold_reason("k1abc"), "waiting_for_nyxify_success")
+    def test_guard_holds_during_fresh_close_bookkeeping(self):
+        from datetime import datetime, timezone
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.assertEqual(
+            self._guard({"status": "DONE", "last_step": "closing_profile", "updated_at": now_iso}),
+            "waiting_for_nyxify_success")
+
+    def test_guard_releases_stale_close_bookkeeping(self):
+        self.assertEqual(
+            self._guard({
+                "status": "DONE",
+                "last_step": "closing_profile",
+                "updated_at": "2020-01-01T00:00:00+00:00",
+            }),
+            "")
+
+    def test_guard_allows_bitmoji_after_post_signup_bookkeeping_failure(self):
+        for step in ("profile_rename_failed", "nyx_handoff_failed", "profile_close_failed"):
+            self.assertEqual(
+                self._guard({"status": "FAILED", "last_step": step}), "", step)
+
+    def test_guard_fails_row_for_pre_signup_failure(self):
+        self.assertEqual(
+            self._guard({"status": "FAILED", "last_step": "creating_adspower_profile"}),
+            "fail:nyxify_signup_failed")
+
+    def test_guard_holds_unmatched_young_row_only_while_signups_running(self):
+        from datetime import datetime, timezone
+
+        young = {"created_at": datetime.now(timezone.utc).isoformat()}
+        self.assertEqual(
+            self._guard(None, nyx_task=young, running_signups=True),
+            "waiting_for_nyxify_profile_sync")
+        # Queued-but-not-running signups cannot have created an unmatched
+        # profile — the guard must not hold the whole Nyx queue for them.
+        self.assertEqual(self._guard(None, nyx_task=young, running_signups=False), "")
+
+    def test_guard_releases_unmatched_row_after_sync_window(self):
+        old = {"created_at": "2020-01-01T00:00:00+00:00"}
+        self.assertEqual(self._guard(None, nyx_task=old, running_signups=True), "")
 
 
 if __name__ == "__main__":

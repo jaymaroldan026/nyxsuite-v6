@@ -1,16 +1,23 @@
-"""Global stop/start hotkey for the Nyx Suite.
+"""Global stop/start hotkeys for the Nyx Suite.
 
-A single system-wide **Ctrl+F8** toggles the selected runner through the same
-Start/Stop actions the dashboard uses. It fires even while the AdsPower window
-has focus because it is a global keyboard hook (``pynput``).
+Two system-wide hotkeys, one per product, each toggling its runner through the
+same Start/Stop actions the dashboard uses:
+
+- **Ctrl+F8** — Nyx (Bitmoji runner)
+- **Ctrl+F7** — Nyxify (profile-creation runner)
+
+They fire even while the AdsPower window has focus because they are a global
+keyboard hook (``pynput``). Each key always controls its own product, so
+stopping Nyxify never depends on which dashboard tab was last viewed and can
+never accidentally start Nyx instead.
 
 Why a raw ``keyboard.Listener`` and not ``pynput.keyboard.GlobalHotKeys``:
 ``GlobalHotKeys`` was verified to **never fire** on this setup (the raw hook sees
 the keys, but the hotkey matcher does not), which is why the first version was
-silent. We detect Ctrl+F8 ourselves on a raw listener (proven to fire) with a
+silent. We detect Ctrl+F7/F8 ourselves on a raw listener (proven to fire) with a
 short debounce against key auto-repeat.
 
-The bridge owns the listener so Ctrl+F8 can start a stopped runner too. A
+The bridge owns the listener so a hotkey can start a stopped runner too. A
 distinct built-in tone plays per action (low descending double-beep = stopped,
 higher rising double-beep = started) so you hear that the key was caught — no
 asset files.
@@ -33,16 +40,23 @@ _listener = None
 _listener_lock = threading.Lock()
 
 
-def start_stop_hotkey(scope: str = "all", action=None):
-    """Start the global Ctrl+F8 listener on a daemon thread (idempotent).
+def start_product_hotkeys(bindings):
+    """Start ONE global listener that dispatches per-key actions (idempotent).
 
-    ``scope`` is used only for log messages. ``action`` is an optional callback
-    that receives ``scope`` and returns a dict with ``action`` set to
-    ``"start"`` or ``"stop"``.
+    ``bindings`` maps a key name (``"f7"``/``"f8"``) to ``(scope, action)``:
+    ``scope`` names the product for log messages, ``action`` is a callback that
+    receives ``scope`` and returns a dict with ``action`` set to ``"start"`` or
+    ``"stop"``. Every binding requires Ctrl held.
 
     Best-effort: if ``pynput`` is missing or the OS blocks the hook it logs a
     warning and returns ``None`` — the dashboard/tray controls are unaffected."""
     global _listener
+    normalized = {}
+    for key_name, (scope, action) in (bindings or {}).items():
+        normalized[str(key_name).strip().lower()] = (str(scope or "runner"), action)
+    if not normalized:
+        return None
+
     with _listener_lock:
         if _listener is not None:
             return _listener
@@ -50,22 +64,35 @@ def start_stop_hotkey(scope: str = "all", action=None):
             from pynput import keyboard
         except Exception as exc:
             logger.warning(
-                f"Global stop/start hotkey unavailable (pynput not installed?): {exc}")
+                f"Global stop/start hotkeys unavailable (pynput not installed?): {exc}")
             return None
         try:
             ctrl_keys = {keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r}
-            state = {"ctrl": False, "last": 0.0}
+            key_map = {}
+            for key_name, entry in normalized.items():
+                key_obj = getattr(keyboard.Key, key_name, None)
+                if key_obj is None:
+                    logger.warning(f"Unknown hotkey key name {key_name!r}; skipped.")
+                    continue
+                key_map[key_obj] = (key_name, entry)
+            if not key_map:
+                return None
+
+            state = {"ctrl": False, "last": {}}
 
             def on_press(key):
                 if key in ctrl_keys:
                     state["ctrl"] = True
                     return
-                if key == keyboard.Key.f8 and state["ctrl"]:
-                    now = time.monotonic()
-                    if now - state["last"] < _DEBOUNCE_SECONDS:
-                        return
-                    state["last"] = now
-                    handle_start_stop_hotkey(scope, action)
+                entry = key_map.get(key)
+                if entry is None or not state["ctrl"]:
+                    return
+                key_name, (scope, action) = entry
+                now = time.monotonic()
+                if now - state["last"].get(key_name, 0.0) < _DEBOUNCE_SECONDS:
+                    return
+                state["last"][key_name] = now
+                handle_start_stop_hotkey(scope, action, label=f"Ctrl+{key_name.upper()}")
 
             def on_release(key):
                 if key in ctrl_keys:
@@ -75,11 +102,19 @@ def start_stop_hotkey(scope: str = "all", action=None):
             lst.daemon = True
             lst.start()
             _listener = lst
-            logger.info(f"Global stop/start hotkey active: Ctrl+F8 (scope={scope}).")
+            labels = ", ".join(
+                f"Ctrl+{name.upper()}={scope}" for name, (scope, _a) in sorted(normalized.items())
+            )
+            logger.info(f"Global stop/start hotkeys active: {labels}.")
             return lst
         except Exception as exc:
-            logger.warning(f"Could not start the global stop/start hotkey: {exc}")
+            logger.warning(f"Could not start the global stop/start hotkeys: {exc}")
             return None
+
+
+def start_stop_hotkey(scope: str = "all", action=None):
+    """Legacy single-hotkey entry point: Ctrl+F8 only (kept for compatibility)."""
+    return start_product_hotkeys({"f8": (scope, action)})
 
 
 def stop_hotkey():
@@ -93,11 +128,11 @@ def stop_hotkey():
             _listener = None
 
 
-def handle_start_stop_hotkey(scope: str, action=None):
+def handle_start_stop_hotkey(scope: str, action=None, label: str = "Ctrl+F8"):
     """Run the configured hotkey action and play the matching tone."""
     try:
         if action is None:
-            return _stop_current_process(scope)
+            return _stop_current_process(scope, label=label)
 
         result = action(scope)
         if not isinstance(result, dict):
@@ -107,9 +142,9 @@ def handle_start_stop_hotkey(scope: str, action=None):
         product = str(result.get("product") or scope or "runner").strip()
         message = str(result.get("message") or "").strip()
         if message:
-            logger.info(f"Ctrl+F8: {message}")
+            logger.info(f"{label}: {message}")
         else:
-            logger.info(f"Ctrl+F8: {action_name} {product}.")
+            logger.info(f"{label}: {action_name} {product}.")
 
         _play_async(_play_start_tone if action_name == "start" else _play_stop_tone)
         return result
@@ -118,10 +153,10 @@ def handle_start_stop_hotkey(scope: str, action=None):
         return {"ok": False, "error": str(exc)}
 
 
-def _stop_current_process(scope: str):
+def _stop_current_process(scope: str, label: str = "Ctrl+F8"):
     """Legacy fallback for direct runner launches without a bridge callback."""
     try:
-        logger.info(f"Ctrl+F8: stopping {scope}.")
+        logger.info(f"{label}: stopping {scope}.")
         _play_async(_play_stop_tone)
         # Small delay so the tone plays before the process exits
         time.sleep(0.3)

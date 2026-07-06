@@ -331,6 +331,30 @@ def stop_process_tree(pid):
             return False
 
 
+def force_kill_process_tree(pid):
+    """SIGKILL escalation for a process (group) that survived stop_process_tree.
+
+    Windows' ``taskkill /T /F`` is already forceful, so re-running it is the
+    escalation there; on POSIX this sends SIGKILL to the process group (falling
+    back to the single pid) for runners stuck in a call that swallowed SIGTERM."""
+    if not pid:
+        return False
+
+    if os.name == "nt":
+        return stop_process_tree(pid)
+
+    try:
+        process_group_id = os.getpgid(int(pid))
+        os.killpg(process_group_id, signal.SIGKILL)
+        return True
+    except Exception:
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+            return True
+        except Exception:
+            return False
+
+
 def start_background_process(command, cwd, stdout_path, stderr_path, env=None):
 
     ensure_logs_dir()

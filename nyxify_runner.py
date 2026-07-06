@@ -1442,14 +1442,19 @@ async def process_task(task, store, adspower):
                 if await _rename_final_profile_if_pending("before Nyx handoff"):
                     store.update_task_state(task_id, last_step=last_step)
                 else:
-                    last_step = "profile_rename_failed"
-                    store.update_task_state(task_id, last_step=last_step, error=completion_error)
+                    # The rename is AdsPower bookkeeping only — the Snapchat
+                    # account already exists. Record the problem (visible on the
+                    # row) but do NOT block the id push or the Nyx handoff below:
+                    # Bitmoji creation must continue once the account is real.
+                    store.update_task_state(
+                        task_id, last_step="profile_rename_failed", error=completion_error
+                    )
 
             if (
                 push_adspower_id_enabled
                 and last_step == "signup_complete"
                 and final_username_applied
-                and final_profile_renamed
+                and (final_profile_renamed or continuous_mode_enabled)
             ):
                 profile_id_value = str(created.get("profile_id") or "").strip()
                 row_key_value = str(task.get("row_key") or "").strip()
@@ -1465,7 +1470,6 @@ async def process_task(task, store, adspower):
                 continuous_mode_enabled
                 and last_step == "signup_complete"
                 and final_username_applied
-                and final_profile_renamed
             ):
                 profile_id_value = str(created.get("profile_id") or "").strip()
                 handoff_model = model_tag or str(task.get("model") or "").strip()
@@ -1496,18 +1500,6 @@ async def process_task(task, store, adspower):
         if completion_status != "DONE" and not completion_error:
             completion_error = "Signup did not reach the Snapchat welcome page with a final username."
 
-        store.update_task_state(
-            task_id,
-            status=completion_status,
-            last_step=last_step,
-            error=completion_error,
-            adspower_profile_id=created.get("profile_id"),
-            adspower_name=final_adspower_name or str(created.get("name") or "").strip(),
-            adspower_group=adspower_group,
-            tags=tags,
-        )
-        if signup_completed:
-            _play_completion_sound()
         close_profile_id = str(created.get("profile_id") or "").strip()
         close_profile_after_completion = bool(
             close_profile_id
@@ -1516,6 +1508,26 @@ async def process_task(task, store, adspower):
             and final_username_applied
             and (final_profile_renamed or final_profile_rename_pending)
         )
+        # While the close+rename bookkeeping (in the finally block) is still to
+        # run, publish the row as DONE/"closing_profile" instead of the ready
+        # step: the Nyx guard holds on it, so Nyx never opens/attaches to this
+        # profile in the middle of our close — that race is what killed fresh
+        # Bitmoji runs with manual_terminate. The step becomes "profile_closed"
+        # (or "profile_close_failed") once the bookkeeping finishes.
+        stored_last_step = "closing_profile" if close_profile_after_completion else last_step
+
+        store.update_task_state(
+            task_id,
+            status=completion_status,
+            last_step=stored_last_step,
+            error=completion_error,
+            adspower_profile_id=created.get("profile_id"),
+            adspower_name=final_adspower_name or str(created.get("name") or "").strip(),
+            adspower_group=adspower_group,
+            tags=tags,
+        )
+        if signup_completed:
+            _play_completion_sound()
         if close_profile_id and not close_profile_after_completion:
             logger.info(
                 f"Task {task_id}: leaving AdsPower profile {close_profile_id} open because final setup "
@@ -1629,6 +1641,13 @@ async def process_task(task, store, adspower):
                 store.update_task_state(task_id, last_step="profile_closed")
             except Exception as exc:
                 logger.warning(f"Task {task_id}: could not close AdsPower profile {close_profile_id}: {exc}")
+                # The profile is still open — record it so the Nyx guard stops
+                # holding (Nyx attaches to the open browser directly) instead of
+                # waiting for a "profile_closed" that will never come.
+                try:
+                    store.update_task_state(task_id, last_step="profile_close_failed")
+                except Exception:
+                    pass
 
 
 async def main():

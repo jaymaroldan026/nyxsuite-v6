@@ -186,6 +186,24 @@ class NyxifyTaskStore:
         except Exception:
             return False
 
+    def has_running_signups(self):
+        """True if any Nyxify signup is actively RUNNING right now.
+
+        The id-sync gap the Nyx guard protects against (profile created in the
+        AdsPower GUI but its id not yet written anywhere) only exists while a
+        signup task is RUNNING — queued PENDING rows haven't created a profile
+        yet, so they cannot explain an unmatched Nyx profile and must not hold
+        the whole Nyx queue.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = 'RUNNING'"
+            ).fetchone()
+        try:
+            return int(row[0]) > 0 if row else False
+        except Exception:
+            return False
+
     def get_pending_tasks(self):
         with self._connect() as conn:
             rows = conn.execute(

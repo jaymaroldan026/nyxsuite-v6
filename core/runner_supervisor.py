@@ -29,6 +29,7 @@ from core.process_utils import (
     clear_pid_file,
     find_process_ids_by_names,
     find_python_process_ids,
+    force_kill_process_tree,
     is_pid_running,
     read_pid_file,
     resolve_python_executable,
@@ -36,6 +37,10 @@ from core.process_utils import (
     stop_process_tree,
     write_pid_file,
 )
+
+# How long stop() waits for a runner to die after SIGTERM/taskkill before
+# escalating to a force kill — keeps the hotkey/dashboard Stop truly total.
+STOP_CONFIRM_TIMEOUT_SECONDS = 3.0
 
 ORPHAN_SCAN_TTL_SECONDS = 3.0
 
@@ -157,7 +162,11 @@ class ManagedRunner:
         return process.pid, True
 
     def stop(self) -> bool:
-        """Kill the runner process tree. Returns True if anything was stopped."""
+        """Kill the runner process tree. Returns True if anything was stopped.
+
+        Confirms every candidate actually died; a runner that survives SIGTERM
+        (e.g. wedged inside a blocking GUI/browser call) is force-killed so a
+        Stop — from the dashboard button or the global hotkey — is always total."""
         candidates: List[int] = []
         pid = self.resolve_pid()
         if pid:
@@ -177,6 +186,19 @@ class ManagedRunner:
                 stopped = True
             except Exception:
                 continue
+
+        deadline = time.monotonic() + STOP_CONFIRM_TIMEOUT_SECONDS
+        survivors = [c for c in candidates if is_pid_running(c)]
+        while survivors and time.monotonic() < deadline:
+            time.sleep(0.15)
+            survivors = [c for c in candidates if is_pid_running(c)]
+        for survivor in survivors:
+            try:
+                force_kill_process_tree(survivor)
+                stopped = True
+            except Exception:
+                continue
+
         clear_pid_file(self.spec.pid_file)
         return stopped
 

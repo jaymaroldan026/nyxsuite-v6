@@ -256,14 +256,36 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adspower.closed, ["k1new"])
         self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
 
-    async def test_continuous_mode_rename_failure_does_not_close_or_handoff(self):
+    async def test_continuous_mode_rename_failure_still_hands_off_to_nyx(self):
+        # The rename is AdsPower bookkeeping only. Once the Snapchat account is
+        # real (welcome page confirmed the username), a rename hiccup must not
+        # block the Nyx handoff — Bitmoji creation continues, the rename problem
+        # stays visible on the row's error text.
         store, adspower, handoffs = await self._run_task(True, rename_error=RuntimeError("rename unavailable"))
 
         self.assertEqual(adspower.closed, [])
         self.assertEqual(adspower.renamed, [])
-        self.assertEqual(handoffs, [])
+        self.assertEqual(handoffs, [("k1new", "Clea")])
         self.assertTrue(any(update.get("last_step") == "profile_rename_failed" for _task_id, update in store.updates))
         self.assertTrue(any("rename unavailable" in update.get("error", "") for _task_id, update in store.updates))
+        self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
+        self.assertTrue(any(update.get("status") == "DONE" for _task_id, update in store.updates))
+
+    async def test_close_path_publishes_closing_profile_before_profile_closed(self):
+        # Non-continuous completion must not publish the ready step while the
+        # close+rename bookkeeping is still running — the Nyx guard holds on
+        # "closing_profile" so Nyx never opens the profile mid-close.
+        store, _adspower, _handoffs = await self._run_task(False)
+
+        steps = [update.get("last_step") for _task_id, update in store.updates if update.get("last_step")]
+        self.assertIn("closing_profile", steps)
+        self.assertIn("profile_closed", steps)
+        self.assertLess(steps.index("closing_profile"), steps.index("profile_closed"))
+        self.assertNotIn("signup_complete", steps)
+
+        done_updates = [update for _task_id, update in store.updates if update.get("status") == "DONE"]
+        self.assertTrue(done_updates)
+        self.assertEqual(done_updates[-1].get("last_step"), "closing_profile")
 
     async def test_otp_without_welcome_username_does_not_complete_or_handoff(self):
         store, adspower, handoffs = await self._run_task(
