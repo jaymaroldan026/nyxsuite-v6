@@ -535,6 +535,8 @@ class BridgeApp:
         self._tray_icon = icon
         # macOS: show only the menu-bar icon, never a Python rocket in the Dock.
         self._hide_macos_dock()
+        # Live color-dot status: repaint the menu-bar dot as Nyx/Nyxify start/stop.
+        self._start_tray_status_updater()
         # Dashboard opens only on demand (extension button / tray "Open Dashboard").
         if os.getenv("NYXSUITE_OPEN_ON_START") == "1":
             self.open_dashboard()
@@ -554,47 +556,134 @@ class BridgeApp:
 
         hide_macos_dock_icon(log)
 
+    # ---- tray status indicator (color dot per running product) --------------
+    # Distinct brand colors: Nyx = violet, Nyxify = cyan. Both running shows a
+    # split dot; stopped shows a faint hollow ring (near-invisible but keeps a
+    # clickable menu-bar target). Works on macOS and Windows.
+    _NYX_DOT_COLOR = (139, 92, 246, 255)      # violet
+    _NYXIFY_DOT_COLOR = (6, 182, 212, 255)    # cyan
+
+    def _nyx_running(self) -> bool:
+        try:
+            return bool(self.supervisor.is_running("nyx"))
+        except Exception:
+            return False
+
+    def _nyxify_running(self) -> bool:
+        try:
+            return bool(self.supervisor.is_running("nyxify"))
+        except Exception:
+            return False
+
+    def _make_status_dot(self, nyx_running: bool, nyxify_running: bool):
+        """Return a PIL color-dot image for the current running state."""
+        from PIL import Image, ImageDraw
+
+        size = 44
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        pad = 8
+        box = [pad, pad, size - pad, size - pad]
+        if nyx_running and nyxify_running:
+            # Split dot: left half = Nyx, right half = Nyxify.
+            draw.pieslice(box, 90, 270, fill=self._NYX_DOT_COLOR)
+            draw.pieslice(box, 270, 450, fill=self._NYXIFY_DOT_COLOR)
+        elif nyx_running:
+            draw.ellipse(box, fill=self._NYX_DOT_COLOR)
+        elif nyxify_running:
+            draw.ellipse(box, fill=self._NYXIFY_DOT_COLOR)
+        else:
+            # Stopped: barely-there hollow ring — effectively invisible in the
+            # menu bar but still a clickable target.
+            draw.ellipse(box, outline=(150, 150, 150, 70), width=3)
+        return img
+
+    def _tray_title(self, nyx_running: bool, nyxify_running: bool) -> str:
+        parts = []
+        if nyx_running:
+            parts.append("Nyx running")
+        if nyxify_running:
+            parts.append("Nyxify running")
+        return "Nyx Suite — " + (", ".join(parts) if parts else "idle")
+
+    def _start_tray_status_updater(self):
+        """Poll the runner state and repaint the dot when it changes."""
+        def loop():
+            last = None
+            while not self._stop.is_set():
+                try:
+                    state = (self._nyx_running(), self._nyxify_running())
+                    icon = self._tray_icon
+                    if icon is not None and state != last:
+                        icon.icon = self._make_status_dot(*state)
+                        icon.title = self._tray_title(*state)
+                        try:
+                            icon.update_menu()
+                        except Exception:
+                            pass
+                        last = state
+                except Exception:
+                    pass
+                self._stop.wait(2.0)
+
+        threading.Thread(target=loop, daemon=True).start()
+
     def _build_tray_icon(self):
         if os.getenv("NYXSUITE_NO_TRAY") == "1":
             return None  # headless/server mode: serve the dashboard without a tray icon
         try:
             import pystray
-            from core.ui_shared import load_tray_image
         except Exception:
             return None
-        image = None
+
         try:
-            image = load_tray_image()
+            image = self._make_status_dot(self._nyx_running(), self._nyxify_running())
         except Exception:
-            image = None
+            # PIL unavailable / draw failed — fall back to the bundled icon.
+            try:
+                from core.ui_shared import load_tray_image
+
+                image = load_tray_image()
+            except Exception:
+                image = None
         if image is None:
             return None
 
-        def item(label, fn):
-            return pystray.MenuItem(label, lambda icon, _it=None: self._safe(fn, label))
+        def item(label, fn, **kwargs):
+            return pystray.MenuItem(label, lambda icon, _it=None: self._safe(fn, label), **kwargs)
 
-        def product_menu(controller, name):
+        def status_line(name, running_fn):
+            # Disabled header row that shows the live state at a glance.
             return pystray.MenuItem(
-                name,
-                pystray.Menu(
-                    item("Start", lambda: controller.start({})),
-                    item("Stop", lambda: controller.stop({})),
-                    item("Restart", lambda: (controller.stop({}), controller.start({"force_restart": True}))),
-                ),
+                lambda _i, _n=name, _f=running_fn: f"{_n}:  {'● running' if _f() else '○ stopped'}",
+                None,
+                enabled=False,
             )
 
+        # Flat menu: both products' Start and Stop are visible directly (no
+        # submenu to hover into). Start is enabled only when stopped, Stop only
+        # when running, so the actionable control is obvious.
         menu = pystray.Menu(
             pystray.MenuItem("Open Dashboard", lambda icon, _it=None: self.open_dashboard()),
             pystray.Menu.SEPARATOR,
-            product_menu(self.nyx, "Nyx"),
-            product_menu(self.nyxify, "Nyxify"),
+            status_line("Nyx", self._nyx_running),
+            item("Start Nyx", lambda: self.nyx.start({}), enabled=lambda _i: not self._nyx_running()),
+            item("Stop Nyx", lambda: self.nyx.stop({}), enabled=lambda _i: self._nyx_running()),
+            pystray.Menu.SEPARATOR,
+            status_line("Nyxify", self._nyxify_running),
+            item("Start Nyxify", lambda: self.nyxify.start({}), enabled=lambda _i: not self._nyxify_running()),
+            item("Stop Nyxify", lambda: self.nyxify.stop({}), enabled=lambda _i: self._nyxify_running()),
             pystray.Menu.SEPARATOR,
             item("Check for Update", lambda: self._bridge_actions()["check_update"]()),
             item("Roll back to previous", lambda: self._bridge_actions()["rollback"]()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._on_exit),
         )
-        return pystray.Icon("nyx_suite", image, "Nyx Suite", menu)
+        return pystray.Icon(
+            "nyx_suite", image,
+            self._tray_title(self._nyx_running(), self._nyxify_running()),
+            menu,
+        )
 
     def _on_exit(self, icon=None, item=None):
         log("Bridge exiting (runners left running).")

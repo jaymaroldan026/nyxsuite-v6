@@ -19,6 +19,16 @@ from core.nyxify_task_store import NyxifyTaskStore
 _ENV_START_CONCURRENCY = os.getenv("PROFILE_START_CONCURRENCY")
 PROFILE_START_STAGGER_SECONDS = max(0.0, float(os.getenv("PROFILE_START_STAGGER_SECONDS", "0.15")))
 _TERMINAL_CLOSE_RESULTS = {"already_has_bitmoji", "banned_snap", "proxy_error"}
+# Results that must never be auto-retried at the profile level: a real account
+# state (banned), a dead proxy, the browser being closed out from under us, or a
+# success where Bitmoji already exists. Everything else (a generic step failure —
+# e.g. a category/trait panel that didn't render in time) is transient and
+# succeeds on a fresh re-run, which is exactly the manual "reset failed → rerun"
+# workaround, so we do it automatically.
+_TERMINAL_RUN_RESULTS = {"already_has_bitmoji", "banned_snap", "proxy_error", "manual_terminate"}
+# Extra whole-profile attempts after the first for a generic Bitmoji failure.
+NYX_BITMOJI_PROFILE_RETRIES = max(0, int(os.getenv("NYX_BITMOJI_PROFILE_RETRIES", "2")))
+NYX_BITMOJI_RETRY_BACKOFF_SECONDS = max(0.0, float(os.getenv("NYX_BITMOJI_RETRY_BACKOFF_SECONDS", "2.0")))
 # Bind these to the *running* loop, not the import-time loop. On Python 3.9 a
 # module-level asyncio primitive binds to the loop present at import, which is a
 # different loop than the one asyncio.run(main()) creates -> "got Future attached
@@ -357,16 +367,43 @@ async def process_queued_task(task, store, adspower, logger):
         except Exception as callback_error:
             logger.warning(f"Could not update task step for {profile_id}: {callback_error}")
 
-    success, last_result = await run_profile_task(
-        profile_id,
-        model,
-        logger,
-        adspower=adspower,
-        outfit_seed=outfit_seed,
-        progress_callback=progress_callback,
-        manual_queue_mode=manual_queue_mode,
-        owns_run=lambda: store.is_current_run(task_id, run_token),
-    )
+    # Whole-profile auto-retry: a generic Bitmoji step failure (a category or
+    # trait panel that didn't render in time) almost always succeeds on a fresh
+    # re-run — the same thing a user does by hand with "reset failed → rerun".
+    # Do it automatically before marking the row FAILED. Terminal results
+    # (banned / dead proxy / browser closed / already-has-bitmoji) break out
+    # immediately and are never retried.
+    max_attempts = 1 + NYX_BITMOJI_PROFILE_RETRIES
+    success, last_result = False, "normal"
+    for attempt in range(1, max_attempts + 1):
+        # Bail if the row was re-claimed by a newer run while we were working.
+        if not store.is_current_run(task_id, run_token):
+            logger.info(f"Skipped stale/again-claimed task for profile {profile_id} before attempt {attempt}")
+            return
+
+        success, last_result = await run_profile_task(
+            profile_id,
+            model,
+            logger,
+            adspower=adspower,
+            outfit_seed=outfit_seed,
+            progress_callback=progress_callback,
+            manual_queue_mode=manual_queue_mode,
+            owns_run=lambda: store.is_current_run(task_id, run_token),
+        )
+
+        if success or last_result in _TERMINAL_RUN_RESULTS:
+            break
+
+        if attempt < max_attempts:
+            logger.warning(
+                f"Bitmoji attempt {attempt}/{max_attempts} failed for profile {profile_id} "
+                f"at step '{last_step_seen['value']}' (last_result={last_result}); "
+                "retrying the whole profile automatically."
+            )
+            store.update_last_step(task_id, "retrying_bitmoji_flow", run_token=run_token)
+            if NYX_BITMOJI_RETRY_BACKOFF_SECONDS > 0:
+                await asyncio.sleep(NYX_BITMOJI_RETRY_BACKOFF_SECONDS)
 
     if success or last_result == "already_has_bitmoji":
         completed_step = "already_has_bitmoji" if last_result == "already_has_bitmoji" else "completed"

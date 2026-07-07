@@ -140,6 +140,33 @@ class _GuiLock:
 _GUI_LOCK = _GuiLock()
 
 
+# Process-wide record of every profile id a create has already resolved. Profile
+# id discovery excludes these so two parallel Nyxify creates can NEVER be handed
+# the same id — the root cause of "two profiles merged onto one" and the same
+# AdsPower id written into two SnapBoard rows. A transient a11y mis-read of the
+# serial watermark used to make discovery return the newest row in the view,
+# which could be another task's just-created profile; excluding assigned ids
+# (and preferring ids not present before the create) makes that impossible.
+_ASSIGNED_IDS_LOCK = threading.Lock()
+_ASSIGNED_PROFILE_IDS: set = set()
+
+
+def _remember_assigned_id(profile_id: str) -> None:
+    pid = str(profile_id or "").strip()
+    if not pid:
+        return
+    with _ASSIGNED_IDS_LOCK:
+        _ASSIGNED_PROFILE_IDS.add(pid)
+
+
+def _is_assigned_id(profile_id: str) -> bool:
+    pid = str(profile_id or "").strip()
+    if not pid:
+        return False
+    with _ASSIGNED_IDS_LOCK:
+        return pid in _ASSIGNED_PROFILE_IDS
+
+
 def _serialized(fn):
     """Run a controller method under the global (cross-process) GUI lock."""
     @functools.wraps(fn)
@@ -798,7 +825,13 @@ class AdsPowerUIController:
             before_max = self._max_serial_in_view()
         else:
             before_max = self._max_serial()
-        logger.debug(f"Serial watermark before create: {before_max}")
+        # Snapshot the ids already visible before we create. The just-created
+        # profile is the id that appears afterward but is NOT in this set — a
+        # signal that does not depend on the serial watermark being read
+        # correctly, so a transient a11y glitch can't make us return another
+        # task's profile.
+        before_ids = self._visible_profile_ids()
+        logger.debug(f"Serial watermark before create: {before_max}; {len(before_ids)} ids in view")
 
         self._open_new_profile_form()
         self._switch_tab("General")
@@ -829,9 +862,10 @@ class AdsPowerUIController:
         # exceeds the watermark — no profile-id search. Legacy path re-searches.
         if self.config.assume_presearch:
             self._ensure_temp_filter(name)
-            profile_id = self._wait_for_new_profile_id_in_view(name, before_max)
+            profile_id = self._wait_for_new_profile_id_in_view(name, before_max, before_ids)
         else:
-            profile_id = self._wait_for_new_profile_id(name, before_max)
+            profile_id = self._wait_for_new_profile_id(name, before_max, before_ids)
+        _remember_assigned_id(profile_id)
         logger.info(f"AdsPower UI: created profile {profile_id or '<unknown>'} ({name!r}).")
         return {
             "profile_id": profile_id,
@@ -1288,63 +1322,84 @@ class AdsPowerUIController:
                 return rows
         return []
 
-    def _wait_for_new_profile_id(self, name: str, before_max: int) -> str:
-        """Poll until the just-created profile (name matches, serial > the
-        pre-create watermark) appears; return its profile id."""
-        target = name.strip().lower()
+    def _visible_profile_ids(self) -> set:
+        """Set of profile ids currently visible in the Profiles list."""
+        try:
+            return {r[1] for r in self._scan_rows() if r[1]}
+        except Exception:
+            return set()
+
+    def _pick_created_id(self, rows, before_max, before_ids, name=""):
+        """Choose the just-created profile's id from scanned ``rows``.
+
+        Priority, each excluding ids already handed to another create
+        (``_is_assigned_id``) so two parallel creates can never collide:
+          1. an id that was NOT visible before this create (the strongest,
+             glitch-proof signal that it is the new row),
+          2. else a row whose serial exceeds the pre-create watermark,
+          3. else nothing (caller keeps polling / falls back).
+        Within a tier an exact temp-name match is preferred (disambiguates
+        another differently-named fresh row); highest serial breaks remaining
+        ties (newest = just created).
+        """
+        before_ids = before_ids or set()
+        target = str(name or "").strip().lower()
+        usable = [r for r in rows if r[1] and not _is_assigned_id(r[1])]
+
+        def _choose(candidates):
+            if not candidates:
+                return ""
+            if target:
+                named = [r for r in candidates if r[2].strip().lower() == target]
+                if named:
+                    candidates = named
+            return sorted(candidates, reverse=True)[0][1]
+
+        new_ids = [r for r in usable if r[1] not in before_ids]
+        pid = _choose(new_ids)
+        if pid:
+            return pid
+
+        return _choose([r for r in usable if r[0] > before_max])
+
+    def _wait_for_new_profile_id(self, name: str, before_max: int, before_ids=None) -> str:
+        """Poll until the just-created profile (a newly-appeared / above-watermark
+        id, not one already assigned to another create) appears; return its id."""
         deadline = time.time() + self.config.create_id_timeout
         while time.time() < deadline:
-            visible = [
-                r for r in self._scan_rows()
-                if r[2].strip().lower() == target and r[1] and r[0] > before_max
-            ]
-            if visible:
-                visible.sort(reverse=True)
-                return visible[0][1]
-            rows = self._rows_for_name(name)
-            fresh = [r for r in rows if r[0] > before_max]
-            if fresh:
-                fresh.sort(reverse=True)            # newest serial = just created
-                return fresh[0][1]
-            if rows:                                # name matched but watermark race
-                rows.sort(reverse=True)
-                return rows[0][1]
+            pid = self._pick_created_id(self._scan_rows(), before_max, before_ids, name)
+            if pid:
+                return pid
+            pid = self._pick_created_id(self._rows_for_name(name), before_max, before_ids, name)
+            if pid:
+                return pid
             time.sleep(1.2)
         logger.warning(f"Could not resolve new profile id for name {name!r}.")
         return ""
 
-    def _wait_for_new_profile_id_in_view(self, name: str, before_max: int) -> str:
+    def _wait_for_new_profile_id_in_view(self, name: str, before_max: int, before_ids=None) -> str:
         """Resolve the just-created profile id by scanning the CURRENT filtered
         view — no fresh search. The operator keeps a standing 'Name contains
         <temp>' filter applied, so right after OK the new row simply appears in
-        that view; it is the one whose serial exceeds the pre-create watermark.
+        that view; it is the id that was not present before the create (and is
+        not one already assigned to a concurrent create).
 
         Degrades gracefully: if no fresh row shows up in the current view within
         the timeout (the standing filter wasn't applied), it falls back to ONE
         name search rather than failing the create."""
-        target = name.strip().lower()
         deadline = time.time() + self.config.create_id_timeout
         while time.time() < deadline:
-            rows = self._scan_rows()
-            fresh = [r for r in rows if r[0] > before_max and r[1]]
-            if fresh:
-                # The standing filter already restricts to temp-named rows, so
-                # serial > watermark is enough; prefer an exact name match when
-                # the name cells are readable, as a belt-and-braces tiebreak.
-                named = [r for r in fresh if r[2].strip().lower() == target]
-                pick = named or fresh
-                pick.sort(reverse=True)                # highest serial = just created
-                return pick[0][1]
+            pid = self._pick_created_id(self._scan_rows(), before_max, before_ids, name)
+            if pid:
+                return pid
             time.sleep(0.8)
         logger.warning(
             f"No new row appeared in the current view for {name!r}; falling back to a "
             f"one-time name search. Keep the 'Name contains' filter applied in AdsPower "
             f"to avoid this slow path.")
-        rows = self._rows_for_name(name)
-        fresh = [r for r in rows if r[0] > before_max] or rows
-        if fresh:
-            fresh.sort(reverse=True)
-            return fresh[0][1]
+        pid = self._pick_created_id(self._rows_for_name(name), before_max, before_ids, name)
+        if pid:
+            return pid
         logger.warning(f"Could not resolve new profile id for name {name!r}.")
         return ""
 

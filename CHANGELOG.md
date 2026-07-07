@@ -1,5 +1,34 @@
 # Changelog
 
+## 6.0.5 — Auto-retry transient Bitmoji fails, macOS tray redesign, parallel-create dedup
+
+### Bitmoji: auto-retry the whole profile before failing
+- A generic Bitmoji step failure (a category/trait panel that didn't render in
+  time) now re-runs the whole profile automatically before the row is marked
+  FAILED — the same thing users did by hand with "reset failed → rerun", which
+  is why those reruns succeeded. Terminal results (banned / dead proxy / browser
+  closed / already-has-bitmoji) are never retried. Tunable via
+  `NYX_BITMOJI_PROFILE_RETRIES` (default 2 extra attempts) and
+  `NYX_BITMOJI_RETRY_BACKOFF_SECONDS`. Cross-platform (Windows + macOS).
+
+### Nyxify: two parallel creates can no longer merge onto one profile
+- Fixed the race where two parallel profile creations resolved to the **same**
+  AdsPower id — so two signups ran on one profile and the same id was written
+  into two SnapBoard rows. Profile-id discovery now keys off the set of ids
+  present *before* the create and a process-wide assigned-id registry, so it
+  always returns the genuinely-new id and never one already handed to another
+  create. Robust against transient accessibility mis-reads of the serial
+  watermark that used to make it return the newest (other task's) row.
+
+### macOS/Windows tray redesign
+- The menu-bar item is now a **color status dot**, not the app icon: violet when
+  Nyx is running, cyan when Nyxify is running, a split dot when both run, and a
+  faint hollow ring (near-invisible but still clickable) when idle. It repaints
+  live as runners start and stop.
+- The dropdown is flat: **Start/Stop for both Nyx and Nyxify are shown directly**
+  (no submenu to hover into), each with a live "running / stopped" status line,
+  and Start/Stop enable based on the current state. The Dock icon stays hidden.
+
 ## 6.0.4 — Bitmoji completion, warm-up unblock, deleted-profile handling, SnapBoard sign-in
 
 ### Bitmoji: complete every profile (no random stops)
