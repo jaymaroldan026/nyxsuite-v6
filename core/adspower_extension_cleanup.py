@@ -28,6 +28,15 @@ COOKIE_WARMUP_MAX_SITES = max(COOKIE_WARMUP_MIN_SITES, _env_int("NYXIFY_COOKIE_W
 COOKIE_WARMUP_MIN_SECONDS = max(0, _env_int("NYXIFY_COOKIE_WARMUP_MIN_SECONDS", 60))
 COOKIE_WARMUP_MAX_SECONDS = max(COOKIE_WARMUP_MIN_SECONDS, _env_int("NYXIFY_COOKIE_WARMUP_MAX_SECONDS", 120))
 COOKIE_WARMUP_MAX_CONCURRENT_TABS = max(1, _env_int("NYXIFY_COOKIE_WARMUP_MAX_CONCURRENT_TABS", 4))
+# Hard safety cap for a single warm-up site (navigation + browsing + close). A
+# site that hangs past this is force-closed and skipped so warm-up can never
+# stall the run before signup. Generously above the per-site browse budget.
+COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT = max(
+    30, _env_int("NYXIFY_COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT", 90))
+# Absolute cap for the whole warm-up phase, regardless of per-site timing —
+# after this the remaining tabs are dropped and the signup proceeds.
+COOKIE_WARMUP_TOTAL_HARD_TIMEOUT = max(
+    60, _env_int("NYXIFY_COOKIE_WARMUP_TOTAL_HARD_TIMEOUT", 240))
 COOKIE_WARMUP_GOOD_WEBSITES = (
     "https://wikipedia.org/",
     "https://cnn.com/",
@@ -520,7 +529,46 @@ async def open_snapchat_signup(context, logger, profile_id):
 async def _safe_close_page(page):
     try:
         if page is not None and not page.is_closed():
-            await page.close()
+            # run_before_unload=False skips any beforeunload handler, and the
+            # timeout guards against page.close() itself hanging (seen on
+            # Windows when a site holds the renderer busy) — after which the
+            # whole-context cleanup still drops the tab.
+            try:
+                await asyncio.wait_for(page.close(run_before_unload=False), timeout=8)
+            except (asyncio.TimeoutError, TypeError):
+                await asyncio.wait_for(page.close(), timeout=8)
+    except Exception:
+        pass
+
+
+def _auto_dismiss_dialogs(page, logger=None, profile_id="", site_url=""):
+    """Auto-dismiss any JS dialog (beforeunload / alert / confirm / prompt) a
+    warm-up page raises.
+
+    A random-navigation click during warm-up can trigger a ``beforeunload``
+    confirm ("Leave site?") or a modal alert. Left unanswered it blocks every
+    subsequent page call — including ``page.close()`` — so the tab never closes
+    and the signup never proceeds (the reported Windows hang, which manually
+    closing the tab worked around). Dismissing them keeps the page responsive."""
+    def _on_dialog(dialog):
+        try:
+            asyncio.ensure_future(dialog.dismiss())
+        except Exception:
+            try:
+                asyncio.ensure_future(dialog.accept())
+            except Exception:
+                pass
+        if logger:
+            try:
+                logger.debug(
+                    f"Auto-dismissed {dialog.type} dialog during warm-up for "
+                    f"{profile_id} at {site_url}."
+                )
+            except Exception:
+                pass
+
+    try:
+        page.on("dialog", _on_dialog)
     except Exception:
         pass
 
@@ -620,6 +668,9 @@ async def accept_cookie_consent_if_present(page, logger=None, profile_id="", sit
 
 async def _warm_one_cookie_site(context, url, duration_seconds, logger, profile_id):
     page = await context.new_page()
+    # Never let a beforeunload/alert/confirm from a stray navigation click block
+    # the tab (and its close) — the Windows warm-up hang.
+    _auto_dismiss_dialogs(page, logger=logger, profile_id=profile_id, site_url=url)
     try:
         await apply_dark_mode_to_page(page, logger=logger)
     except Exception:
@@ -727,7 +778,19 @@ async def _warm_ads_profile_cookies(context, logger, profile_id):
     async def visit_site(url):
         async with semaphore:
             try:
-                ok = await _warm_one_cookie_site(context, url, seconds_per_site, logger, profile_id)
+                # Hard per-site cap: a site that wedges (unclosable dialog, stuck
+                # renderer) can never hold the warm-up open past this.
+                ok = await asyncio.wait_for(
+                    _warm_one_cookie_site(context, url, seconds_per_site, logger, profile_id),
+                    timeout=COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                if logger:
+                    logger.warning(
+                        f"Cookie warm-up site timed out (hard cap) for {profile_id} at {url}; "
+                        "skipping so signup can proceed."
+                    )
+                return None
             except Exception as exc:
                 if logger:
                     logger.warning(f"Cookie warm-up worker failed for {profile_id} at {url}: {exc}")
@@ -735,8 +798,21 @@ async def _warm_ads_profile_cookies(context, logger, profile_id):
             return url if ok else None
 
     try:
-        results = await asyncio.gather(*(visit_site(url) for url in selected_sites))
-        visited = [url for url in results if url]
+        # Absolute cap for the whole phase: even if several sites hang at once,
+        # warm-up yields to the signup after this. Partial cookies are fine —
+        # warm-up is best-effort priming, never a hard prerequisite.
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(visit_site(url) for url in selected_sites)),
+                timeout=COOKIE_WARMUP_TOTAL_HARD_TIMEOUT,
+            )
+            visited = [url for url in results if url]
+        except asyncio.TimeoutError:
+            if logger:
+                logger.warning(
+                    f"Cookie warm-up hit the total hard cap for {profile_id}; "
+                    "proceeding to signup with whatever cookies were primed."
+                )
     finally:
         for page in list(getattr(context, "pages", []) or []):
             if page not in baseline_pages:
@@ -764,6 +840,7 @@ async def disable_profile_extensions(
     keep_open=True,
     keep_playwright=False,
     open_signup=True,
+    disable_extensions=True,
 ):
     normalized_profile_id = str(profile_id or "").strip()
     if not normalized_profile_id:
@@ -788,6 +865,42 @@ async def disable_profile_extensions(
 
         await maximize_browser_window(browser, logger=logger)
         await apply_dark_mode_preferences(context, logger=logger)
+
+        # The extension turn-off step is now opt-in. When it is skipped we still
+        # do all the browser/context plumbing (open profile, attach CDP, dark
+        # mode, optional signup open) so the account-creation flow is unchanged —
+        # we just leave the profile's extensions exactly as AdsPower configured
+        # them instead of visiting chrome://extensions/ to toggle them off.
+        if not disable_extensions:
+            if logger:
+                logger.info(
+                    f"Skipping AdsPower extension turn-off for {normalized_profile_id} "
+                    "(disabled by config); leaving extensions as configured."
+                )
+            signup_result = (
+                await open_snapchat_signup(context, logger, normalized_profile_id)
+                if open_signup
+                else {}
+            )
+            payload = {
+                "profile_id": normalized_profile_id,
+                "ws_endpoint": ws_endpoint,
+                "disabled_now": [],
+                "already_disabled": [],
+                "missing_toggle": [],
+                "kept_enabled": [],
+                "remaining_enabled": [],
+                "signup_url": signup_result.get("url"),
+                "signup_method": signup_result.get("method"),
+                "signup_page": signup_result.get("page"),
+                "context": context,
+                "playwright_instance": playwright if keep_playwright else None,
+                "success": True,
+                "skipped": True,
+            }
+            if keep_playwright:
+                playwright = None
+            return payload
 
         page = await context.new_page()
         await apply_dark_mode_to_page(page, logger=logger)

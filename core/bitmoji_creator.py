@@ -171,6 +171,11 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         # (e.g. "face_hair_style") instead of a generic "bitmoji_failed".
         self.current_step = ""
         self._progress_callback = None
+        # Kept for mid-flow re-login: the session can drop AFTER the initial
+        # state routing (e.g. during the OAuth bounce), and the waiters need
+        # the credentials to sign back in instead of timing out.
+        self._snapchat_credentials = None
+        self._profile_id = ""
         self.delay_min = float(os.getenv("HUMAN_DELAY_MIN", "0.6"))
         self.delay_max = float(os.getenv("HUMAN_DELAY_MAX", "1.8"))
         self.think_min = float(os.getenv("THINK_DELAY_MIN", "0.2"))
@@ -563,6 +568,34 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
         return "UNKNOWN"
 
+    async def attempt_mid_flow_relogin(self, where=""):
+        """The Snapchat session dropped mid-flow (login page instead of the
+        expected OAuth/editor page). Try the same auto sign-in the initial
+        LOGIN routing uses — with the stored credentials — instead of letting
+        the surrounding waiter spin until its timeout. Returns the post-login
+        state, or None when auto sign-in could not complete (the caller keeps
+        waiting; its deadline still bounds the run)."""
+        credentials = self._snapchat_credentials or {}
+        if not str(credentials.get("password") or "").strip():
+            return None
+        if self.logger:
+            self.logger.info(
+                f"Login page appeared {where or 'mid-flow'} for {self._profile_id or 'profile'}; "
+                "attempting auto sign-in."
+            )
+        try:
+            return await self.try_auto_snapchat_login(
+                self._profile_id or "profile",
+                credentials=credentials,
+                progress_callback=self._progress_callback,
+            )
+        except BannedSnapError:
+            raise
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"Mid-flow auto sign-in attempt failed: {exc}")
+            return None
+
     async def wait_for_post_login_state(self, timeout_seconds=None):
         print("Waiting for Bitmoji redirect...")
 
@@ -573,6 +606,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         max_login_code_retries = 3
         continue_retries = 0
         max_continue_retries = 3
+        relogin_attempts = 0
+        max_relogin_attempts = 2
 
         for _ in range(int(timeout_seconds)):
             await self.wait_if_paused()
@@ -580,6 +615,19 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
             if state == "BANNED":
                 raise BannedSnapError("Snapchat authorization error after login redirect.")
+
+            # Session dropped back to the sign-in page after the redirect —
+            # sign in again instead of spinning until "Timeout after login
+            # redirect".
+            if state == "LOGIN" and relogin_attempts < max_relogin_attempts:
+                relogin_attempts += 1
+                recovered = await self.attempt_mid_flow_relogin("after login redirect")
+                if recovered in ["GENDER", "EDITOR", "ACCOUNT_HOME"]:
+                    print(f"Arrived at: {recovered}")
+                    return recovered
+                if recovered == "CONTINUE":
+                    await self.handle_oauth_continue()
+                continue
 
             if state == "PROXY":
                 # Profile proxy died mid-auth. Wait ~100s (refreshing) for it to
@@ -641,6 +689,7 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         check_index = 0
         gender_retries = 0
         oauth_retries = 0
+        relogin_attempts = 0
 
         while asyncio.get_event_loop().time() < end_time:
             await self.wait_if_paused()
@@ -680,6 +729,18 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 raise
             except Exception:
                 pass
+
+            # Session dropped to the sign-in page while waiting for the editor
+            # — sign in again (bounded) instead of timing out with "Editor
+            # failed to load". Outside the swallowing try so a banned raise
+            # from the login attempt is never lost.
+            if state == "LOGIN" and relogin_attempts < 2:
+                relogin_attempts += 1
+                recovered = await self.attempt_mid_flow_relogin("while waiting for editor")
+                if recovered == "CONTINUE":
+                    await self.handle_oauth_continue()
+                if recovered:
+                    continue
 
             # Checked outside the swallowing try/except so the banned signal is
             # never lost to a broad `except Exception`.
@@ -749,6 +810,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         try:
             self.last_result = "normal"
             self._progress_callback = progress_callback
+            self._snapchat_credentials = snapchat_credentials or {}
+            self._profile_id = str(profile_id or "")
             self.refresh_runtime_settings(force=True)
             if not browser_ready:
                 await self.start()

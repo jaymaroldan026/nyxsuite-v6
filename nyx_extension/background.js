@@ -283,6 +283,17 @@ function getAutoRenameTopInsertRows(currentDetectedRows, previousRows, maxRows) 
     }));
 }
 
+// Editable Daily-Report rate (accounts created per working hour). Kept in
+// sync with the popup's normalizeAccountsPerHour: a non-positive/blank value
+// falls back to the historical fixed rate of 7.
+function normalizeAccountsPerHour(value) {
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 7;
+  }
+  return Math.min(1000, Math.round(parsed * 10) / 10);
+}
+
 function normalizeScrapeConfig(config, mainConfig) {
   const safe = config || {};
   const fallbackMainConfig = mainConfig || normalizeConfig({});
@@ -295,6 +306,7 @@ function normalizeScrapeConfig(config, mainConfig) {
     nyxLocalApiUrl: normalizeText(safe.nyxLocalApiUrl || fallbackMainConfig.localApiUrl || "http://127.0.0.1:8865"),
     nyxSharedSecret: normalizeText(safe.nyxSharedSecret || fallbackMainConfig.localToken || ""),
     dailyStartAdspowerId: normalizeText(safe.dailyStartAdspowerId || ""),
+    dailyAccountsPerHour: normalizeAccountsPerHour(safe.dailyAccountsPerHour),
   };
 }
 

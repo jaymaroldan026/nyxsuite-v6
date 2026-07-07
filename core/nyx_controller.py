@@ -269,7 +269,16 @@ class NyxController:
                 self.adspower.delete_profile(profile_id)
             except Exception as exc:
                 return {"ok": False, "error": f"AdsPower delete failed: {exc}"}
-            return {"ok": True, "message": f"AdsPower profile {profile_id} deleted."}
+            # Deleted profiles must never sit in (or re-enter) the Nyx queue —
+            # running one can only fail with profile_missing.
+            try:
+                removed = self.store.purge_deleted_profile(profile_id)
+            except Exception:
+                removed = 0
+            message = f"AdsPower profile {profile_id} deleted."
+            if removed:
+                message += f" Removed {removed} Nyx queue row(s) for it."
+            return {"ok": True, "message": message}
 
         def handle_reset_stuck(payload):
             count = self.store.reset_stuck_tasks()

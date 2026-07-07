@@ -18,6 +18,10 @@ DEFAULTS = {
     "push_adspower_id_enabled": True,
     "full_auto_mode_enabled": False,
     "continuous_mode_enabled": False,
+    # Turning off the profile's Chrome extensions during account creation is now
+    # opt-in and OFF by default (users asked to stop disabling extensions while
+    # the Snapchat account is being created).
+    "disable_extensions_enabled": False,
     "launch_on_windows_startup": False,
     "names_dir": "",
 }
@@ -106,6 +110,10 @@ def load_nyxify_config():
             raw.get("continuous_mode_enabled"),
             DEFAULTS["continuous_mode_enabled"],
         ),
+        "disable_extensions_enabled": _safe_bool(
+            raw.get("disable_extensions_enabled"),
+            DEFAULTS["disable_extensions_enabled"],
+        ),
         "launch_on_windows_startup": _safe_bool(
             raw.get("launch_on_windows_startup"),
             DEFAULTS["launch_on_windows_startup"],
@@ -164,6 +172,10 @@ def save_nyxify_config(updates):
         "continuous_mode_enabled": _safe_bool(
             updates.get("continuous_mode_enabled"),
             current["continuous_mode_enabled"],
+        ),
+        "disable_extensions_enabled": _safe_bool(
+            updates.get("disable_extensions_enabled"),
+            current["disable_extensions_enabled"],
         ),
         "launch_on_windows_startup": _safe_bool(
             updates.get("launch_on_windows_startup"),

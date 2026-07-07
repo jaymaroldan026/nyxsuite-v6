@@ -64,6 +64,42 @@ def _queue_direct(profile_id, model):
     return action
 
 
+def purge_profile_from_nyx_queue(profile_id, model="", logger=None):
+    """The AdsPower profile was deleted — remove its Nyx queue row and archive
+    the id so SnapBoard/extension syncs cannot re-queue it (a deleted profile
+    can only ever fail with profile_missing when Nyx tries to open it).
+
+    Best-effort: called from delete paths that must never fail because of the
+    Nyx-side purge. Returns the number of queue rows removed (0 on error)."""
+    normalized_profile_id = str(profile_id or "").strip()
+    if not normalized_profile_id:
+        return 0
+    try:
+        from core.task_store import TaskStore
+
+        store = TaskStore(db_path=str(NYX_TASK_DB_PATH))
+        removed = store.purge_deleted_profile(normalized_profile_id, model=model)
+        if logger:
+            if removed:
+                logger.info(
+                    f"Purged {removed} Nyx queue row(s) for deleted AdsPower profile "
+                    f"{normalized_profile_id} and archived the id."
+                )
+            else:
+                logger.info(
+                    f"Archived deleted AdsPower profile {normalized_profile_id} so Nyx "
+                    "never queues it."
+                )
+        return removed
+    except Exception as exc:
+        if logger:
+            logger.warning(
+                f"Could not purge deleted AdsPower profile {normalized_profile_id} "
+                f"from the Nyx queue: {exc}"
+            )
+        return 0
+
+
 def enqueue_profile_for_nyx(profile_id, model, logger=None):
     normalized_profile_id = str(profile_id or "").strip()
     normalized_model = str(model or "").strip()

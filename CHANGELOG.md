@@ -1,5 +1,52 @@
 # Changelog
 
+## 6.0.4 — Bitmoji completion, warm-up unblock, deleted-profile handling, SnapBoard sign-in
+
+### Bitmoji: complete every profile (no random stops)
+- Trait, paired-earring and outfit steps now retry as a whole unit: a step that
+  can't land re-opens its category/subcategory panel, waits for the items to
+  actually render, then clicks the *same* intended item again. The random
+  "stops at paired earrings / outfit" failures were a click firing into a panel
+  that had switched category but not yet painted — never a wrong selector, so
+  the fix only makes the correct choice land, it never bypasses or substitutes.
+- Tunable via `BITMOJI_STEP_CLICK_RETRIES`, `BITMOJI_STEP_UNIT_RETRIES`,
+  `BITMOJI_PANEL_ITEMS_TIMEOUT`.
+
+### Cookie warm-up no longer blocks signup (Windows hang)
+- Warm-up pages now auto-dismiss any `beforeunload`/alert/confirm dialog a stray
+  navigation click raises — an unanswered dialog used to freeze the tab and its
+  close, so the site never closed and signup never started (manually closing the
+  tab was the known workaround). Page close is also timeout-guarded and skips
+  the beforeunload handler.
+- Hard per-site and whole-phase caps (`NYXIFY_COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT`,
+  `NYXIFY_COOKIE_WARMUP_TOTAL_HARD_TIMEOUT`) guarantee warm-up always yields to
+  the signup even if a site wedges.
+
+### Deleted Nyxify profiles no longer run under Nyx
+- When Nyxify deletes a profile (failed-signup cleanup, stale-pending cleanup,
+  or a Replace action) its Nyx queue row is removed and the id archived, so Nyx
+  never opens a deleted profile just to fail with `profile_missing`, and an
+  extension/SnapBoard re-sync can't re-queue it.
+- A run-time `profile_missing` also archives the id for the same reason.
+
+### Nyx auto sign-in uses the SnapBoard password
+- When a profile's Snapchat session has dropped and the **sign-in** page shows
+  (the account exists but is logged out), Nyx now signs back in with the
+  SnapBoard row's Password and the username Nyxify confirmed — not a fixed
+  default. The sign-in walk is more resilient (waits for the form, retries both
+  steps, ignores the un-renamed temp profile name as a username) and can recover
+  a session that drops mid-flow instead of timing out.
+
+### Nyxify: extension turn-off during account creation is now opt-in
+- The Chrome-extension disabling step during signup is OFF by default (new
+  "Disable extensions on create" toggle in Nyxify settings). The browser open,
+  cookie warm-up and signup are unchanged; extensions are simply left as
+  configured while the account is created.
+
+### Editable accounts-per-hour (Nyx extension)
+- The Daily Report's expected-hours rate is now an editable "Accounts / hour"
+  field (persisted) instead of a fixed 7.
+
 ## 6.0.3 — Per-product hotkeys, full stop, and Bitmoji queue unblocking
 
 ### Hotkeys: Ctrl+F8 = Nyx, Ctrl+F7 = Nyxify

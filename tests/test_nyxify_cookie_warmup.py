@@ -155,6 +155,47 @@ class CookieWarmupOrderingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 4)
         self.assertEqual(len(result["visited"]), 3)
 
+    async def test_hung_site_is_skipped_by_per_site_hard_timeout(self):
+        # A site that never returns must not hang the whole warm-up; the hard
+        # per-site cap force-skips it and the others still succeed.
+        async def fake_warm_site(_context, url, _duration, _logger, _profile_id):
+            if url.endswith("hang/"):
+                await asyncio.sleep(100)
+            return True
+
+        sites = ("https://a.example/", "https://hang/", "https://b.example/")
+        with mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_GOOD_WEBSITES", sites), \
+                mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_MIN_SITES", 3), \
+                mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_MAX_SITES", 3), \
+                mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_MAX_CONCURRENT_TABS", 3), \
+                mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT", 0.2), \
+                mock.patch.object(adspower_extension_cleanup, "COOKIE_WARMUP_TOTAL_HARD_TIMEOUT", 5), \
+                mock.patch.object(adspower_extension_cleanup, "_warm_one_cookie_site", side_effect=fake_warm_site):
+            result = await adspower_extension_cleanup.warm_ads_profile_cookies(_WarmupContext(), None, "k1abc")
+
+        # The two healthy sites succeed; the hung one is dropped.
+        self.assertEqual(len(result["visited"]), 2)
+        self.assertNotIn("https://hang/", result["visited"])
+
+    async def test_warmup_page_registers_dialog_auto_dismiss(self):
+        # Each warm-up page must install a dialog handler so a beforeunload /
+        # confirm from a stray navigation click can't block the tab (or its
+        # close) — the reported Windows hang.
+        page = mock.AsyncMock()
+        page.is_closed.return_value = False
+        registered = []
+        page.on = mock.Mock(side_effect=lambda event, _cb: registered.append(event))
+        page.goto.side_effect = RuntimeError("stop early after dialog wiring")
+
+        context = mock.AsyncMock()
+        context.new_page.return_value = page
+
+        await adspower_extension_cleanup._warm_one_cookie_site(
+            context, "https://example.com/", 1, None, "k1abc"
+        )
+
+        self.assertIn("dialog", registered)
+
 
 if __name__ == "__main__":
     unittest.main()

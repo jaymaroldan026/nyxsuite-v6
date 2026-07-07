@@ -1210,20 +1210,26 @@ async def process_task(task, store, adspower):
         last_step = "opening_profile"
         store.update_task_state(task_id, last_step=last_step)
 
+        # Extension turn-off during account creation is now opt-in and OFF by
+        # default (users asked to stop disabling extensions while creating the
+        # account). The browser open + context attach still happen either way.
+        disable_extensions_enabled = bool(config.get("disable_extensions_enabled", False))
+
         # keep_playwright=True — we own the playwright instance and use it for signup too
         cleanup_result = await disable_profile_extensions(
             adspower, created.get("profile_id"), logger,
             keep_open=True, keep_playwright=True, open_signup=False,
+            disable_extensions=disable_extensions_enabled,
         )
 
         playwright_instance = cleanup_result.get("playwright_instance")
         context = cleanup_result.get("context")
 
-        last_step = "extensions_disabled"
+        last_step = "extensions_disabled" if disable_extensions_enabled else "extension_disable_skipped"
         store.update_task_state(task_id, last_step=last_step)
 
         if context is None:
-            raise RuntimeError("AdsPower browser context was missing after extension cleanup.")
+            raise RuntimeError("AdsPower browser context was missing after profile open.")
 
         last_step = "cookie_warmup"
         store.update_task_state(task_id, last_step=last_step)

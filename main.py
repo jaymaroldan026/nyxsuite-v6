@@ -122,6 +122,12 @@ async def process_task(task, store, adspower):
                 f"Profile {profile_id} not found in AdsPower app; marking FAILED profile_missing: {e}"
             )
             store.update_status(task_id, "FAILED", "profile_missing", error_msg, run_token=run_token)
+            # Archive the id so extension syncs can't re-queue a profile that
+            # is already proven deleted (the FAILED row stays visible).
+            try:
+                store.archive_missing_profile(profile_id)
+            except Exception:
+                pass
         else:
             # No-API CDP fallback: the Local API is permission-gated but the
             # server is fine — this profile just isn't open in the AdsPower app.
@@ -180,12 +186,19 @@ async def main():
     try:
         store = get_queue_store()
         adspower = AdsPowerManager()
-        adspower.set_ui_on_profile_missing(
-            lambda pid: store.update_status_by_profile_id(
+
+        def _mark_profile_missing(pid):
+            store.update_status_by_profile_id(
                 pid, "FAILED", "profile_missing",
                 error="Profile not found in AdsPower GUI search",
             )
-        )
+            # Archive so extension syncs can't re-queue the deleted profile.
+            try:
+                store.archive_missing_profile(pid)
+            except Exception:
+                pass
+
+        adspower.set_ui_on_profile_missing(_mark_profile_missing)
 
         # Ctrl+F8 is owned by the bridge so it can reuse dashboard Start/Stop
         # actions and can start this runner even when no runner process exists.

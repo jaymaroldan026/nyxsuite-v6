@@ -188,15 +188,43 @@ def _get_nyxify_hold_reason(profile_id, nyx_task=None):
 
 
 def resolve_snapchat_credentials(profile_id, logger):
+    """Resolve the auto sign-in credentials for a profile whose Snapchat
+    session dropped (login page instead of the OAuth consent).
+
+    The Nyxify row for this AdsPower profile is the authoritative source: its
+    ``username`` is the real account name confirmed on the welcome page, and
+    its ``password`` is the SnapBoard row's Password column — the password the
+    account was actually signed up with. Env/default passwords are only
+    fallbacks for rows SnapBoard left blank (signup used the default too), and
+    a missing username falls back to the browser-context extraction inside
+    ``try_auto_snapchat_login``."""
+    username = ""
+    snapboard_password = ""
+    try:
+        nyxify_task = NyxifyTaskStore().get_task_by_adspower_profile_id(profile_id)
+        if nyxify_task:
+            username = str(nyxify_task.get("username") or "").strip()
+            snapboard_password = str(nyxify_task.get("password") or "").strip()
+    except Exception as exc:
+        logger.warning(f"Could not read Nyxify credentials for {profile_id}: {exc}")
+
     env_password = (
         str(os.getenv("SNAPCHAT_LOGIN_PASSWORD", "") or "").strip()
         or str(os.getenv("SNAPCHAT_DEFAULT_PASSWORD", "") or "").strip()
     )
-    password = env_password or DEFAULT_SNAPCHAT_PASSWORD
-    source = "env.password" if env_password else "default.password"
-    logger.info(f"Prepared Snapchat auto-login password for {profile_id} via {source}")
+    if snapboard_password:
+        password, source = snapboard_password, "snapboard.password"
+    elif env_password:
+        password, source = env_password, "env.password"
+    else:
+        password, source = DEFAULT_SNAPCHAT_PASSWORD, "default.password"
+
+    logger.info(
+        f"Prepared Snapchat auto-login credentials for {profile_id} via {source}"
+        f"{' with Nyxify username' if username else ''}"
+    )
     return {
-        "username": "",
+        "username": username,
         "password": password,
         "source": source,
     }

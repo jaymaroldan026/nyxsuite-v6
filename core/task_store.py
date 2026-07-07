@@ -450,6 +450,48 @@ class TaskStore:
             )
             return cursor.rowcount
 
+    def archive_missing_profile(self, profile_id, model=""):
+        """Record ``profile_id`` in the missing-profiles archive so extension
+        syncs skip it on upsert (``ignored_missing``). The queue row — if any —
+        is left untouched."""
+        normalized_profile_id = str(profile_id or "").strip()
+        if not normalized_profile_id:
+            return False
+        now = utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT model FROM tasks WHERE profile_id = ?",
+                (normalized_profile_id,)
+            ).fetchone()
+            archived_model = str(model or "").strip() or (str(row["model"] or "") if row else "")
+            conn.execute(
+                """
+                INSERT INTO missing_profiles (profile_id, model, marked_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET model = excluded.model, marked_at = excluded.marked_at
+                """,
+                (normalized_profile_id, archived_model, now)
+            )
+            return True
+
+    def purge_deleted_profile(self, profile_id, model=""):
+        """The AdsPower profile was deleted (Nyxify cleanup/retry or a Replace
+        action): drop any queue row for it AND archive the id so extension
+        syncs can never re-queue it — a deleted profile would only ever run
+        into a profile_missing failure.
+
+        Returns the number of queue rows removed."""
+        normalized_profile_id = str(profile_id or "").strip()
+        if not normalized_profile_id:
+            return 0
+        self.archive_missing_profile(normalized_profile_id, model=model)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM tasks WHERE profile_id = ?",
+                (normalized_profile_id,)
+            )
+            return cursor.rowcount
+
     def remove_missing_profile_tasks(self, limit=None):
         now = utc_now_iso()
         limit_value = None

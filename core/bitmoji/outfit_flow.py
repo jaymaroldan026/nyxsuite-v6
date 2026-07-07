@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import random
 import re
 from datetime import datetime, timezone
@@ -15,6 +16,26 @@ KNOWN_SKIN_TONE_FILLS = {
     "#fab787",
     "#f1ac88",
 }
+
+
+def _env_int(name, default):
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+# Per-click retry budget inside safe_click (a transient slow-rendering panel
+# used to burn all 3 attempts and fail the whole profile at a random trait).
+_STEP_CLICK_RETRIES = _env_int("BITMOJI_STEP_CLICK_RETRIES", 4)
+# How many times a whole face/outfit *unit* (open category/subcategory + click
+# the exact trait) is replayed when the trait click can't land — the category
+# panel gets re-opened between attempts so the correct item finally renders.
+# This never selects a different item; it only re-tries the intended one.
+_STEP_UNIT_RETRIES = _env_int("BITMOJI_STEP_UNIT_RETRIES", 3)
+# Seconds to wait for a category/subcategory panel to actually render clickable
+# trait items before giving up on an attempt.
+_PANEL_ITEMS_TIMEOUT = float(os.getenv("BITMOJI_PANEL_ITEMS_TIMEOUT", "8"))
 
 
 class BitmojiOutfitMixin:
@@ -35,6 +56,38 @@ class BitmojiOutfitMixin:
                 continue
 
         return visible
+
+    async def wait_for_category_items(self, ctx=None, timeout=None):
+        """Wait until the currently-open category/subcategory panel has rendered
+        at least one clickable trait/outfit item.
+
+        Random "stops" at paired earrings / outfit pieces were almost always a
+        click firing into a panel that had switched category but not yet painted
+        its items — the exact-match scan then found nothing and the step failed.
+        Gating the click on real items being present removes that race without
+        ever changing *which* item is chosen."""
+        if timeout is None:
+            timeout = _PANEL_ITEMS_TIMEOUT
+        deadline = asyncio.get_event_loop().time() + float(timeout)
+        item_selector = (
+            ".mix-and-match-container[tabindex='0'], "
+            ".facial-feature-wrapper[tabindex='0'], "
+            "[class*='mix-and-match-container'][tabindex='0'], "
+            ".colour-picker-option"
+        )
+        while asyncio.get_event_loop().time() < deadline:
+            await self.wait_if_paused()
+            try:
+                if ctx is None:
+                    ctx = await self.get_editor_context()
+                if ctx is not None:
+                    count = await ctx.locator(item_selector).count()
+                    if count and count > 0:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)
+        return False
 
     async def enable_tuck_if_available(self):
         ctx = await self.get_editor_context()
@@ -1008,32 +1061,63 @@ class BitmojiOutfitMixin:
         raise Exception(f"Failed to click outfit selector: {selector}")
 
     async def click_random_earring(self, profile_id):
-        ctx = await self.get_editor_context()
         selectors = BITMOJI_SELECTORS["items"].get("random_earrings", [])
         if not selectors:
             raise Exception("No random earring selectors configured.")
 
         rng = random.SystemRandom()
-        indices = list(range(len(selectors)))
-        rng.shuffle(indices)
 
-        for index in indices:
-            selector = selectors[index]
-            try:
-                target = await self.first_actionable_locator(ctx.locator(selector))
-                if target is None:
+        # Retry the whole earring pick a few times: the paired-earring panel can
+        # take a moment to paint its options, which is the classic "stops at
+        # paired earrings" symptom. Each pass waits for items and tries every
+        # configured earring option — so it always lands a real earring rather
+        # than failing the profile.
+        for attempt in range(_STEP_UNIT_RETRIES):
+            ctx = await self.get_editor_context()
+            await self.wait_for_category_items(ctx)
+
+            indices = list(range(len(selectors)))
+            rng.shuffle(indices)
+            for index in indices:
+                selector = selectors[index]
+                try:
+                    target = await self.first_actionable_locator(ctx.locator(selector))
+                    if target is None:
+                        continue
+                    await self.scroll_target_into_panel(target)
+                    await self.human_delay()
+                    await target.click()
+                    return True
+                except Exception:
                     continue
-                await self.scroll_target_into_panel(target)
-                await self.human_delay()
-                await target.click()
-                return True
-            except Exception:
-                continue
+
+            if attempt < _STEP_UNIT_RETRIES - 1:
+                if self.logger:
+                    self.logger.warning(
+                        f"Earring options not ready (attempt {attempt + 1}/{_STEP_UNIT_RETRIES}); "
+                        "re-opening the earrings panel."
+                    )
+                await self._reopen_earrings_panel(profile_id)
+                await asyncio.sleep(0.6)
 
         raise Exception("Failed to click a random earring option.")
 
-    async def safe_click(self, selector_key, profile_id=None, retries=3):
+    async def _reopen_earrings_panel(self, profile_id):
+        """Re-open Accessories -> Earrings -> Paired so the earring options
+        repaint before the next pick attempt. Best-effort: a failure here just
+        lets the next attempt try against whatever is currently shown."""
+        for step_key in ("categories.earrings", "subcategories.paired_earring"):
+            try:
+                await self.safe_click(step_key, profile_id, retries=2)
+                await self.human_delay(0.2, 0.5, kind="think")
+            except Exception:
+                continue
+
+    async def safe_click(self, selector_key, profile_id=None, retries=None):
         await self.wait_if_paused()
+
+        if retries is None:
+            retries = _STEP_CLICK_RETRIES
 
         if selector_key == "traits.random_earrings":
             return await self.click_random_earring(profile_id)
@@ -1047,6 +1131,9 @@ class BitmojiOutfitMixin:
                 ctx = await self.get_editor_context()
 
                 if self.is_outfit_selector(selector):
+                    # Don't scan for the exact outfit item until the panel has
+                    # actually rendered items (removes the empty-panel race).
+                    await self.wait_for_category_items(ctx)
                     await self.click_outfit_item(ctx, selector, profile_id=profile_id, selector_key=selector_key)
                     return True
 
@@ -1170,6 +1257,14 @@ class BitmojiOutfitMixin:
         except Exception:
             bitmoji_models = {}
 
+        # The face sequence is: open a category (and maybe a subcategory), then
+        # click the exact trait. Track the most recent open_* steps so that when
+        # a trait click can't land we can *replay them* (re-open the panel) and
+        # retry the same trait — instead of failing the whole profile at a
+        # random trait like paired earrings. The replay never changes which
+        # trait is selected.
+        context_steps = []  # list of (step_name, selector_key) since last trait
+
         for step in face_steps:
             await self.wait_if_paused()
             refresh_runtime_settings = getattr(self, "refresh_runtime_settings", None)
@@ -1206,17 +1301,69 @@ class BitmojiOutfitMixin:
                     if self.logger:
                         self.logger.info(f"{model} | Hair randomizer selected")
 
-            try:
-                await self.safe_click(selector_key, profile_id)
-                await self.human_delay()
-            except Exception as exc:
-                print(f"[STOP] Failed at step: {step_name} -> {exc}")
+            is_open_step = bool(step_name) and str(step_name).startswith("open_")
+
+            applied = await self._apply_face_step_with_recovery(
+                model, profile_id, step_name, selector_key,
+                context_steps=context_steps, is_open_step=is_open_step,
+            )
+            if not applied:
+                print(f"[STOP] Failed at step: {step_name}")
                 if self.logger:
-                    self.logger.warning(f"{model} FAILED at {step_name}: {exc}")
+                    self.logger.warning(f"{model} FAILED at {step_name}")
                 return False
+
+            # An open_ step becomes context for the trait that follows; a trait
+            # click resets the context (its panel is now consumed).
+            if is_open_step:
+                context_steps.append((step_name, selector_key))
+            else:
+                context_steps = []
 
         print(f"{model} face applied")
         return True
+
+    async def _apply_face_step_with_recovery(self, model, profile_id, step_name,
+                                             selector_key, context_steps, is_open_step):
+        """Click one face step, retrying the whole unit on failure.
+
+        For a trait step, a failed click replays the recent open_* category /
+        subcategory steps (re-opening the panel) and waits for its items to
+        render before trying the same trait again. This makes transient
+        panel-not-ready failures recover instead of aborting the profile."""
+        last_exc = None
+        for attempt in range(_STEP_UNIT_RETRIES):
+            try:
+                await self.safe_click(selector_key, profile_id)
+                await self.human_delay()
+                return True
+            except Exception as exc:
+                last_exc = exc
+                if self.logger:
+                    self.logger.warning(
+                        f"{model} step {step_name} attempt {attempt + 1}/{_STEP_UNIT_RETRIES} "
+                        f"failed: {exc}"
+                    )
+                if attempt >= _STEP_UNIT_RETRIES - 1:
+                    break
+                # Re-open the category/subcategory chain that leads to this trait
+                # so its panel repaints, then wait for the items to appear.
+                if not is_open_step and context_steps:
+                    for ctx_step_name, ctx_selector_key in context_steps:
+                        try:
+                            await self.safe_click(ctx_selector_key, profile_id, retries=2)
+                            await self.human_delay(0.2, 0.5, kind="think")
+                        except Exception:
+                            continue
+                    try:
+                        await self.wait_for_category_items()
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.6)
+
+        if self.logger and last_exc is not None:
+            self.logger.warning(f"{model} step {step_name} exhausted retries: {last_exc}")
+        return False
 
     async def apply_outfit(self, profile_id, model="", outfit_seed=""):
         await self.wait_if_paused()
@@ -1238,9 +1385,7 @@ class BitmojiOutfitMixin:
             dress_entry = self.normalize_outfit_entry(outfit["dress"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit dress: {self.describe_outfit_entry(dress_entry)}")
-            await self.safe_click("categories.dresses", profile_id)
-            await self.reset_editor_panel_scroll(await self.get_editor_context())
-            await self.safe_click(dress_entry["selector"], profile_id)
+            await self._apply_outfit_piece("categories.dresses", dress_entry["selector"], profile_id)
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=dress_entry.get("preferred_color"))
         else:
             report("outfit_top")
@@ -1248,28 +1393,48 @@ class BitmojiOutfitMixin:
             bottom_entry = self.normalize_outfit_entry(outfit["bottom"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit top: {self.describe_outfit_entry(top_entry)}")
-            await self.safe_click("categories.tops", profile_id)
-            await self.reset_editor_panel_scroll(await self.get_editor_context())
-            await self.safe_click(top_entry["selector"], profile_id)
+            await self._apply_outfit_piece("categories.tops", top_entry["selector"], profile_id)
             await self.enable_tuck_if_available()
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=top_entry.get("preferred_color"))
             report("outfit_bottom")
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit bottom: {self.describe_outfit_entry(bottom_entry)}")
-            await self.safe_click("categories.bottoms", profile_id)
-            await self.reset_editor_panel_scroll(await self.get_editor_context())
-            await self.safe_click(bottom_entry["selector"], profile_id)
+            await self._apply_outfit_piece("categories.bottoms", bottom_entry["selector"], profile_id)
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
 
         report("outfit_footwear")
         shoe_entry = self.normalize_outfit_entry(outfit["shoes"])
         if self.logger:
             self.logger.info(f"[{profile_id}] Outfit footwear: {self.describe_outfit_entry(shoe_entry)}")
-        await self.safe_click("categories.footwear", profile_id)
-        await self.reset_editor_panel_scroll(await self.get_editor_context())
-        await self.safe_click(shoe_entry["selector"], profile_id)
+        await self._apply_outfit_piece("categories.footwear", shoe_entry["selector"], profile_id)
         await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
         await self.human_delay()
+
+    async def _apply_outfit_piece(self, category_key, item_selector, profile_id):
+        """Open a clothing category and click the exact configured item, retrying
+        the pair as a unit. A failed item click re-opens the category (so its
+        grid repaints) and waits for items before trying the same item again —
+        the intended piece is always what gets selected, never a substitute."""
+        last_exc = None
+        for attempt in range(_STEP_UNIT_RETRIES):
+            try:
+                await self.safe_click(category_key, profile_id)
+                ctx = await self.get_editor_context()
+                await self.reset_editor_panel_scroll(ctx)
+                await self.wait_for_category_items(ctx)
+                await self.safe_click(item_selector, profile_id)
+                return True
+            except Exception as exc:
+                last_exc = exc
+                if self.logger:
+                    self.logger.warning(
+                        f"[{profile_id}] Outfit piece {item_selector} attempt "
+                        f"{attempt + 1}/{_STEP_UNIT_RETRIES} failed: {exc}"
+                    )
+                await asyncio.sleep(0.6)
+        # Exhausted retries — surface the original failure so the runner records
+        # the exact outfit step (unchanged behaviour on genuine failure).
+        raise last_exc or Exception(f"Failed to apply outfit piece: {item_selector}")
 
     async def pick_random_color_option(self, profile_id, outfit_seed="", preferred_color=None):
         await self.wait_if_paused()

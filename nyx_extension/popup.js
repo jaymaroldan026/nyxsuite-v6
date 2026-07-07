@@ -349,7 +349,27 @@ function syncLatestDailyRows(rows) {
   return true;
 }
 
-function getDailyUpdateStats(rows, startAdspowerId, topAdspowerIdOverride) {
+const DEFAULT_ACCOUNTS_PER_HOUR = 7;
+
+function normalizeAccountsPerHour(value) {
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_ACCOUNTS_PER_HOUR;
+  }
+  // Clamp to a sane range and keep at most one decimal place.
+  return Math.min(1000, Math.round(parsed * 10) / 10);
+}
+
+function activeAccountsPerHour() {
+  const perHourInput = document.getElementById("dailyAccountsPerHourInput");
+  const stored = latestScrapeConfig && latestScrapeConfig.dailyAccountsPerHour;
+  return normalizeAccountsPerHour(
+    (perHourInput && perHourInput.value) || stored
+  );
+}
+
+function getDailyUpdateStats(rows, startAdspowerId, topAdspowerIdOverride, accountsPerHour) {
+  const perHour = normalizeAccountsPerHour(accountsPerHour);
   const normalizedStartId = String(startAdspowerId || "").trim();
   const normalizedStartIdLower = normalizedStartId.toLowerCase();
   const normalizedTopOverride = normalizeDailyAdsPowerId(topAdspowerIdOverride);
@@ -444,7 +464,7 @@ function getDailyUpdateStats(rows, startAdspowerId, topAdspowerIdOverride) {
     accumulator[model] = (accumulator[model] || 0) + 1;
     return accumulator;
   }, {});
-  const expectedHours = rangeRows.length / 7;
+  const expectedHours = rangeRows.length / perHour;
 
   return {
     found: true,
@@ -453,6 +473,7 @@ function getDailyUpdateStats(rows, startAdspowerId, topAdspowerIdOverride) {
     startId: normalizedStartId,
     counts,
     expectedHours,
+    accountsPerHour: perHour,
     rangeRows,
     message: `Counting from ${normalizedStartId} up to current top ${topId}.`,
   };
@@ -480,6 +501,7 @@ function buildDailyReportText(stats) {
 function renderDailyUpdatePanel(rows, scrapeConfig) {
   const input = document.getElementById("dailyStartAdspowerIdInput");
   const topInput = document.getElementById("dailyTopAdspowerIdInput");
+  const perHourInput = document.getElementById("dailyAccountsPerHourInput");
   const summaryElement = document.getElementById("dailyUpdateSummary");
   const previewElement = document.getElementById("dailyUpdatePreview");
   if (!input || !topInput || !summaryElement || !previewElement) {
@@ -491,8 +513,16 @@ function renderDailyUpdatePanel(rows, scrapeConfig) {
     input.value = storedStartId;
   }
 
+  const storedPerHour = normalizeAccountsPerHour(scrapeConfig && scrapeConfig.dailyAccountsPerHour);
+  if (perHourInput && document.activeElement !== perHourInput) {
+    perHourInput.value = String(storedPerHour);
+  }
+  const activePerHour = perHourInput
+    ? normalizeAccountsPerHour(perHourInput.value || storedPerHour)
+    : storedPerHour;
+
   const manualTopInput = String(topInput.value || "").trim();
-  const stats = getDailyUpdateStats(rows, input.value || storedStartId, manualTopInput);
+  const stats = getDailyUpdateStats(rows, input.value || storedStartId, manualTopInput, activePerHour);
   if (document.activeElement !== topInput) {
     topInput.value = stats.topId || "";
   }
@@ -505,6 +535,7 @@ function renderDailyUpdatePanel(rows, scrapeConfig) {
         `Top ID: ${stats.topId}`,
         `Start ID: ${stats.startId}`,
         `Total: ${stats.total}`,
+        `Accounts/hour: ${stats.accountsPerHour}`,
         `Expected hour: ${stats.expectedHours.toFixed(2)}`,
         "",
       ].concat(
@@ -514,7 +545,7 @@ function renderDailyUpdatePanel(rows, scrapeConfig) {
       )
     : [];
 
-  const signature = `${stats.found}|${stats.total}|${stats.topId}|${stats.startId}|${previewLines.join("\n")}`;
+  const signature = `${stats.found}|${stats.total}|${stats.topId}|${stats.startId}|${stats.accountsPerHour}|${previewLines.join("\n")}`;
   if (signature === lastDailyRenderSignature) {
     return;
   }
@@ -646,7 +677,7 @@ function runDailyRangeScrape() {
 
     const startId = String(document.getElementById("dailyStartAdspowerIdInput").value || "").trim();
     const manualTopId = String(document.getElementById("dailyTopAdspowerIdInput").value || "").trim();
-    const stats = getDailyUpdateStats(latestDailyRows, startId, manualTopId);
+    const stats = getDailyUpdateStats(latestDailyRows, startId, manualTopId, activeAccountsPerHour());
     if (!stats.found) {
       statusLine.textContent = stats.message;
       return;
@@ -1474,6 +1505,35 @@ document.getElementById("dailyTopAdspowerIdInput").addEventListener("input", () 
   lastDailyRenderSignature = "";
   renderDailyUpdatePanel(latestDailyRows, latestScrapeConfig);
 });
+let dailyPerHourSaveTimer = null;
+const dailyPerHourInputEl = document.getElementById("dailyAccountsPerHourInput");
+if (dailyPerHourInputEl) {
+  dailyPerHourInputEl.addEventListener("input", () => {
+    lastDailyRenderSignature = "";
+    renderDailyUpdatePanel(latestDailyRows, latestScrapeConfig);
+    // Debounce the persist so every keystroke doesn't hit storage.
+    if (dailyPerHourSaveTimer) {
+      clearTimeout(dailyPerHourSaveTimer);
+    }
+    dailyPerHourSaveTimer = setTimeout(() => {
+      const perHour = normalizeAccountsPerHour(dailyPerHourInputEl.value);
+      chrome.runtime.sendMessage(
+        { type: "NYX_SCRAPE_SAVE_CONFIG", config: { dailyAccountsPerHour: perHour } },
+        (response) => {
+          if (response && response.ok) {
+            latestScrapeConfig = response.config || latestScrapeConfig;
+          }
+        }
+      );
+    }, 600);
+  });
+  // Normalize the field to the stored/clamped value once focus leaves it.
+  dailyPerHourInputEl.addEventListener("blur", () => {
+    dailyPerHourInputEl.value = String(activeAccountsPerHour());
+    lastDailyRenderSignature = "";
+    renderDailyUpdatePanel(latestDailyRows, latestScrapeConfig);
+  });
+}
 document.getElementById("refreshDailyRowsButton").addEventListener("click", () => {
   document.getElementById("dailyUpdateStatusLine").textContent = "Refreshing daily update rows from SnapBoard...";
   refreshDailyRowsFromActiveTab((ok, message) => {
@@ -1490,7 +1550,7 @@ document.getElementById("refreshDailyRowsButton").addEventListener("click", () =
 document.getElementById("copyDailyUpdateButton").addEventListener("click", async () => {
   const startId = String(document.getElementById("dailyStartAdspowerIdInput").value || "").trim();
   const manualTopId = String(document.getElementById("dailyTopAdspowerIdInput").value || "").trim();
-  const stats = getDailyUpdateStats(latestDailyRows, startId, manualTopId);
+  const stats = getDailyUpdateStats(latestDailyRows, startId, manualTopId, activeAccountsPerHour());
   const statusLine = document.getElementById("dailyUpdateStatusLine");
   if (!stats.found) {
     statusLine.textContent = stats.message || "Daily report is not ready yet.";

@@ -71,6 +71,16 @@ def close_and_delete_profile(adspower, profile_id, log=None, task_id=None, row_k
         result["deleted"] = True
         result["delete_result"] = data
         _log(log, "info", f"Nyxify cleanup deleted AdsPower profile ({context}).")
+        # The profile no longer exists: drop any Nyx queue row for it and
+        # archive the id so Nyx never opens a deleted profile just to fail
+        # with profile_missing — and the extension sync can't re-queue it.
+        try:
+            from core.nyx_handoff import purge_profile_from_nyx_queue
+
+            purge_profile_from_nyx_queue(normalized_profile_id, logger=log)
+        except Exception as purge_exc:
+            _log(log, "warning",
+                 f"Nyx queue purge failed for deleted profile ({context}): {purge_exc}")
     except Exception as exc:
         result["delete_error"] = str(exc) or repr(exc)
         _log(

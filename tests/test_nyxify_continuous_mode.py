@@ -237,7 +237,10 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
 
         steps = [update.get("last_step") for _task_id, update in store.updates if update.get("last_step")]
 
-        self.assertLess(steps.index("extensions_disabled"), steps.index("cookie_warmup"))
+        # The browser-prep step is "extension_disable_skipped" by default now
+        # (extension turn-off is opt-in), or "extensions_disabled" when enabled.
+        prep_step = "extension_disable_skipped" if "extension_disable_skipped" in steps else "extensions_disabled"
+        self.assertLess(steps.index(prep_step), steps.index("cookie_warmup"))
         self.assertLess(steps.index("cookie_warmup"), steps.index("signup_handoff"))
         self.assertLess(steps.index("signup_handoff"), steps.index("signup_opened"))
 

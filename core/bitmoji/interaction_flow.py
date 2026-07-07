@@ -270,7 +270,22 @@ class BitmojiInteractionMixin:
             f"kind={failure_kind}; host_online={host_online}; Last signal: {last_signal or 'unknown'}"
         )
 
+    def _temp_profile_name_placeholder(self):
+        """The username-looking remainder of Nyxify's temporary profile name
+        (e.g. "xoxoxo" from "Snapchat: xoxoxo"). A profile that was never
+        renamed reports this as its "username" — it is not a real account name
+        and must never be used for auto sign-in."""
+        try:
+            from core.nyxify_runtime_config import load_nyxify_config
+
+            temp_name = str(load_nyxify_config().get("temporary_profile_name") or "").strip()
+        except Exception:
+            temp_name = ""
+        match = re.match(r"^\s*snapchat\s*:\s*(.+?)\s*$", temp_name, flags=re.IGNORECASE)
+        return match.group(1).strip().lower() if match else ""
+
     async def extract_snapchat_username_from_browser_context(self):
+        placeholder = self._temp_profile_name_placeholder()
         candidates = []
 
         if self.page is not None:
@@ -334,9 +349,15 @@ class BitmojiInteractionMixin:
                 dom_username = ""
 
             if dom_username and re.fullmatch(r"[A-Za-z0-9._-]{3,32}", dom_username):
-                if self.logger:
-                    self.logger.info(f"Resolved Snapchat username from AdsPower page DOM: {dom_username}")
-                return dom_username
+                if placeholder and dom_username.strip().lower() == placeholder:
+                    if self.logger:
+                        self.logger.info(
+                            f"Ignoring temp-profile-name placeholder {dom_username!r} as username")
+                    dom_username = ""
+                else:
+                    if self.logger:
+                        self.logger.info(f"Resolved Snapchat username from AdsPower page DOM: {dom_username}")
+                    return dom_username
 
             try:
                 title = (await page.title() or "").strip()
@@ -352,6 +373,11 @@ class BitmojiInteractionMixin:
 
             username = match.group(1).strip().lstrip("@")
             if username and re.fullmatch(r"[A-Za-z0-9._-]{3,32}", username):
+                if placeholder and username.lower() == placeholder:
+                    if self.logger:
+                        self.logger.info(
+                            f"Ignoring temp-profile-name placeholder {username!r} as username")
+                    continue
                 if self.logger:
                     self.logger.info(f"Resolved Snapchat username from AdsPower tab title: {username}")
                 return username
@@ -590,8 +616,21 @@ class BitmojiInteractionMixin:
                 )
             return None
 
-        login_ctx = await self.get_snapchat_login_context()
+        # The login form can render a beat after the LOGIN state is detected
+        # (redirect still settling). Poll briefly instead of instantly giving
+        # up to the manual-login wait.
+        login_ctx = None
+        for _ in range(16):
+            login_ctx = await self.get_snapchat_login_context()
+            if login_ctx is not None:
+                break
+            await asyncio.sleep(0.5)
         if login_ctx is None:
+            if self.logger:
+                self.logger.warning(
+                    f"Login page detected for {profile_id} but no login form context "
+                    "appeared within 8s; falling back to manual login."
+                )
             return None
 
         if callable(progress_callback):
@@ -609,8 +648,24 @@ class BitmojiInteractionMixin:
             "input[type='submit']",
         ]
 
-        for _ in range(3):
+        # The identifier and password steps are separate pages, and each can
+        # take a moment to render after the previous submit. Walk the form with
+        # enough iterations to cover both steps plus a few transient/blank
+        # re-checks, and only give up to manual login after several consecutive
+        # unrecognised states — not on the first one (which used to abandon a
+        # perfectly good auto-login the moment a page was mid-render).
+        username_submitted = False
+        password_submitted = False
+        unrecognized_states = 0
+        for _ in range(12):
             login_ctx = await self.get_snapchat_login_context()
+            if login_ctx is None:
+                unrecognized_states += 1
+                if unrecognized_states >= 4:
+                    break
+                await self.human_delay(0.4, 0.7, kind="think")
+                continue
+
             page_state = await self.detect_snapchat_login_page_state(login_ctx)
 
             if page_state["is_banned"]:
@@ -624,28 +679,36 @@ class BitmojiInteractionMixin:
                 return await self.wait_for_post_login_state(timeout_seconds=20)
 
             if page_state["needs_username"]:
+                unrecognized_states = 0
                 username_locator = login_ctx.locator(
                     "input#username[name='accountIdentifier'], #username, input[name='accountIdentifier'], input[name='usernameOrEmail']"
                 ).first
                 if await username_locator.count() == 0:
-                    break
+                    unrecognized_states += 1
+                    await self.human_delay(0.4, 0.7, kind="think")
+                    continue
                 await self.type_like_human(username_locator, username)
                 await self.human_delay(0.25, 0.45, kind="think")
                 if not await self.click_first_available(login_ctx, submit_selectors):
                     raise Exception("Could not submit Snapchat username step.")
+                username_submitted = True
                 await self.human_delay(1.8, 2.6, kind="think")
                 continue
 
             if page_state["needs_password"]:
+                unrecognized_states = 0
                 password_locator = login_ctx.locator(
                     "input#password[name='password'], #password, input[name='password'], input[type='password']"
                 ).first
                 if await password_locator.count() == 0:
-                    break
+                    unrecognized_states += 1
+                    await self.human_delay(0.4, 0.7, kind="think")
+                    continue
                 await self.type_like_human(password_locator, password, per_char_delay=(0.09, 0.2))
                 await self.human_delay(0.3, 0.55, kind="think")
                 if not await self.click_first_available(login_ctx, submit_selectors):
                     raise Exception("Could not submit Snapchat password step.")
+                password_submitted = True
                 await self.human_delay(2.0, 3.0, kind="think")
 
                 for _ in range(20):
@@ -663,14 +726,31 @@ class BitmojiInteractionMixin:
                             raise Exception(f"Snapchat login failed: {reason}")
                         if page_state["needs_verification"]:
                             raise Exception("Snapchat login requires verification.")
+                        # Password page still showing after submit — a wrong
+                        # password or a not-yet-processed submit. Re-submit once
+                        # more from the outer loop rather than giving up.
+                        if page_state["needs_password"]:
+                            break
 
                     await self.human_delay(0.35, 0.65, kind="think")
-                break
+                # Fall back to the outer loop for another pass (re-enter
+                # username/password if the page bounced back) until iterations
+                # run out.
+                continue
 
-            break
+            # Unrecognised login sub-state (page mid-render or a layout we don't
+            # classify). Retry a few times before abandoning to manual login.
+            unrecognized_states += 1
+            if unrecognized_states >= 4:
+                break
+            await self.human_delay(0.4, 0.7, kind="think")
 
         if self.logger:
-            self.logger.warning(f"Snapchat auto-login did not complete for {profile_id}; falling back to manual login")
+            self.logger.warning(
+                f"Snapchat auto-login did not complete for {profile_id} "
+                f"(username_submitted={username_submitted}, password_submitted={password_submitted}); "
+                "falling back to manual login"
+            )
         return None
 
     async def find_oauth_continue_locator(self, ctx):
