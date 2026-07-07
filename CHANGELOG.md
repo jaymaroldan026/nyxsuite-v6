@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.6 — macOS tray color fix, tiny dot, restart controls
+
+- Fixes the macOS menu-bar dot rendering monochrome/black: the icon is now
+  installed as a non-template NSImage and repainted on the main thread (AppKit
+  UI mutations from the background poll thread were silently ignored, so the
+  color never showed). The dot is now a small color indicator.
+- Recolors the indicator: **blue** while Nyx is running, **gray** while Nyxify
+  is running, a split blue/gray dot when both run, a faint ring when idle.
+- Makes the dot **tiny** (small padded glyph) instead of filling the menu bar.
+- Adds **Restart Nyx** and **Restart Nyxify** to the tray menu alongside
+  Start/Stop.
+
 ## 6.0.5 — Auto-retry transient Bitmoji fails, macOS tray redesign, parallel-create dedup
 
 ### Bitmoji: auto-retry the whole profile before failing

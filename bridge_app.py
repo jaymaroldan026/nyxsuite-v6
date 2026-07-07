@@ -557,11 +557,11 @@ class BridgeApp:
         hide_macos_dock_icon(log)
 
     # ---- tray status indicator (color dot per running product) --------------
-    # Distinct brand colors: Nyx = violet, Nyxify = cyan. Both running shows a
-    # split dot; stopped shows a faint hollow ring (near-invisible but keeps a
+    # Distinct colors: Nyx = blue, Nyxify = gray. Both running shows a split
+    # dot; stopped shows a faint hollow ring (near-invisible but keeps a
     # clickable menu-bar target). Works on macOS and Windows.
-    _NYX_DOT_COLOR = (139, 92, 246, 255)      # violet
-    _NYXIFY_DOT_COLOR = (6, 182, 212, 255)    # cyan
+    _NYX_DOT_COLOR = (59, 130, 246, 255)      # blue
+    _NYXIFY_DOT_COLOR = (160, 162, 170, 255)  # gray
 
     def _nyx_running(self) -> bool:
         try:
@@ -576,16 +576,24 @@ class BridgeApp:
             return False
 
     def _make_status_dot(self, nyx_running: bool, nyxify_running: bool):
-        """Return a PIL color-dot image for the current running state."""
+        """Return a PIL color-dot image for the current running state.
+
+        The menu-bar image is downscaled to ~22px, so the dot fills most of the
+        canvas (small padding) to stay legible. Running states are bright solid
+        fills; idle is a muted-but-visible hollow ring so the item is always
+        findable and clickable."""
         from PIL import Image, ImageDraw
 
+        # A small dot in a larger transparent canvas: when the menu bar scales
+        # the image down to its ~22px height, the generous padding makes the
+        # colored dot render tiny (~8px) rather than filling the bar.
         size = 44
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        pad = 8
+        pad = 14
         box = [pad, pad, size - pad, size - pad]
         if nyx_running and nyxify_running:
-            # Split dot: left half = Nyx, right half = Nyxify.
+            # Split dot: left half = Nyx (blue), right half = Nyxify (gray).
             draw.pieslice(box, 90, 270, fill=self._NYX_DOT_COLOR)
             draw.pieslice(box, 270, 450, fill=self._NYXIFY_DOT_COLOR)
         elif nyx_running:
@@ -593,10 +601,85 @@ class BridgeApp:
         elif nyxify_running:
             draw.ellipse(box, fill=self._NYXIFY_DOT_COLOR)
         else:
-            # Stopped: barely-there hollow ring — effectively invisible in the
-            # menu bar but still a clickable target.
-            draw.ellipse(box, outline=(150, 150, 150, 70), width=3)
+            # Idle: a faint hollow ring — muted "off" state, still visible/clickable.
+            draw.ellipse(box, outline=(120, 122, 130, 190), width=3)
         return img
+
+    def _apply_tray_image(self, image, title):
+        """Set the tray icon image/title, marshaling to the macOS main thread.
+
+        pystray's macOS backend calls AppKit ``setImage_`` directly, but AppKit
+        UI mutations must run on the main thread — setting ``icon.icon`` from our
+        background poll thread silently fails to repaint. Dispatch it onto the
+        main run loop on macOS; set it directly elsewhere (Windows/Linux are
+        fine from any thread)."""
+        icon = self._tray_icon
+        if icon is None:
+            return
+
+        def _apply():
+            try:
+                icon.icon = image
+            except Exception:
+                pass
+            try:
+                icon.title = title
+            except Exception:
+                pass
+            # macOS renders menu-bar images as monochrome "template" masks by
+            # default (tinted black in light mode / white in dark mode). Force
+            # the status-item button's NSImage to non-template so our color dot
+            # shows in full color.
+            if sys.platform == "darwin":
+                self._force_color_tray_image()
+
+        if sys.platform == "darwin":
+            try:
+                from Foundation import NSOperationQueue
+
+                NSOperationQueue.mainQueue().addOperationWithBlock_(_apply)
+                return
+            except Exception:
+                pass
+        _apply()
+
+    def _force_color_tray_image(self):
+        """On macOS, force the status-item button's image to render in color.
+
+        Builds an NSImage straight from the current PIL dot and installs it as a
+        NON-template image on the button, bypassing any monochrome/template
+        tinting the menu bar applies. Runs on the main thread (called from the
+        dispatched block)."""
+        try:
+            import io
+
+            import AppKit
+            import Foundation
+
+            button = self._tray_icon._status_item.button()
+            if button is None:
+                if not getattr(self, "_tray_diag_logged", False):
+                    self._tray_diag_logged = True
+                    log("Tray dot diag: status-item button is None")
+                return
+
+            # Rebuild the NSImage from the PIL image we last painted so we own a
+            # known-good color, non-template image regardless of pystray's cache.
+            state = (self._nyx_running(), self._nyxify_running())
+            pil = self._make_status_dot(*state)
+            buf = io.BytesIO()
+            pil.save(buf, "png")
+            nsimg = AppKit.NSImage.alloc().initWithData_(Foundation.NSData(buf.getvalue()))
+            nsimg.setTemplate_(False)
+            button.setImage_(nsimg)
+            try:
+                button.setContentTintColor_(None)
+            except Exception:
+                pass
+        except Exception as exc:
+            if not getattr(self, "_tray_color_warned", False):
+                self._tray_color_warned = True
+                log(f"Could not force color tray icon: {exc}")
 
     def _tray_title(self, nyx_running: bool, nyxify_running: bool) -> str:
         parts = []
@@ -610,21 +693,21 @@ class BridgeApp:
         """Poll the runner state and repaint the dot when it changes."""
         def loop():
             last = None
+            # Small initial delay so the pystray run loop is up before the first
+            # main-thread dispatch.
+            self._stop.wait(1.5)
             while not self._stop.is_set():
                 try:
                     state = (self._nyx_running(), self._nyxify_running())
-                    icon = self._tray_icon
-                    if icon is not None and state != last:
-                        icon.icon = self._make_status_dot(*state)
-                        icon.title = self._tray_title(*state)
-                        try:
-                            icon.update_menu()
-                        except Exception:
-                            pass
+                    if self._tray_icon is not None and state != last:
+                        self._apply_tray_image(
+                            self._make_status_dot(*state),
+                            self._tray_title(*state),
+                        )
                         last = state
                 except Exception:
                     pass
-                self._stop.wait(2.0)
+                self._stop.wait(1.5)
 
         threading.Thread(target=loop, daemon=True).start()
 
@@ -663,16 +746,22 @@ class BridgeApp:
         # Flat menu: both products' Start and Stop are visible directly (no
         # submenu to hover into). Start is enabled only when stopped, Stop only
         # when running, so the actionable control is obvious.
+        def restart(controller):
+            controller.stop({})
+            controller.start({"force_restart": True})
+
         menu = pystray.Menu(
             pystray.MenuItem("Open Dashboard", lambda icon, _it=None: self.open_dashboard()),
             pystray.Menu.SEPARATOR,
             status_line("Nyx", self._nyx_running),
             item("Start Nyx", lambda: self.nyx.start({}), enabled=lambda _i: not self._nyx_running()),
             item("Stop Nyx", lambda: self.nyx.stop({}), enabled=lambda _i: self._nyx_running()),
+            item("Restart Nyx", lambda: restart(self.nyx)),
             pystray.Menu.SEPARATOR,
             status_line("Nyxify", self._nyxify_running),
             item("Start Nyxify", lambda: self.nyxify.start({}), enabled=lambda _i: not self._nyxify_running()),
             item("Stop Nyxify", lambda: self.nyxify.stop({}), enabled=lambda _i: self._nyxify_running()),
+            item("Restart Nyxify", lambda: restart(self.nyxify)),
             pystray.Menu.SEPARATOR,
             item("Check for Update", lambda: self._bridge_actions()["check_update"]()),
             item("Roll back to previous", lambda: self._bridge_actions()["rollback"]()),

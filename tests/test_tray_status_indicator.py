@@ -51,9 +51,9 @@ class TrayStatusIndicatorTests(unittest.TestCase):
         self.assertNotEqual(nyx, nyxify)
         self.assertNotEqual(nyx, both)
         self.assertNotEqual(nyxify, both)
-        # The Nyx (violet) and Nyxify (cyan) fills are actually present.
-        self.assertIn((139, 92, 246, 255), nyx)
-        self.assertIn((6, 182, 212, 255), nyxify)
+        # The Nyx (blue) and Nyxify (gray) fills are actually present.
+        self.assertIn((59, 130, 246, 255), nyx)
+        self.assertIn((160, 162, 170, 255), nyxify)
 
     def test_title_reflects_state(self):
         b = _bridge()
