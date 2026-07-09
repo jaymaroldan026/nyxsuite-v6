@@ -31,6 +31,7 @@ from core.process_utils import (
     find_python_process_ids,
     force_kill_process_tree,
     is_pid_running,
+    pid_matches,
     read_pid_file,
     resolve_python_executable,
     start_background_process,
@@ -43,6 +44,12 @@ from core.process_utils import (
 STOP_CONFIRM_TIMEOUT_SECONDS = 3.0
 
 ORPHAN_SCAN_TTL_SECONDS = 3.0
+
+# How long a confirmed pid->is-ours verdict is trusted before re-checking. The
+# check shells out (PowerShell/ps), so we cache it to keep resolve_pid cheap on
+# the hot status path while still catching a PID that was recycled onto another
+# process (e.g. chrome.exe) within a bounded window.
+PID_IDENTITY_TTL_SECONDS = 20.0
 
 
 @dataclass
@@ -65,6 +72,30 @@ class ManagedRunner:
     def __init__(self, spec: RunnerSpec):
         self.spec = spec
         self._pid_cache = {"at": 0.0, "pid": None, "scanning": False}
+        # PIDs we launched this process lifetime — trusted without a lookup.
+        self._spawned_pids: set = set()
+        # pid -> (is_ours: bool, checked_at: float) short-lived verification cache.
+        self._identity_cache: dict = {}
+
+    def _pid_is_ours(self, pid: Optional[int]) -> bool:
+        """Confirm ``pid`` is actually this runner (not a recycled PID).
+
+        A pid file left by a previous session can point at a PID Windows has
+        since handed to an unrelated process. Trusting it would let stop() run
+        ``taskkill /T /F`` against, say, the user's Chrome. We only trust a PID
+        we spawned ourselves or one whose live image/cmdline matches the spec.
+        """
+        if not pid:
+            return False
+        if pid in self._spawned_pids:
+            return True
+        now = time.monotonic()
+        cached = self._identity_cache.get(pid)
+        if cached and (now - cached[1]) < PID_IDENTITY_TTL_SECONDS:
+            return cached[0]
+        ok = pid_matches(pid, self.spec.process_names, self.spec.script_match)
+        self._identity_cache[pid] = (ok, now)
+        return ok
 
     def resolve_exe(self) -> Optional[Path]:
         for candidate in self.spec.exe_candidates:
@@ -88,11 +119,15 @@ class ManagedRunner:
         return pids
 
     def resolve_pid(self) -> Optional[int]:
-        # Fast path: a live pid file is authoritative and cheap.
+        # Fast path: a live pid file is authoritative and cheap — but only once
+        # we've confirmed the PID is still OUR runner and wasn't recycled onto an
+        # unrelated process (see _pid_is_ours).
         pid = read_pid_file(self.spec.pid_file)
-        if pid and is_pid_running(pid):
+        if pid and is_pid_running(pid) and self._pid_is_ours(pid):
             return pid
         if pid:
+            # Dead, or alive but recycled onto another process — drop the stale
+            # pid file so nothing downstream trusts or kills it.
             clear_pid_file(self.spec.pid_file)
         # No live pid file. The orphan scan shells out to PowerShell (~1-2s), so
         # run it on a background thread and return the cached result immediately,
@@ -114,6 +149,9 @@ class ManagedRunner:
                 break
         if found:
             write_pid_file(self.spec.pid_file, found)
+            # _find_pids only returns processes already matched to our runner by
+            # image/cmdline, so prime the identity cache to skip a redundant lookup.
+            self._identity_cache[found] = (True, time.monotonic())
         self._pid_cache.update({"at": time.monotonic(), "pid": found, "scanning": False})
 
     def is_running(self) -> bool:
@@ -130,7 +168,9 @@ class ManagedRunner:
         """Spawn the runner. Returns (pid, started). Mirrors start_bot_process()."""
         live = [pid for pid in self._find_pids() if is_pid_running(pid)]
         existing = read_pid_file(self.spec.pid_file)
-        if existing and is_pid_running(existing) and existing not in live:
+        # Only adopt/kill the pid-file PID if it's confirmed to be our runner —
+        # never a number Windows recycled onto an unrelated process.
+        if existing and is_pid_running(existing) and self._pid_is_ours(existing) and existing not in live:
             live.insert(0, existing)
 
         if live:
@@ -159,6 +199,8 @@ class ManagedRunner:
             env=env,
         )
         write_pid_file(self.spec.pid_file, process.pid)
+        self._spawned_pids.add(process.pid)
+        self._identity_cache[process.pid] = (True, time.monotonic())
         return process.pid, True
 
     def stop(self) -> bool:

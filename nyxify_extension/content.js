@@ -759,13 +759,22 @@
     });
   }
 
-  function hasNoPendingOrderToast() {
+  function hasNoPendingOrderToast(kind) {
     var text = "";
     try {
       text = normalizeText(document.body ? (document.body.innerText || document.body.textContent || "") : "").toLowerCase();
     } catch (e) {
       text = "";
     }
+    if (kind === "phone") {
+      // "No pending phone order for this account. Request a number first."
+      return text.indexOf("no pending phone order") >= 0
+        || text.indexOf("no pending order") >= 0
+        || text.indexOf("request a number first") >= 0
+        || text.indexOf("get a number first") >= 0
+        || text.indexOf("get number first") >= 0;
+    }
+    // "No pending email order for this account. Get email first."
     return text.indexOf("no pending email order") >= 0
       || text.indexOf("no pending order") >= 0
       || text.indexOf("get email first") >= 0;
@@ -792,7 +801,7 @@
     // "No pending email order for this account. Get email first." — SnapBoard
     // needs an email ordered before it will hand one over. Click Get Email and
     // wait again before giving up so the Python side can keep proceeding.
-    if (!fetchedEmail && hasNoPendingOrderToast()) {
+    if (!fetchedEmail && hasNoPendingOrderToast("email")) {
       if (clickGetEmailButton(rowId)) {
         fetchedEmail = await waitForEmailForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentEmail);
       }
@@ -801,6 +810,9 @@
     if (!fetchedEmail) {
       return {
         ok: false,
+        // Signals the background to refresh SnapBoard and retry — a stale board
+        // is a common cause of "no pending order" when an order really exists.
+        stale: hasNoPendingOrderToast("email"),
         error: forceNew
           ? "New email did not appear after clicking Redo Email."
           : "Email did not appear after clicking Get Email.",
@@ -826,9 +838,20 @@
     }
 
     var fetchedPhone = await waitForPhoneForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentPhone);
+
+    // "No pending phone order for this account. Request a number first." —
+    // SnapBoard needs a number ordered before it hands one over. Mirror the
+    // email path: click Request Number and wait again before giving up.
+    if (!fetchedPhone && hasNoPendingOrderToast("phone")) {
+      if (clickGetPhoneButton(rowId)) {
+        fetchedPhone = await waitForPhoneForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentPhone);
+      }
+    }
+
     if (!fetchedPhone) {
       return {
         ok: false,
+        stale: hasNoPendingOrderToast("phone"),
         error: forceNew
           ? "New phone did not appear after clicking Redo Phone."
           : "Phone did not appear after clicking Request Number.",

@@ -22,6 +22,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import webbrowser
 
 from pathlib import Path
@@ -315,39 +316,116 @@ class BridgeApp:
         backups = list_backups()
         version = (payload or {}).get("version") or (backups[0] if backups else None)
         if not version:
-            return {"ok": False, "message": "No backup available to roll back to."}
+            return {"ok": False, "message": "No version specified and no local backup to roll back to."}
+        version = str(version).strip().lstrip("vV")
+
+        # Stop runners before touching any files.
+        for name in self.supervisor.names():
+            try:
+                self.supervisor.stop(name)
+            except Exception:
+                pass
+
+        # Fast path: this version was snapshotted locally — restore from disk.
+        backup_folder = backups_dir() / version
+        if backup_folder.is_dir():
+            try:
+                sync_source_dirs(backup_folder, ROOT_DIR)
+                sync_extensions(backup_folder, ROOT_DIR)
+                _sync_root_files(backup_folder, ROOT_DIR)
+                ver_src = backup_folder / "VERSION"
+                if ver_src.exists():
+                    (ROOT_DIR / "VERSION").write_text(
+                        ver_src.read_text(encoding="utf-8-sig").strip(), encoding="ascii"
+                    )
+            except Exception as exc:
+                return {"ok": False, "message": f"Rollback failed: {exc}"}
+            self._relaunch_after_exit()
+            threading.Timer(0.8, self._request_exit).start()
+            return {"ok": True, "message": f"Rolling back to v{version}; the app will restart."}
+
+        # No local snapshot for this version — download that published release
+        # and apply it (this also snapshots the current build first, so a later
+        # roll-forward still has a restore point, and preserves user data).
         try:
-            for name in self.supervisor.names():
-                try:
-                    self.supervisor.stop(name)
-                except Exception:
-                    pass
-            backup_folder = backups_dir() / version
-            if not backup_folder.is_dir():
-                return {"ok": False, "message": f"Backup folder not found for {version}."}
-            # Restore source directories
-            sync_source_dirs(backup_folder, ROOT_DIR)
-            # Restore extensions
-            sync_extensions(backup_folder, ROOT_DIR)
-            # Restore root-level files
-            _sync_root_files(backup_folder, ROOT_DIR)
-            # Restore VERSION
-            ver_src = backup_folder / "VERSION"
-            if ver_src.exists():
-                (ROOT_DIR / "VERSION").write_text(ver_src.read_text(encoding="utf-8-sig"), encoding="ascii")
+            from core.release_updater import (apply_update_direct, get_release_by_version,
+                                              load_update_config)
+            from core.release_updater import _log as _update_log
+            cfg = load_update_config()
+            repo, pattern = cfg.get("repo"), cfg.get("asset_pattern")
+            if not repo or not pattern:
+                return {"ok": False, "message": f"No local backup for v{version}, and no update channel is configured to download it."}
+            rel = get_release_by_version(repo, pattern, version)
+            _update_log(f"rollback download started — {rel.tag_name}")
+            result = apply_update_direct(rel.asset_url, rel.tag_name)
+            if not result.get("ok"):
+                _update_log(f"rollback download failed: {result.get('message')}", "error")
+                return {"ok": False, "message": result.get("message", "Rollback download failed.")}
+            _update_log(f"rollback completed — {result.get('message')}")
         except Exception as exc:
             return {"ok": False, "message": f"Rollback failed: {exc}"}
         self._relaunch_after_exit()
         threading.Timer(0.8, self._request_exit).start()
-        return {"ok": True, "message": f"Rolling back to {version}; the app will restart."}
+        return {"ok": True, "message": f"Rolling back to v{version}; the app will restart."}
 
     def _action_list_backups(self, payload=None) -> dict:
         try:
             from core.update_backup import list_backups
-
-            return {"ok": True, "backups": list_backups()}
         except Exception as exc:
-            return {"ok": False, "backups": [], "message": str(exc)}
+            return {"ok": False, "backups": [], "available_versions": [], "message": str(exc)}
+        try:
+            backups = list_backups()
+        except Exception:
+            backups = []
+        return {
+            "ok": True,
+            "backups": backups,
+            "available_versions": self._available_release_versions(backups),
+        }
+
+    def _available_release_versions(self, local_backups=None) -> list:
+        """Every version Roll Back can restore: all published releases (fetched
+        over the network, cached briefly) plus any local-only snapshots, each
+        flagged with whether it's available offline. Degrades to just the local
+        backups when GitHub is unreachable."""
+        local_set = {str(b).strip().lstrip("vV") for b in (local_backups or [])}
+        cache = getattr(self, "_rollback_versions_cache", None)
+        if cache is None:
+            cache = {"at": 0.0, "versions": []}
+            self._rollback_versions_cache = cache
+        now = time.monotonic()
+        if not cache["versions"] or (now - cache["at"]) > 300.0:
+            try:
+                from core.release_updater import (get_current_version, list_all_releases,
+                                                  load_update_config)
+                cfg = load_update_config()
+                repo, pattern = cfg.get("repo"), cfg.get("asset_pattern")
+                if repo and pattern:
+                    current = str(get_current_version() or "").strip().lstrip("vV")
+                    fetched = []
+                    for rel in list_all_releases(repo, pattern):
+                        tag = str(rel.tag_name or "").strip().lstrip("vV")
+                        if tag:
+                            fetched.append({
+                                "version": tag,
+                                "name": rel.release_name or rel.tag_name,
+                                "current": tag == current,
+                            })
+                    cache.update({"at": now, "versions": fetched})
+            except Exception:
+                pass  # keep any prior list; local backups remain usable
+
+        out, seen = [], set()
+        for item in cache["versions"]:
+            v = item.get("version")
+            if not v or v in seen:
+                continue
+            seen.add(v)
+            out.append({**item, "local": v in local_set})
+        for v in sorted(local_set, reverse=True):
+            if v not in seen:
+                out.append({"version": v, "name": v, "current": False, "local": True})
+        return out
 
     def _action_autostart(self, payload=None) -> dict:
         try:

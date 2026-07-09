@@ -29,7 +29,24 @@ from pathlib import Path
 
 BACKUPS_DIRNAME = "local_update_backups"
 PENDING_VERIFY_NAME = ".pending_verify"
-KEEP_BACKUPS = 2
+
+
+def _default_keep_backups() -> int:
+    """How many local snapshots to retain. Kept high so Roll Back offers real
+    history instead of only the previous one or two builds; the snapshots are
+    source + extensions only (no data/logs), so they stay small. Override with
+    ``NYX_KEEP_BACKUPS`` (any published release can still be rolled back to over
+    the network regardless of this cap)."""
+    try:
+        raw = int(os.getenv("NYX_KEEP_BACKUPS", "") or 0)
+        if raw > 0:
+            return raw
+    except Exception:
+        pass
+    return 20
+
+
+KEEP_BACKUPS = _default_keep_backups()
 DEFAULT_SKIP = ["data", "logs", ".env", BACKUPS_DIRNAME]
 
 

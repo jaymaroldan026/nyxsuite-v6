@@ -277,6 +277,95 @@ def is_pid_running(pid):
         return False
 
 
+def _process_identity(pid):
+    """Return ``(image_name_lower, command_line_lower)`` for ``pid``.
+
+    Returns ``("", "")`` when the process cannot be inspected. Used to confirm a
+    PID actually belongs to one of our runners before trusting or killing it —
+    Windows (and, less aggressively, POSIX) recycle PIDs, so a stale pid file
+    whose number now points at an unrelated process (commonly ``chrome.exe``)
+    must never be tree-killed. See :func:`pid_matches`.
+    """
+    if not pid:
+        return "", ""
+
+    if os.name == "nt":
+        command = (
+            f"Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
+            "Select-Object Name, CommandLine | ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                check=False,
+                creationflags=windows_creation_flags(),
+            )
+            raw = (result.stdout or "").strip()
+            if not raw:
+                return "", ""
+            import json
+
+            data = json.loads(raw)
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            if not isinstance(data, dict):
+                return "", ""
+            name = str(data.get("Name") or "").strip().lower()
+            cmdline = str(data.get("CommandLine") or "").strip().lower()
+            return name, cmdline
+        except Exception:
+            return "", ""
+
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return "", ""
+    cmdline = (result.stdout or "").strip()
+    if not cmdline:
+        return "", ""
+    # First token is the executable path; its basename is the image name.
+    first = cmdline.split(None, 1)[0]
+    image = Path(first).name.lower()
+    return image, cmdline.lower()
+
+
+def pid_matches(pid, process_names=None, cmdline_substring=""):
+    """True if the live process ``pid`` looks like one of our runners.
+
+    Matches when the process image basename is in ``process_names`` OR its
+    command line contains ``cmdline_substring`` (e.g. the full path to
+    ``main.py``). Fails **closed**: if the identity can't be read, returns
+    ``False`` so a PID we cannot confirm is ours is never killed. This is the
+    guard that stops a recycled pid-file PID (now ``chrome.exe``) from being
+    tree-killed when the GUI starts/stops runners.
+    """
+    if not pid:
+        return False
+    names = {
+        Path(str(name or "").strip()).name.lower()
+        for name in (process_names or [])
+        if str(name or "").strip()
+    }
+    substring = str(cmdline_substring or "").strip().lower()
+    if not names and not substring:
+        return False
+    image, cmdline = _process_identity(pid)
+    if not image and not cmdline:
+        return False
+    if names and image in names:
+        return True
+    if substring and cmdline and substring in cmdline:
+        return True
+    return False
+
+
 def read_pid_file(pid_file):
 
     try:

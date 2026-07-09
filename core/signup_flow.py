@@ -154,6 +154,24 @@ _JS_IS_DISABLED = """
 """
 
 
+async def _safe_scroll_into_view(locator, timeout_ms: int = 4000) -> bool:
+    """Scroll ``locator`` into view without letting it stall the flow.
+
+    Playwright's ``scroll_into_view_if_needed()`` blocks for the full default
+    timeout (30s) when an element is present but its actionability check never
+    settles — observed on the Snapchat login/signup ``#username`` field on some
+    Windows profiles, where the runner appeared "stuck on the login phase"
+    (30-60s per field, humanized type then js_set fallback each waiting out the
+    default). Bound it to a few seconds and treat failure as non-fatal: callers
+    either set the value via JS (no scroll needed) or click with ``force=True``.
+    """
+    try:
+        await locator.scroll_into_view_if_needed(timeout=timeout_ms)
+        return True
+    except Exception:
+        return False
+
+
 async def _js_set(page, selector: str, value: str, logger=None, label: str = "") -> bool:
     """Set an input/select value via JS (works without window focus)."""
     try:
@@ -171,7 +189,7 @@ async def _js_set(page, selector: str, value: str, logger=None, label: str = "")
     # Fallback: Playwright locator.fill() — at least sets DOM value
     try:
         loc = page.locator(selector).first
-        await loc.scroll_into_view_if_needed()
+        await _safe_scroll_into_view(loc)
         await loc.click()
         await loc.fill(str(value))
         actual = await loc.input_value()
@@ -272,7 +290,7 @@ async def _humanized_type(page, selector: str, value: str, logger=None, label: s
     text = str(value or "")
     try:
         loc = page.locator(selector).first
-        await loc.scroll_into_view_if_needed()
+        await _safe_scroll_into_view(loc)
         await _human_clear_field(page, loc, logger)
         await _human_pause(page, 120, 300)
         await _human_type_text(page, loc, text)
@@ -300,7 +318,7 @@ async def _humanized_type_only(page, selector: str, value: str, logger=None, lab
     text = str(value or "")
     try:
         loc = page.locator(selector).first
-        await loc.scroll_into_view_if_needed()
+        await _safe_scroll_into_view(loc)
         await _human_clear_field(page, loc, logger)
         await _human_pause(page, 120, 300)
         await _human_type_text(page, loc, text)
@@ -1258,7 +1276,7 @@ async def _click_use_email_instead(page, logger=None, profile_id: str = "") -> b
             except Exception:
                 text = ""
             if text and "email" in text:
-                await locator.scroll_into_view_if_needed()
+                await _safe_scroll_into_view(locator)
                 await locator.click(force=True)
                 await page.wait_for_timeout(900)
                 logger and logger.info(f"[{profile_id}] Clicked email verification switch with selector {selector!r}.")
@@ -2165,6 +2183,96 @@ async def _handle_optional_phone_sms_verification(
     return result
 
 
+async def _click_verification_back_button(page, logger=None, profile_id: str = "") -> bool:
+    """Click the back arrow on the email / "Enter Code" verification card.
+
+    Snapchat's verification steps show a back chevron in the form header
+    (``svg[class*='FormHeader_button']`` inside ``div[class*='FormHeader_title']``).
+    Clicking it returns to the email / phone entry step so a fresh address or
+    number can be submitted when the current one never produced an OTP.
+    Best-effort: returns False if no back control is found.
+    """
+    selectors = [
+        "svg[class*='FormHeader_button']",
+        "[class*='FormHeader_title'] svg",
+        "[class*='FormHeader'] button",
+        "button[aria-label*='back' i]",
+        "[role='button'][aria-label*='back' i]",
+        "[class*='back' i][role='button']",
+    ]
+    for selector in selectors:
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() == 0 or not await loc.is_visible():
+                continue
+            await _safe_scroll_into_view(loc)
+            await loc.click(force=True, timeout=2500)
+            await page.wait_for_timeout(800)
+            logger and logger.info(f"[{profile_id}] Clicked verification back button ({selector!r}).")
+            return True
+        except Exception:
+            continue
+    return False
+
+
+async def _recover_otp_via_back_and_new_email(
+    signup_page,
+    otp_fetcher,
+    email_fetcher,
+    logger,
+    profile_id,
+    progress_callback=None,
+    max_attempts: int = 2,
+):
+    """Recover when no OTP arrives — usually a stale SnapBoard or an unusable
+    email. Go back to the email step, order a fresh email, resubmit it, wait for
+    the code step again, and refetch the OTP. Strictly additive: it only runs
+    after a normal OTP fetch already came back empty, and any failure simply
+    returns ``("", page)`` so the caller gives up exactly as it did before.
+    Returns ``(otp, signup_page)``.
+    """
+    if email_fetcher is None:
+        return "", signup_page
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
+        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+        if not clicked_back and not await _is_email_verification_step(signup_page):
+            return "", signup_page
+
+        # Wait for the email entry step to (re)appear before re-ordering.
+        on_email_step = await _is_email_verification_step(signup_page)
+        for _ in range(6):
+            if on_email_step:
+                break
+            await signup_page.wait_for_timeout(500)
+            on_email_step = await _is_email_verification_step(signup_page)
+        if not on_email_step:
+            continue
+
+        logger and logger.info(
+            f"[{profile_id}] OTP never arrived; ordering a fresh email and resubmitting "
+            f"(attempt {attempt}/{max_attempts})."
+        )
+        await _emit_signup_progress(progress_callback, "fetching_replacement_email", logger, profile_id)
+        new_email = await _fetch_email_from_provider(email_fetcher, force_new=True, logger=logger, profile_id=profile_id)
+        if not _is_valid_email(new_email):
+            continue
+        await _emit_signup_progress(progress_callback, "filling_email_verification", logger, profile_id)
+        if not await _fill_and_submit_verification_email(signup_page, new_email, logger, profile_id):
+            continue
+
+        stage = await _wait_for_signup_progress(
+            signup_page, logger, profile_id, timeout_ms=120000, progress_callback=progress_callback
+        )
+        if stage != "otp":
+            continue
+        await _emit_signup_progress(progress_callback, "fetching_otp", logger, profile_id)
+        otp = await otp_fetcher()
+        if otp:
+            return str(otp), signup_page
+    return "", signup_page
+
+
 async def _handle_verification(
     signup_page,
     email: str,
@@ -2339,6 +2447,18 @@ async def _handle_verification(
     logger and logger.info(f"[{profile_id}] OTP field visible. Fetching from SnapBoard.")
     await _emit_signup_progress(progress_callback, "fetching_otp", logger, profile_id)
     otp = await otp_fetcher()
+    if not otp:
+        logger and logger.warning(
+            f"[{profile_id}] Could not retrieve OTP from SnapBoard; trying back + fresh-email recovery."
+        )
+        otp, signup_page = await _recover_otp_via_back_and_new_email(
+            signup_page,
+            otp_fetcher,
+            email_fetcher,
+            logger,
+            profile_id,
+            progress_callback=progress_callback,
+        )
     if not otp:
         logger and logger.warning(f"[{profile_id}] Could not retrieve OTP from SnapBoard.")
         return result

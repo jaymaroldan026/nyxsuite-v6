@@ -1,5 +1,46 @@
 # Changelog
 
+## 6.0.7 — Bitmoji outfit fallback, roll back to any version, Windows Chrome-kill fix, SnapBoard auto-refresh
+
+### Bitmoji: stop "scrolling forever" when an item leaves the catalog
+- Bitmoji rotates its clothing catalog, so configured outfit item ids (e.g.
+  `bottom=788`, and every currently-configured footwear id) periodically stop
+  existing. The exact-match scan then never found them, scrolled the panel to the
+  bottom, and failed the whole profile — the "scroll forever" symptom. Outfit
+  selection now still **prefers** the configured item, but when its id is gone it
+  falls back to any available item of the same category so the avatar still gets
+  dressed (deterministic per profile, skips blocked ids). Toggle with
+  `NYX_OUTFIT_FALLBACK_ANY=0` for strict exact-item behaviour.
+- Also bounded the Bitmoji panel scroll calls (were able to hang ~30s each) so a
+  slow-rendering category can't stall the run.
+
+### Updates: roll back to any published version
+- The rollback picker now lists **every** published release, not just local
+  snapshots — pick any older version in Dashboard → Settings and it downloads and
+  applies that release if no local backup exists. Local backups kept bumped from
+  2 to 20 (env `NYX_KEEP_BACKUPS`).
+
+### Windows: running the GUI no longer kills Chrome
+- Fixed a PID-reuse bug where a recycled process id that now belonged to
+  `chrome.exe` could be trusted or force-killed as if it were our runner. The
+  runner now verifies a pid actually belongs to our process (image/cmdline)
+  before trusting or terminating it.
+
+### Nyxify: SnapBoard auto-refresh + email/phone OTP retry parity
+- When an email or phone OTP fetch comes back "no pending order for this account"
+  (often just a stale SnapBoard tab), Nyxify now refreshes the SnapBoard tab
+  (with a cooldown) and retries. Phone OTP got the same no-pending retry and
+  back-button recovery that email already had.
+
+### Snapchat signup: login-phase stall fix
+- Bounded the `scroll_into_view` on the Snapchat username/login field (was able
+  to block ~30s and stall the signup) to a short, non-fatal timeout.
+
+### Nyx extension: daily-update AdsPower id now auto-saves
+- The Start-ID field in the extension popup now debounced-auto-saves as you type
+  (and on blur). Previously the 15s panel refresh wiped the typed id because it
+  was never persisted.
+
 ## 6.0.6 — macOS tray color fix, tiny dot, restart controls
 
 - Fixes the macOS menu-bar dot rendering monochrome/black: the icon is now

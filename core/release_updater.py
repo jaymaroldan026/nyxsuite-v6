@@ -254,6 +254,60 @@ def get_latest_release(repo: str, asset_pattern: str, token: Optional[str] = Non
     )
 
 
+def list_all_releases(repo: str, asset_pattern: str, token: Optional[str] = None, limit: int = 30) -> list["ReleaseInfo"]:
+    """Return every published (non-draft) release with a matching asset, newest
+    first.
+
+    This backs "roll back to any old version": rather than only the one or two
+    local snapshots this install happened to make, the user can pick any build
+    ever shipped to the release repo. Drafts are skipped; releases without a
+    matching asset are skipped.
+    """
+    if not repo:
+        raise ValueError("repo is required (e.g. 'owner/name').")
+    url = f"{GITHUB_API_BASE}/repos/{repo}/releases?per_page={max(1, int(limit))}"
+    releases = _github_request_list(url, token=token)
+    infos: list[ReleaseInfo] = []
+    for payload in releases:
+        if payload.get("draft"):
+            continue
+        tag_name = str(payload.get("tag_name") or "").strip()
+        if not tag_name:
+            continue
+        for asset in (payload.get("assets") or []):
+            name = str(asset.get("name") or "")
+            if not name or not fnmatch.fnmatch(name, asset_pattern):
+                continue
+            download_url = str(asset.get("browser_download_url") or "")
+            if not download_url:
+                continue
+            infos.append(
+                ReleaseInfo(
+                    tag_name=tag_name,
+                    asset_name=name,
+                    asset_url=download_url,
+                    asset_size=int(asset.get("size") or 0),
+                    release_name=str(payload.get("name") or tag_name).strip(),
+                    body=str(payload.get("body") or "").strip(),
+                    html_url=str(payload.get("html_url") or "").strip(),
+                )
+            )
+            break
+    return infos
+
+
+def get_release_by_version(repo: str, asset_pattern: str, version: str, token: Optional[str] = None) -> "ReleaseInfo":
+    """Find the published release whose tag matches ``version`` (``v`` optional)."""
+    target = _normalize_notice_tag(version)
+    for info in list_all_releases(repo, asset_pattern, token=token):
+        if _normalize_notice_tag(info.tag_name) == target:
+            return info
+    raise RuntimeError(
+        f"No published release matching version {version!r} with an asset like "
+        f"{asset_pattern!r} was found in {repo}."
+    )
+
+
 def _normalize_notice_tag(tag_name: str) -> str:
     return str(tag_name or "").strip().lstrip("vV") or "0.0.0"
 

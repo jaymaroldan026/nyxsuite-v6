@@ -1520,6 +1520,65 @@ function sendMessageToSnapboardTab(message) {
   });
 }
 
+// --- SnapBoard staleness recovery ------------------------------------------
+// A SnapBoard tab that drifts out of sync stops handing out emails/numbers
+// ("no pending order" even when an order exists) and drops row updates. A plain
+// page refresh re-syncs it. We reload reactively when a fetch comes back empty,
+// rate-limited so a burst of failures can't reload-loop and interrupt healthy
+// concurrent work.
+let lastSnapboardReloadAt = 0;
+const SNAPBOARD_RELOAD_COOLDOWN_MS = 20000;
+const SNAPBOARD_RECONNECT_TIMEOUT_MS = 15000;
+
+async function refreshSnapboardTab() {
+  const now = Date.now();
+  if (now - lastSnapboardReloadAt < SNAPBOARD_RELOAD_COOLDOWN_MS) {
+    return false;
+  }
+  const tabId = getAvailableSnapboardTabId();
+  if (tabId == null) {
+    return false;  // no tab to reload
+  }
+  lastSnapboardReloadAt = now;
+  const oldPort = snapboardPorts.get(tabId) || null;
+  try {
+    await appendEventLog("Refreshing SnapBoard to recover from a stale/no-update response.");
+    await chrome.tabs.reload(tabId);
+  } catch (error) {
+    return false;
+  }
+  // Wait for the reloaded page's content bridge to reconnect — a brand-new port
+  // object replaces the old one (see onConnect for "nyxify-snapboard-bridge").
+  const deadline = Date.now() + SNAPBOARD_RECONNECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = snapboardPorts.get(tabId);
+    if (current && current !== oldPort) {
+      await delay(1500);  // let SnapBoard render its rows before we retry
+      return true;
+    }
+    await delay(300);
+  }
+  return false;
+}
+
+// Send a fetch to SnapBoard and, if it comes back empty/failed, refresh the
+// board once and retry — "refresh the SnapBoard first before retrying", since a
+// stale board is a common cause of a missing email/number.
+async function snapboardFetchWithRefresh(message) {
+  const response = await sendMessageToSnapboardTab(message);
+  if (response && response.ok) {
+    return response;
+  }
+  const refreshed = await refreshSnapboardTab();
+  if (refreshed) {
+    const retry = await sendMessageToSnapboardTab(message);
+    if (retry) {
+      return retry;
+    }
+  }
+  return response;
+}
+
 async function reserveAutoFillClickInternal() {
   const syncData = await chrome.storage.sync.get(STORAGE_KEYS.config);
   const config = normalizeConfig(syncData[STORAGE_KEYS.config] || {});
@@ -1635,7 +1694,7 @@ async function processBridgeActionsOnce() {
     if (emailRequests.length) {
       await Promise.all(emailRequests.map(async (emailRequest) => {
         try {
-          const emailResponse = await sendMessageToSnapboardTab({
+          const emailResponse = await snapboardFetchWithRefresh({
             type: "NYXIFY_SNAPBOARD_ACTION",
             action: "email_fetch",
             row_key: emailRequest.row_key,
@@ -1660,7 +1719,7 @@ async function processBridgeActionsOnce() {
     if (phoneRequests.length) {
       await Promise.all(phoneRequests.map(async (phoneRequest) => {
         try {
-          const phoneResponse = await sendMessageToSnapboardTab({
+          const phoneResponse = await snapboardFetchWithRefresh({
             type: "NYXIFY_SNAPBOARD_ACTION",
             action: "phone_fetch",
             row_key: phoneRequest.row_key,

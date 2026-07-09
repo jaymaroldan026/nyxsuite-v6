@@ -156,7 +156,13 @@
           <div class="btn-row">
             <button id="update-check-btn" class="btn" type="button">Check for Update</button>
             <button id="update-apply-btn" class="btn primary" type="button" style="display:none">Apply Update</button>
-            <button id="update-rollback-btn" class="btn bad" type="button" style="display:none">Roll Back</button>
+          </div>
+          <div class="setting-row" id="update-rollback-row" style="display:none">
+            <span class="setting-label">Roll back to</span>
+            <span class="setting-value">
+              <select id="update-rollback-select" class="input" title="Pick any previously released version"></select>
+              <button id="update-rollback-btn" class="btn bad" type="button">Roll Back</button>
+            </span>
           </div>
           <div id="update-backups" class="setting-row"></div>
           <div id="update-release-notes" class="release-notes" style="display:none"></div>

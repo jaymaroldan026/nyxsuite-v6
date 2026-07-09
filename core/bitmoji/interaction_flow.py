@@ -590,7 +590,11 @@ class BitmojiInteractionMixin:
             return False
 
         try:
-            await locator.scroll_into_view_if_needed()
+            # Bounded: scroll_into_view_if_needed blocks for the full 30s default
+            # when a target never settles, which is a big contributor to Bitmoji
+            # "scrolling forever" in some categories. The click below has a
+            # force fallback, so a scroll miss is non-fatal.
+            await locator.scroll_into_view_if_needed(timeout=4000)
         except Exception:
             pass
 
@@ -901,7 +905,7 @@ class BitmojiInteractionMixin:
                     raise Exception(f"{action_name} target not found")
 
                 try:
-                    await target.scroll_into_view_if_needed()
+                    await target.scroll_into_view_if_needed(timeout=4000)
                 except Exception:
                     pass
 

@@ -57,7 +57,7 @@ const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
   nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, advancedVisible: false },
   version: "",
-  update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [] },
+  update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [], availableVersions: [] },
 };
 let active = "nyx";
 const selected = { nyx: null, nyxify: null };
@@ -435,9 +435,10 @@ async function renderSettings() {
   await refreshConfig("nyx");
   renderAdsPowerModeControls();
   renderUpdatesCard();
-  // Refresh backup availability so Roll Back only shows when there's a restore point.
+  // Refresh rollback targets: local snapshots plus every published version.
   const backups = await callBridge("list_backups");
   state.update.backups = backups.ok ? (backups.backups || []) : [];
+  state.update.availableVersions = backups.ok ? (backups.available_versions || []) : [];
   renderUpdatesCard();
 }
 
@@ -487,7 +488,6 @@ function renderUpdatesCard() {
   const latestRow = el("update-latest-row");
   const latestEl = el("update-latest");
   const applyBtn = el("update-apply-btn");
-  const rollbackBtn = el("update-rollback-btn");
   const notesEl = el("update-release-notes");
   const backupsEl = el("update-backups");
   if (u.available) {
@@ -505,9 +505,47 @@ function renderUpdatesCard() {
     applyBtn.style.display = "none";
     notesEl.style.display = "none";
   }
-  const hasBackups = !!(u.backups && u.backups.length);
-  rollbackBtn.style.display = hasBackups ? "" : "none";
-  if (backupsEl) backupsEl.textContent = hasBackups ? ("Restore point available: v" + u.backups[0]) : "";
+  renderRollbackOptions();
+}
+
+// Populate the Roll Back picker with every version we can restore: any published
+// release plus local-only snapshots (marked "offline" — they restore instantly
+// without a download). The installed version is excluded. Falls back to the raw
+// backups list if the release list couldn't be fetched.
+function renderRollbackOptions() {
+  const u = state.update;
+  const row = el("update-rollback-row");
+  const select = el("update-rollback-select");
+  const backupsEl = el("update-backups");
+  if (!row || !select) return;
+
+  const current = String(u.current || state.version || "").replace(/^v/i, "");
+  let options = Array.isArray(u.availableVersions) ? u.availableVersions.slice() : [];
+  if (!options.length && u.backups && u.backups.length) {
+    options = u.backups.map((v) => ({ version: String(v).replace(/^v/i, ""), local: true }));
+  }
+  options = options.filter((o) => o && o.version && o.version !== current);
+
+  if (!options.length) {
+    row.style.display = "none";
+    if (backupsEl) backupsEl.textContent = "";
+    return;
+  }
+
+  const prev = select.value;
+  select.innerHTML = options.map((o) => {
+    const label = "v" + o.version + (o.local ? " (offline)" : "");
+    return '<option value="' + escapeHtml(o.version) + '">' + escapeHtml(label) + "</option>";
+  }).join("");
+  if (prev && options.some((o) => o.version === prev)) select.value = prev;
+
+  row.style.display = "flex";
+  const localCount = options.filter((o) => o.local).length;
+  if (backupsEl) {
+    backupsEl.textContent = localCount
+      ? (localCount + " version(s) restore instantly offline; others download on demand.")
+      : "Any released version can be downloaded and restored.";
+  }
 }
 
 // ---------- Update check + indicator ----------
@@ -693,14 +731,15 @@ function showExtensionReloadBanner(version) {
 }
 
 el("update-rollback-btn").addEventListener("click", async () => {
-  const backups = await callBridge("list_backups");
-  const list = backups.ok ? (backups.backups || []) : [];
-  state.update.backups = list;
-  renderUpdatesCard();
-  if (!list.length) { el("update-feedback").textContent = "No restore point available to roll back to."; return; }
-  const version = list[0];
-  if (!confirm("Are you sure you want to roll back to v" + version + "?\n\nThis restores the previous version's files and restarts the app.")) return;
-  el("update-feedback").textContent = "Rolling back…";
+  const select = el("update-rollback-select");
+  const version = select ? select.value : "";
+  if (!version) { el("update-feedback").textContent = "No version selected to roll back to."; return; }
+  const offline = (state.update.availableVersions || []).some((o) => o.version === version && o.local);
+  const note = offline
+    ? "This restores that version's files and restarts the app."
+    : "This version isn't stored offline, so it will be downloaded first, then the app restarts.";
+  if (!confirm("Roll back to v" + version + "?\n\n" + note)) return;
+  el("update-feedback").textContent = "Rolling back to v" + version + "…";
   const r = await callBridge("rollback", { version });
   el("update-feedback").textContent = r.message || (r.ok ? "Rolling back..." : "Rollback failed.");
 });

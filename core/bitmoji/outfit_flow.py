@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core.process_utils import LOGS_DIR
-from core.outfit_generator import generate_outfit
+from core.outfit_generator import generate_outfit, BLOCKED_TOP_IDS, BLOCKED_FOOTWEAR_IDS
 from snap_selectors.selectors import BITMOJI_SELECTORS, MODEL_ALIASES
 
 KNOWN_SKIN_TONE_FILLS = {
@@ -36,6 +36,13 @@ _STEP_UNIT_RETRIES = _env_int("BITMOJI_STEP_UNIT_RETRIES", 3)
 # Seconds to wait for a category/subcategory panel to actually render clickable
 # trait items before giving up on an attempt.
 _PANEL_ITEMS_TIMEOUT = float(os.getenv("BITMOJI_PANEL_ITEMS_TIMEOUT", "8"))
+# Bitmoji constantly rotates its clothing catalog, so a configured outfit item id
+# (e.g. footwear=969) can vanish — the exact-match scan then never finds it, the
+# panel scrolls to the bottom repeatedly, and the whole profile fails ("scroll
+# forever"). When enabled (default), a piece whose exact id is gone falls back to
+# any available item of the same category so the avatar still gets dressed. Set
+# NYX_OUTFIT_FALLBACK_ANY=0 to restore strict exact-item behaviour.
+_OUTFIT_ALLOW_FALLBACK = os.getenv("NYX_OUTFIT_FALLBACK_ANY", "1").strip().lower() not in ("0", "false", "no", "")
 
 
 class BitmojiOutfitMixin:
@@ -109,13 +116,13 @@ class BitmojiOutfitMixin:
 
         try:
             if await tuck_switch.is_visible():
-                await tuck_switch.scroll_into_view_if_needed()
+                await tuck_switch.scroll_into_view_if_needed(timeout=4000)
                 try:
                     await tuck_switch.click()
                 except Exception:
                     await tuck_switch.click(force=True)
             else:
-                await tuck_checkbox.scroll_into_view_if_needed()
+                await tuck_checkbox.scroll_into_view_if_needed(timeout=4000)
                 await tuck_checkbox.check(force=True)
         except Exception:
             try:
@@ -1385,7 +1392,9 @@ class BitmojiOutfitMixin:
             dress_entry = self.normalize_outfit_entry(outfit["dress"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit dress: {self.describe_outfit_entry(dress_entry)}")
-            await self._apply_outfit_piece("categories.dresses", dress_entry["selector"], profile_id)
+            await self._apply_outfit_piece(
+                "categories.dresses", dress_entry["selector"], profile_id, fallback_param="top"
+            )
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=dress_entry.get("preferred_color"))
         else:
             report("outfit_top")
@@ -1393,28 +1402,40 @@ class BitmojiOutfitMixin:
             bottom_entry = self.normalize_outfit_entry(outfit["bottom"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit top: {self.describe_outfit_entry(top_entry)}")
-            await self._apply_outfit_piece("categories.tops", top_entry["selector"], profile_id)
+            await self._apply_outfit_piece(
+                "categories.tops", top_entry["selector"], profile_id,
+                fallback_param="top", blocked_ids=BLOCKED_TOP_IDS,
+            )
             await self.enable_tuck_if_available()
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=top_entry.get("preferred_color"))
             report("outfit_bottom")
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit bottom: {self.describe_outfit_entry(bottom_entry)}")
-            await self._apply_outfit_piece("categories.bottoms", bottom_entry["selector"], profile_id)
+            await self._apply_outfit_piece(
+                "categories.bottoms", bottom_entry["selector"], profile_id, fallback_param="bottom"
+            )
             await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
 
         report("outfit_footwear")
         shoe_entry = self.normalize_outfit_entry(outfit["shoes"])
         if self.logger:
             self.logger.info(f"[{profile_id}] Outfit footwear: {self.describe_outfit_entry(shoe_entry)}")
-        await self._apply_outfit_piece("categories.footwear", shoe_entry["selector"], profile_id)
+        await self._apply_outfit_piece(
+            "categories.footwear", shoe_entry["selector"], profile_id,
+            fallback_param="footwear", blocked_ids=BLOCKED_FOOTWEAR_IDS,
+        )
         await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
         await self.human_delay()
 
-    async def _apply_outfit_piece(self, category_key, item_selector, profile_id):
+    async def _apply_outfit_piece(self, category_key, item_selector, profile_id, fallback_param=None, blocked_ids=None):
         """Open a clothing category and click the exact configured item, retrying
         the pair as a unit. A failed item click re-opens the category (so its
-        grid repaints) and waits for items before trying the same item again —
-        the intended piece is always what gets selected, never a substitute."""
+        grid repaints) and waits for items before trying the same item again.
+
+        The configured piece is always preferred. Only if its id has rotated out
+        of Bitmoji's catalog (so it can never be found) and ``fallback_param`` is
+        given do we dress the avatar with another available item of the same
+        category — otherwise a retired id would fail the whole profile."""
         last_exc = None
         for attempt in range(_STEP_UNIT_RETRIES):
             try:
@@ -1432,9 +1453,62 @@ class BitmojiOutfitMixin:
                         f"{attempt + 1}/{_STEP_UNIT_RETRIES} failed: {exc}"
                     )
                 await asyncio.sleep(0.6)
-        # Exhausted retries — surface the original failure so the runner records
-        # the exact outfit step (unchanged behaviour on genuine failure).
+        # The exact configured item never appeared — almost always because its id
+        # rotated out of the catalog. Fall back to any available item of this
+        # category so the profile completes instead of failing/scrolling forever.
+        if _OUTFIT_ALLOW_FALLBACK and fallback_param:
+            try:
+                if await self._click_any_item_in_open_category(category_key, fallback_param, profile_id, blocked_ids):
+                    return True
+            except Exception as fb_exc:
+                if self.logger:
+                    self.logger.warning(f"[{profile_id}] Outfit fallback for {fallback_param} failed: {fb_exc}")
+        # Nothing worked — surface the original failure for the runner to record.
         raise last_exc or Exception(f"Failed to apply outfit piece: {item_selector}")
+
+    async def _click_any_item_in_open_category(self, category_key, param, profile_id, blocked_ids=None):
+        """Click any available item in the (re-opened) category as a fallback.
+
+        Picks deterministically from a per-profile hash so reruns stay stable,
+        and skips blocked ids. Returns True if an item was clicked."""
+        await self.safe_click(category_key, profile_id)
+        ctx = await self.get_editor_context()
+        await self.reset_editor_panel_scroll(ctx)
+        await self.wait_for_category_items(ctx)
+        clicked = await ctx.evaluate(
+            """({ param, blocked, seed }) => {
+                const isVisible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                const items = Array.from(
+                    document.querySelectorAll('[class*="mix-and-match-container"][tabindex="0"]')
+                ).filter((el) => {
+                    if (!isVisible(el)) return false;
+                    const img = el.querySelector('img');
+                    if (!img || !img.src) return false;
+                    if (param && blocked && blocked.length) {
+                        const m = img.src.match(new RegExp('[?&]' + param + '=([0-9]+)'));
+                        if (m && blocked.indexOf(m[1]) !== -1) return false;
+                    }
+                    return true;
+                });
+                if (!items.length) return false;
+                let h = 2166136261;
+                for (const c of String(seed)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+                const el = items[h % items.length];
+                el.scrollIntoView({ block: 'center', inline: 'nearest' });
+                el.click();
+                return true;
+            }""",
+            {"param": param, "blocked": [str(b) for b in (blocked_ids or [])], "seed": str(profile_id or "")},
+        )
+        if clicked and self.logger:
+            self.logger.info(
+                f"[{profile_id}] Configured {param} item unavailable in catalog; "
+                f"selected an available {param} as fallback."
+            )
+        return bool(clicked)
 
     async def pick_random_color_option(self, profile_id, outfit_seed="", preferred_color=None):
         await self.wait_if_paused()
@@ -1469,7 +1543,7 @@ class BitmojiOutfitMixin:
                     )
                     if not matches_preferred:
                         continue
-                    await option.scroll_into_view_if_needed()
+                    await option.scroll_into_view_if_needed(timeout=4000)
                     await self.human_delay(0.2, 0.5, kind="think")
                     await option.click()
                     await self.human_delay(0.3, 0.7, kind="think")
@@ -1518,7 +1592,7 @@ class BitmojiOutfitMixin:
                 if is_neon:
                     continue
 
-                await option.scroll_into_view_if_needed()
+                await option.scroll_into_view_if_needed(timeout=4000)
                 await self.human_delay(0.2, 0.6, kind="think")
                 await option.click()
                 await self.human_delay(0.3, 0.8, kind="think")

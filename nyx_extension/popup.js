@@ -1497,9 +1497,38 @@ document.getElementById("removeQueueProfileButton").addEventListener("click", ()
   const profileId = getQueueActionProfileId();
   runQueueRowAction("NYX_REMOVE_QUEUE_PROFILE", profileId, "Removing profile from queue...", `Removed ${profileId} from Nyx queue.`);
 });
-document.getElementById("dailyStartAdspowerIdInput").addEventListener("input", () => {
+let dailyStartSaveTimer = null;
+const dailyStartInputEl = document.getElementById("dailyStartAdspowerIdInput");
+dailyStartInputEl.addEventListener("input", () => {
   lastDailyRenderSignature = "";
   renderDailyUpdatePanel(latestDailyRows, latestScrapeConfig);
+  // Auto-save (debounced) so the start AdsPower ID persists without clicking
+  // Save. renderDailyUpdatePanel resets the field to the last-saved value
+  // whenever it isn't focused, so a periodic refresh (or blur) would otherwise
+  // drop whatever was typed but not yet saved.
+  if (dailyStartSaveTimer) {
+    clearTimeout(dailyStartSaveTimer);
+  }
+  dailyStartSaveTimer = setTimeout(() => {
+    const startId = String(dailyStartInputEl.value || "").trim();
+    chrome.runtime.sendMessage(
+      { type: "NYX_SCRAPE_SAVE_CONFIG", config: { dailyStartAdspowerId: startId } },
+      (response) => {
+        if (response && response.ok) {
+          latestScrapeConfig = response.config || latestScrapeConfig;
+        }
+      }
+    );
+  }, 400);
+});
+// Persist immediately when focus leaves the field, covering the case where the
+// popup is closed right after typing, before the debounce timer fires.
+dailyStartInputEl.addEventListener("change", () => {
+  if (dailyStartSaveTimer) {
+    clearTimeout(dailyStartSaveTimer);
+    dailyStartSaveTimer = null;
+  }
+  saveDailyStartAdspowerId();
 });
 document.getElementById("dailyTopAdspowerIdInput").addEventListener("input", () => {
   lastDailyRenderSignature = "";
