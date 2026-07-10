@@ -110,7 +110,9 @@ def generate_outfit(profile_id, model="", outfit_seed=""):
             return {
                 "mode": "dress",
                 "dress": dress,
-                "shoes": shoes
+                "shoes": shoes,
+                "dress_pool": list(outfits["dresses"]),
+                "shoes_pool": list(available_sandals),
             }
 
         if not available_tops:
@@ -126,7 +128,10 @@ def generate_outfit(profile_id, model="", outfit_seed=""):
             "mode": "separates",
             "top": top,
             "bottom": bottom,
-            "shoes": shoes
+            "shoes": shoes,
+            "top_pool": list(available_tops),
+            "bottom_pool": list(outfits["bottoms"]),
+            "shoes_pool": list(available_sneakers),
         }
 
     if outfit_style == "casual":
@@ -168,7 +173,9 @@ def generate_outfit(profile_id, model="", outfit_seed=""):
         return {
             "mode": "dress",
             "dress": dress,
-            "shoes": shoes
+            "shoes": shoes,
+            "dress_pool": list(available_dresses),
+            "shoes_pool": list(available_footwear),
         }
 
     if not available_tops:
@@ -185,5 +192,8 @@ def generate_outfit(profile_id, model="", outfit_seed=""):
         "mode": "separates",
         "top": top,
         "bottom": bottom,
-        "shoes": shoes
+        "shoes": shoes,
+        "top_pool": list(available_tops),
+        "bottom_pool": list(style_pool["bottoms"]),
+        "shoes_pool": list(available_footwear),
     }

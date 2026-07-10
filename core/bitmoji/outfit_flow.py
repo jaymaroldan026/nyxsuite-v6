@@ -40,9 +40,16 @@ _PANEL_ITEMS_TIMEOUT = float(os.getenv("BITMOJI_PANEL_ITEMS_TIMEOUT", "8"))
 # (e.g. footwear=969) can vanish — the exact-match scan then never finds it, the
 # panel scrolls to the bottom repeatedly, and the whole profile fails ("scroll
 # forever"). When enabled (default), a piece whose exact id is gone falls back to
-# any available item of the same category so the avatar still gets dressed. Set
-# NYX_OUTFIT_FALLBACK_ANY=0 to restore strict exact-item behaviour.
+# ANOTHER item from the *same configured pool* (picked randomly per profile) so the
+# avatar only ever wears an operator-approved item. Set NYX_OUTFIT_FALLBACK_ANY=0
+# to restore strict exact-item behaviour (a retired id then fails the profile).
 _OUTFIT_ALLOW_FALLBACK = os.getenv("NYX_OUTFIT_FALLBACK_ANY", "1").strip().lower() not in ("0", "false", "no", "")
+# Last-resort safety net: if even the whole configured pool has rotated out of the
+# catalog, click any available item of the category so the profile still completes.
+# Off by default — operators asked for fallbacks to stay inside the curated pool, so
+# a fully-retired pool now fails the step instead of dressing the avatar at random.
+# Set NYX_OUTFIT_FALLBACK_CATALOG=1 to re-enable the any-available-item net.
+_OUTFIT_ALLOW_CATALOG_FALLBACK = os.getenv("NYX_OUTFIT_FALLBACK_CATALOG", "0").strip().lower() in ("1", "true", "yes")
 
 
 class BitmojiOutfitMixin:
@@ -1393,7 +1400,8 @@ class BitmojiOutfitMixin:
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit dress: {self.describe_outfit_entry(dress_entry)}")
             await self._apply_outfit_piece(
-                "categories.dresses", dress_entry["selector"], profile_id, fallback_param="top"
+                "categories.dresses", dress_entry["selector"], profile_id,
+                fallback_param="top", fallback_pool=outfit.get("dress_pool"),
             )
             await self.pick_configured_color_option(profile_id, model, ("dresses",), outfit_seed, preferred_color=dress_entry.get("preferred_color"))
         else:
@@ -1405,6 +1413,7 @@ class BitmojiOutfitMixin:
             await self._apply_outfit_piece(
                 "categories.tops", top_entry["selector"], profile_id,
                 fallback_param="top", blocked_ids=BLOCKED_TOP_IDS,
+                fallback_pool=outfit.get("top_pool"),
             )
             await self.enable_tuck_if_available()
             await self.pick_configured_color_option(profile_id, model, ("tops", "outfits"), outfit_seed, preferred_color=top_entry.get("preferred_color"))
@@ -1412,7 +1421,8 @@ class BitmojiOutfitMixin:
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit bottom: {self.describe_outfit_entry(bottom_entry)}")
             await self._apply_outfit_piece(
-                "categories.bottoms", bottom_entry["selector"], profile_id, fallback_param="bottom"
+                "categories.bottoms", bottom_entry["selector"], profile_id,
+                fallback_param="bottom", fallback_pool=outfit.get("bottom_pool"),
             )
             await self.pick_configured_color_option(profile_id, model, ("bottoms",), outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
 
@@ -1423,19 +1433,23 @@ class BitmojiOutfitMixin:
         await self._apply_outfit_piece(
             "categories.footwear", shoe_entry["selector"], profile_id,
             fallback_param="footwear", blocked_ids=BLOCKED_FOOTWEAR_IDS,
+            fallback_pool=outfit.get("shoes_pool"),
         )
         await self.pick_configured_color_option(profile_id, model, ("footwear",), outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
         await self.human_delay()
 
-    async def _apply_outfit_piece(self, category_key, item_selector, profile_id, fallback_param=None, blocked_ids=None):
+    async def _apply_outfit_piece(self, category_key, item_selector, profile_id,
+                                  fallback_param=None, blocked_ids=None, fallback_pool=None):
         """Open a clothing category and click the exact configured item, retrying
         the pair as a unit. A failed item click re-opens the category (so its
         grid repaints) and waits for items before trying the same item again.
 
         The configured piece is always preferred. Only if its id has rotated out
-        of Bitmoji's catalog (so it can never be found) and ``fallback_param`` is
-        given do we dress the avatar with another available item of the same
-        category — otherwise a retired id would fail the whole profile."""
+        of Bitmoji's catalog (so it can never be found) do we fall back — and the
+        fallback stays inside the *same configured pool*: another item from
+        ``fallback_pool`` is picked at random (deterministically per profile) so
+        the avatar only ever wears an operator-approved item. Picking any random
+        catalog item is off by default (see ``_OUTFIT_ALLOW_CATALOG_FALLBACK``)."""
         last_exc = None
         for attempt in range(_STEP_UNIT_RETRIES):
             try:
@@ -1453,21 +1467,91 @@ class BitmojiOutfitMixin:
                         f"{attempt + 1}/{_STEP_UNIT_RETRIES} failed: {exc}"
                     )
                 await asyncio.sleep(0.6)
-        # The exact configured item never appeared — almost always because its id
-        # rotated out of the catalog. Fall back to any available item of this
-        # category so the profile completes instead of failing/scrolling forever.
-        if _OUTFIT_ALLOW_FALLBACK and fallback_param:
+        # Phase 2: the exact configured item never appeared — almost always because
+        # its id rotated out of the catalog. Prefer another item from the SAME
+        # configured pool (random per profile) so the profile completes with a
+        # curated piece instead of failing/scrolling forever.
+        if _OUTFIT_ALLOW_FALLBACK and fallback_pool:
+            try:
+                if await self._apply_pool_fallback_piece(
+                    category_key, item_selector, fallback_pool, profile_id,
+                    fallback_param=fallback_param, blocked_ids=blocked_ids,
+                ):
+                    return True
+            except Exception as fb_exc:
+                if self.logger:
+                    self.logger.warning(f"[{profile_id}] Outfit pool fallback for {category_key} failed: {fb_exc}")
+        # Last-resort net (opt-in only): the whole configured pool is gone too, so
+        # dress the avatar with any available catalog item of this category.
+        if _OUTFIT_ALLOW_FALLBACK and _OUTFIT_ALLOW_CATALOG_FALLBACK and fallback_param:
             try:
                 if await self._click_any_item_in_open_category(category_key, fallback_param, profile_id, blocked_ids):
                     return True
             except Exception as fb_exc:
                 if self.logger:
-                    self.logger.warning(f"[{profile_id}] Outfit fallback for {fallback_param} failed: {fb_exc}")
+                    self.logger.warning(f"[{profile_id}] Outfit catalog fallback for {fallback_param} failed: {fb_exc}")
         # Nothing worked — surface the original failure for the runner to record.
         raise last_exc or Exception(f"Failed to apply outfit piece: {item_selector}")
 
+    def _outfit_selector_text(self, entry):
+        """Return the raw selector string for a pool entry (str or {'selector': ...})."""
+        if isinstance(entry, dict):
+            return str(entry.get("selector", ""))
+        return str(entry or "")
+
+    async def _apply_pool_fallback_piece(self, category_key, current_selector, fallback_pool,
+                                         profile_id, fallback_param=None, blocked_ids=None):
+        """Fallback that stays inside the configured pool.
+
+        When the exact chosen item can't be found, try the *other* items from the
+        same style pool in a deterministic per-profile random order, clicking the
+        first one that lands. Unlike the old any-catalog fallback this never
+        leaves the curated pool, so the substitute is always operator-approved."""
+        current_text = self._outfit_selector_text(current_selector)
+        blocked = {str(b) for b in (blocked_ids or ())}
+
+        alternates = []
+        seen = {current_text}
+        for entry in fallback_pool or []:
+            text = self._outfit_selector_text(entry)
+            if not text or text in seen:
+                continue
+            if fallback_param and blocked and any(f"{fallback_param}={bid}" in text for bid in blocked):
+                continue
+            seen.add(text)
+            alternates.append(text)
+
+        if not alternates:
+            return False
+
+        # Deterministic per-profile order so reruns stay stable.
+        random.Random(f"{profile_id}:{current_text}").shuffle(alternates)
+
+        await self.safe_click(category_key, profile_id)
+        ctx = await self.get_editor_context()
+        await self.reset_editor_panel_scroll(ctx)
+        await self.wait_for_category_items(ctx)
+
+        for selector in alternates:
+            try:
+                await self.safe_click(selector, profile_id, retries=1)
+                if self.logger:
+                    self.logger.info(
+                        f"[{profile_id}] Configured item unavailable in catalog; "
+                        f"selected another item from the same pool as fallback."
+                    )
+                return True
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(f"[{profile_id}] Pool fallback candidate failed: {exc}")
+                continue
+
+        return False
+
     async def _click_any_item_in_open_category(self, category_key, param, profile_id, blocked_ids=None):
-        """Click any available item in the (re-opened) category as a fallback.
+        """Opt-in last-resort net: click any available catalog item in the
+        (re-opened) category. Only reached when the whole configured pool has
+        rotated out AND NYX_OUTFIT_FALLBACK_CATALOG=1.
 
         Picks deterministically from a per-profile hash so reruns stay stable,
         and skips blocked ids. Returns True if an item was clicked."""
