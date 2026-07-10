@@ -1395,7 +1395,7 @@ class BitmojiOutfitMixin:
             await self._apply_outfit_piece(
                 "categories.dresses", dress_entry["selector"], profile_id, fallback_param="top"
             )
-            await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=dress_entry.get("preferred_color"))
+            await self.pick_configured_color_option(profile_id, model, ("dresses",), outfit_seed, preferred_color=dress_entry.get("preferred_color"))
         else:
             report("outfit_top")
             top_entry = self.normalize_outfit_entry(outfit["top"])
@@ -1407,14 +1407,14 @@ class BitmojiOutfitMixin:
                 fallback_param="top", blocked_ids=BLOCKED_TOP_IDS,
             )
             await self.enable_tuck_if_available()
-            await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=top_entry.get("preferred_color"))
+            await self.pick_configured_color_option(profile_id, model, ("tops", "outfits"), outfit_seed, preferred_color=top_entry.get("preferred_color"))
             report("outfit_bottom")
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit bottom: {self.describe_outfit_entry(bottom_entry)}")
             await self._apply_outfit_piece(
                 "categories.bottoms", bottom_entry["selector"], profile_id, fallback_param="bottom"
             )
-            await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
+            await self.pick_configured_color_option(profile_id, model, ("bottoms",), outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
 
         report("outfit_footwear")
         shoe_entry = self.normalize_outfit_entry(outfit["shoes"])
@@ -1424,7 +1424,7 @@ class BitmojiOutfitMixin:
             "categories.footwear", shoe_entry["selector"], profile_id,
             fallback_param="footwear", blocked_ids=BLOCKED_FOOTWEAR_IDS,
         )
-        await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
+        await self.pick_configured_color_option(profile_id, model, ("footwear",), outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
         await self.human_delay()
 
     async def _apply_outfit_piece(self, category_key, item_selector, profile_id, fallback_param=None, blocked_ids=None):
@@ -1601,3 +1601,77 @@ class BitmojiOutfitMixin:
                 continue
 
         return False
+
+    async def pick_configured_color_option(self, profile_id, model, features, outfit_seed="", preferred_color=None):
+        """Apply the operator's per-model colour choice for an outfit piece.
+
+        Reads the "Configure Nyxmoji" colour config for ``features`` (a fixed
+        colour, or a random pick from the chosen colour pool) and clicks the
+        nearest matching swatch in the live colour wheel. When nothing is
+        configured — or the swatch can't be matched — we fall back to the normal
+        random colour pick, so unconfigured models behave exactly as before.
+        Colour is cosmetic and must never fail a profile, so this never raises."""
+        if isinstance(features, str):
+            features = (features,)
+        target_hex = None
+        try:
+            from core.bitmoji_config import load_models as _load_models, resolve_option_color
+            models = _load_models()
+            for feat in features:
+                target_hex = resolve_option_color(model, feat, models)
+                if target_hex:
+                    break
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"[{profile_id}] colour config lookup failed for {features}: {exc}")
+
+        if not target_hex:
+            return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
+
+        try:
+            await self.wait_if_paused()
+            ctx = await self.get_editor_context()
+            color_picker = ctx.locator("div.colour-picker-container, div.colour-picker")
+            try:
+                await color_picker.first.wait_for(state="visible", timeout=10000)
+            except Exception:
+                return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
+            clicked = await ctx.evaluate(
+                r"""(targetHex) => {
+                    const toRGB = (h) => {
+                        h = String(h).replace('#', '');
+                        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+                        if (h.length !== 6) return null;
+                        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+                    };
+                    const parse = (s) => { const m = String(s).match(/\\d+/g); return (m && m.length >= 3) ? m.slice(0, 3).map(Number) : null; };
+                    const want = toRGB(targetHex);
+                    if (!want) return false;
+                    const opts = Array.from(document.querySelectorAll('.colour-picker-option')).filter((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    });
+                    let best = null, bestD = Infinity;
+                    for (const el of opts) {
+                        const rgb = parse(getComputedStyle(el).backgroundColor || '');
+                        if (!rgb) continue;
+                        const d = (rgb[0] - want[0]) ** 2 + (rgb[1] - want[1]) ** 2 + (rgb[2] - want[2]) ** 2;
+                        if (d < bestD) { bestD = d; best = el; }
+                    }
+                    if (!best || bestD > 1600) return false;   // ~40 per channel tolerance
+                    best.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    best.click();
+                    return true;
+                }""",
+                target_hex,
+            )
+            if clicked:
+                await self.human_delay(0.3, 0.7, kind="think")
+                if self.logger:
+                    self.logger.info(f"[{profile_id}] Nyxmoji colour applied: {target_hex}")
+                return True
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"[{profile_id}] colour apply failed for {features}: {exc}")
+        # Configured colour couldn't be matched — keep a valid look via random pick.
+        return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)

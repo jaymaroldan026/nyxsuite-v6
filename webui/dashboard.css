@@ -4,7 +4,7 @@
   --bg:#080c17; --bg2:#0b1120;
   --panel:#111c31; --panel2:#0c1424; --panel-hi:#16233c;
   --line:#22324f; --line-soft:#1a2740;
-  --text:#e7edf9; --muted:#8497c1; --faint:#5f6f96;
+  --text:#e7edf9; --muted:#8fa0c8; --faint:#7788b0;
   --accent:#6366f1; --accent2:#4f46e5; --accent-soft:rgba(99,102,241,.14);
   --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --run:#3b82f6; --update:#f59e0b;
   --glow:0 0 24px rgba(99,102,241,.16);
@@ -27,7 +27,7 @@ body{
 }
 
 /* ---------------- Top bar ---------------- */
-.topbar{display:flex;align-items:center;gap:18px;padding:13px 26px;background:rgba(11,17,32,.72);backdrop-filter:blur(14px) saturate(1.2);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.topbar{display:flex;align-items:center;gap:16px;padding:10px 20px;background:rgba(11,17,32,.72);backdrop-filter:blur(14px) saturate(1.2);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .brand{font-weight:700;font-size:20px;letter-spacing:.3px;font-family:"Fira Code",monospace}
 .brand span{background:linear-gradient(120deg,var(--accent),#8b8ff6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .tabs{display:flex;gap:4px;background:rgba(8,12,23,.5);padding:4px;border-radius:11px;border:1px solid var(--line-soft)}
@@ -46,9 +46,9 @@ body{
 @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.0)}50%{box-shadow:0 0 14px 1px rgba(245,158,11,.45)}}
 
 /* ---------------- Layout ---------------- */
-main{padding:24px 28px;max-width:1760px;margin:0 auto}
+main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .panel.hidden{display:none}
-.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
 .panel-head-btns{display:flex;gap:6px;flex-shrink:0}
 .statusrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .state{font-weight:600;padding:6px 15px;border-radius:9px;background:#16223a;text-transform:capitalize;font-size:13px;font-family:"Fira Code",monospace;border:1px solid var(--line-soft);transition:background 300ms ease,color 300ms ease,box-shadow 300ms ease}
@@ -74,13 +74,13 @@ main{padding:24px 28px;max-width:1760px;margin:0 auto}
 #ncfg-banned_proxies{min-height:90px}
 
 /* ---------------- Configure Bitmoji (editor) ---------------- */
-.bm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.bm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .bm-head{display:flex;align-items:center;gap:10px}
 .bm-toolbar-actions{display:flex;align-items:center;gap:8px}
 .bm-count{display:inline-block;margin-left:6px;font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:1px 7px}
 
 /* Top category bar — mirrors the bitmoji.com icon row */
-.bm-catbar{display:flex;gap:6px;overflow-x:auto;padding:8px;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:14px;scrollbar-width:thin}
+.bm-catbar{display:flex;gap:6px;overflow-x:auto;padding:6px;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:10px;scrollbar-width:thin}
 .bm-cat{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:64px;padding:7px 9px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;transition:all 160ms var(--ease-out)}
 .bm-cat:hover{background:var(--panel2);color:var(--text)}
 .bm-cat.active{background:var(--accent-soft);border-color:var(--accent);color:#fff}
@@ -93,12 +93,14 @@ main{padding:24px 28px;max-width:1760px;margin:0 auto}
 .bm-cat-group-btn.open{color:var(--accent)}
 .bm-group-arrow{font-size:9px;transition:transform 150ms ease}
 .bm-cat-features{display:flex;flex-shrink:0}
-.bm-avatar-err{flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--faint)}
+/* Subtle caption shown only when the live preview had to fall back to the base
+   look — it no longer replaces the avatar, so the stage never goes blank. */
+.bm-avatar-err{position:absolute;left:8px;right:8px;bottom:6px;text-align:center;font-size:11px;color:var(--warn)}
 
 /* Editor body: avatar stage (left) + options (right) */
 .bm-editor{display:flex;gap:16px;align-items:stretch}
 .bm-stage{flex:0 0 420px;display:flex;flex-direction:column;border:none;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
-.bm-stage-inner{flex:1;display:flex;align-items:center;justify-content:center;min-height:560px;background:transparent}
+.bm-stage-inner{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:560px;background:transparent}
 .bm-avatar{max-width:100%;max-height:600px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.45))}
 .bm-stage-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 4px 0}
 .bm-model-tag{font-size:12px;color:var(--muted)}
@@ -125,6 +127,8 @@ main{padding:24px 28px;max-width:1760px;margin:0 auto}
 .bm-pool-color{width:28px;min-width:28px;padding:0;border-radius:50%}
 .bm-color-strip{display:flex;align-items:center;gap:6px;margin-top:12px;padding:8px 10px;background:var(--panel2);border:1px solid var(--line-soft);border-radius:var(--r-sm);width:100%;flex-wrap:wrap}
 .bm-color-label{font-size:11px;color:var(--muted);margin-right:4px;font-weight:600}
+.bm-color-actions{display:inline-flex;gap:6px;margin-left:auto}
+.bm-side-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
 .bm-options{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;overflow-y:auto;max-height:430px;padding:2px}
 .bm-options.empty{color:var(--muted);font-size:13px}
@@ -137,10 +141,10 @@ main{padding:24px 28px;max-width:1760px;margin:0 auto}
 @media(max-width:780px){.bm-editor{flex-direction:column}.bm-stage{flex-basis:auto}}
 
 /* ---------------- Tiles ---------------- */
-.tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-.tile{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-md);padding:13px 22px;min-width:96px;cursor:pointer;box-shadow:var(--card-shadow);transition:border-color 200ms var(--ease-out),box-shadow 200ms var(--ease-out),transform 200ms var(--ease-out)}
+.tiles{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.tile{display:block;text-align:left;font-family:inherit;color:inherit;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-md);padding:9px 16px;min-width:88px;cursor:pointer;box-shadow:var(--card-shadow);transition:border-color 200ms var(--ease-out),box-shadow 200ms var(--ease-out),transform 200ms var(--ease-out)}
 .tile-active{border-color:var(--accent);box-shadow:var(--glow)}
-.tile .n{font-size:27px;font-weight:700;font-family:"Fira Code",monospace;color:var(--text);line-height:1.2}
+.tile .n{font-size:21px;font-weight:700;font-family:"Fira Code",monospace;color:var(--text);line-height:1.2}
 .tile .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.7px;font-weight:600}
 
 /* ---------------- Toolbars / buttons ---------------- */
@@ -174,8 +178,8 @@ table.queue{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
 .th-cb input,.td-cb input{cursor:pointer;width:15px;height:15px;accent-color:var(--accent)}
 .td-cb{width:38px;padding:0!important;text-align:center;vertical-align:middle}
 .th-sortable{cursor:pointer;user-select:none;transition:color 150ms ease}
-table.queue thead th{position:sticky;top:0;z-index:1;background:#101a2d;color:var(--muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-table.queue tbody td{padding:10px 16px;border-bottom:1px solid var(--line-soft);white-space:nowrap;max-width:460px;overflow:hidden;text-overflow:ellipsis;user-select:text;-webkit-user-select:text}
+table.queue thead th{position:sticky;top:0;z-index:1;background:#101a2d;color:var(--muted);text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+table.queue tbody td{padding:8px 14px;border-bottom:1px solid var(--line-soft);white-space:nowrap;max-width:460px;overflow:hidden;text-overflow:ellipsis;user-select:text;-webkit-user-select:text}
 table.queue tbody tr{cursor:pointer;transition:background 150ms ease}
 table.queue tbody tr:nth-child(even){background:rgba(255,255,255,.012)}
 table.queue tbody tr.sel{background:rgba(99,102,241,.16)}
@@ -238,6 +242,18 @@ tr.group-header td{background:rgba(99,102,241,.08);font-weight:600;font-size:13p
 .proxyrank-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 6px}
 .proxyrank-head h3{margin:0;font-size:14px;display:flex;align-items:baseline;gap:8px}
 .proxyrank-head h3 .hint{margin:0;font-weight:400}
+/* Proxy ranking snapshot bar chart (inline SVG) */
+.proxyrank-chart{margin:2px 0 12px;overflow-x:auto}
+.proxyrank-chart:empty{display:none}
+.proxyrank-chart svg{min-width:420px;display:block}
+.prc-cap{font-size:11px;color:var(--muted);margin:0 0 6px;font-weight:600}
+.prc-label{fill:var(--muted);font:600 12px "Fira Code",monospace}
+.prc-val{fill:var(--text);font:600 12px "Fira Code",monospace}
+.prc-track{fill:var(--panel-hi)}
+.prc-bar.prc-good{fill:var(--ok)}
+.prc-bar.prc-mid{fill:var(--warn)}
+.prc-bar.prc-bad{fill:var(--bad)}
+.prc-more{font-size:11px;color:var(--muted);margin-top:6px}
 table.proxyrank-table tbody td{white-space:nowrap;cursor:default}
 table.proxyrank-table tbody tr{cursor:default}
 .proxyrank-table .score-good{color:var(--ok);font-weight:600}
@@ -266,6 +282,15 @@ table.proxyrank-table tbody tr{cursor:default}
 .hint{font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5}
 .hint code{background:#16223a;padding:1px 6px;border-radius:4px}
 .install-output{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 14px;font:11px/1.6 "Fira Code",Consolas,monospace;color:var(--text);max-height:240px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+
+/* ---------------- Keyboard focus (accessibility) ---------------- */
+/* Visible focus ring for keyboard users on every interactive control.
+   Mouse clicks don't trigger :focus-visible, so this stays out of the way. */
+.tab:focus-visible,button.btn:focus-visible,.tile:focus-visible,.bm-cat:focus-visible,
+.bm-opt:focus-visible,.bm-mode-btn:focus-visible,.toggle-switch input:focus-visible+.toggle-slider,
+.pill-update:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table.queue tbody tr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.input:focus-visible,.search-input:focus-visible,.input-inline:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 /* ---------------- Hover (fine pointer only) ---------------- */
 @media (hover: hover) and (pointer: fine) {
@@ -305,8 +330,8 @@ table.proxyrank-table tbody tr{cursor:default}
 
 /* Large tablet / small laptop: tighten gutters, keep everything on one row. */
 @media(max-width:1100px){
-  main{padding:20px 18px}
-  .topbar{gap:12px;padding:12px 18px}
+  main{padding:14px 16px}
+  .topbar{gap:12px;padding:10px 16px}
   .bm-stage{flex:0 0 340px}
   .bm-stage-inner{min-height:440px}
 }
@@ -331,8 +356,8 @@ table.proxyrank-table tbody tr{cursor:default}
 @media(max-width:640px){
   main{padding:12px}
   .tab{padding:6px 10px;font-size:12px}
-  .tile{flex:1 1 calc(50% - 12px);min-width:0;padding:11px 14px}
-  .tile .n{font-size:22px}
+  .tile{flex:1 1 calc(50% - 10px);min-width:0;padding:9px 12px}
+  .tile .n{font-size:19px}
   .toolbar{gap:5px}
   button.btn{padding:8px 12px;font-size:12px}
   .bm-side-head{flex-direction:column;align-items:flex-start}

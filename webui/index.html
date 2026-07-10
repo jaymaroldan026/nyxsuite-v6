@@ -98,6 +98,7 @@
           <button id="proxyrank-refresh" class="btn" type="button">Refresh</button>
         </div>
         <p class="hint">Ranked from how often each subnet needed a retry, failed a creation, or hit a ban. Updates every time a proxy is used.</p>
+        <div id="proxyrank-chart" class="proxyrank-chart"></div>
         <div class="tablewrap">
           <table class="queue proxyrank-table">
             <thead><tr><th>Subnet</th><th>Uses</th><th>Retries</th><th>Fails</th><th>Bans</th><th>Score</th><th></th></tr></thead>
@@ -119,6 +120,7 @@
           <span id="bm-status" class="detail"></span>
         </div>
         <div class="bm-toolbar-actions">
+          <button id="bm-recommend" class="btn" type="button" title="Fill random pools with a recommended starting look">✨ Recommend</button>
           <button id="bm-import" class="btn" type="button" title="Load a saved Nyxmoji config file">Import</button>
           <button id="bm-export" class="btn" type="button" title="Download this Nyxmoji config">Export</button>
           <button id="bm-save" class="btn primary" type="button">Save</button>
@@ -129,8 +131,8 @@
       <div class="bm-editor">
         <div class="bm-stage">
           <div class="bm-stage-inner">
-            <img id="bm-avatar" class="bm-avatar" alt="Preview unavailable" onerror="this.style.display='none';document.getElementById('bm-avatar-err').style.display='flex'" onload="this.style.display='';document.getElementById('bm-avatar-err').style.display='none'">
-            <div id="bm-avatar-err" class="bm-avatar-err" style="display:none">Preview unavailable</div>
+            <img id="bm-avatar" class="bm-avatar" alt="Bitmoji preview">
+            <div id="bm-avatar-err" class="bm-avatar-err" style="display:none"></div>
           </div>
           <div class="bm-stage-foot">
             <span id="bm-model-tag" class="bm-model-tag"></span>
@@ -143,10 +145,13 @@
               <span id="bm-feature-title" class="bm-feature-title">Hair Style</span>
               <span id="bm-feature-count" class="bm-count"></span>
             </div>
-            <div class="bm-mode-group" id="bm-mode-group" role="tablist">
-              <button class="bm-mode-btn" data-mode="preset" type="button">Preset</button>
-              <button class="bm-mode-btn" data-mode="fixed" type="button">Fixed</button>
-              <button class="bm-mode-btn" data-mode="random" type="button">Random</button>
+            <div class="bm-side-actions">
+              <div class="bm-mode-group" id="bm-mode-group" role="tablist">
+                <button class="bm-mode-btn" data-mode="preset" type="button">Preset</button>
+                <button class="bm-mode-btn" data-mode="fixed" type="button">Fixed</button>
+                <button class="bm-mode-btn" data-mode="random" type="button">Random</button>
+              </div>
+              <button id="bm-clear-feature" class="btn btn-sm btn-ghost" type="button" title="Reset this feature to Preset" style="display:none">Reset</button>
             </div>
           </div>
           <p id="bm-mode-hint" class="hint bm-mode-hint"></p>

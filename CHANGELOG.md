@@ -1,5 +1,44 @@
 # Changelog
 
+## 6.0.9 — Nyxmoji preview + colours + Recommend, proxy ranking chart, compact dashboard
+
+### Nyxmoji: the avatar preview always renders (and reflects the randomizer)
+- Opening the editor or switching model now auto-shuffles a real sample from each
+  Random pool, so the preview shows an actual random draw instead of the first
+  pool item. When a rare parameter combination can't render, the preview falls
+  back to the model's base look (with a small caption) instead of blanking out to
+  "Preview unavailable".
+
+### Nyxmoji: Outfits vs Tops de-duplicated
+- The catalog had captured "Outfits" as a byte-identical copy of "Tops" (same
+  items, same top slot) with an empty colour list, and its preview used a
+  parameter the avatar endpoint ignores — so it rendered blank. Outfits is now
+  relabelled **"Outfits (Tops slot)"**, previews correctly, and inherits Tops'
+  colour swatches. A hint in the editor makes the shared slot explicit.
+
+### Nyxmoji: random/fixed clothing colours are applied to the created avatar
+- Colours chosen in the editor (a fixed colour, or a random pick from a colour
+  pool) were saved and previewed but never applied during creation. The bot now
+  clicks the matching colour swatch for each outfit piece. It stays fully
+  backward compatible: unconfigured models keep the existing random colour, and a
+  colour that can't be matched never fails the profile. New **All** / **Clear**
+  buttons build the colour pool in one click.
+
+### Nyxmoji: one-click "Recommend" + per-feature Reset
+- A new **✨ Recommend** button fills coherent random pools (tops, bottoms,
+  footwear, colours, plus some hair variety) as a starting point, and each
+  feature gets a **Reset** control that returns it to the model preset.
+
+### Nyxify: Proxy Ranking now has a snapshot bar chart
+- The proxy ranking panel draws a compact bar chart of each subnet's score
+  (lower is better), coloured good/amber/bad to match the table, above the list.
+
+### Dashboard: more compact and keyboard-accessible
+- Tighter spacing, smaller tiles, and denser tables reclaim vertical space while
+  keeping the same theme and features. Status tiles are now real buttons with
+  ARIA state, every control shows a keyboard focus ring, and low-contrast text
+  was lightened.
+
 ## 6.0.8 — Bitmoji login-redirect recovery, real site theme, proxy rotation + ranking, macOS dashboard auto-refresh
 
 ### Nyx: Bitmoji no longer gets stuck on the login page

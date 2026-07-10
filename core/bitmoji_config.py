@@ -270,7 +270,10 @@ RENDER_PARAMS: dict[str, tuple[str, bool]] = {
     "browring_left": ("browringL_BRing", False),
     "browring_right": ("browringR_BRing", False),
     "mouthring": ("mouthring_bottomRingC1", False),
-    "outfits": ("outfit", False),
+    # ``outfits`` is a duplicate of ``tops`` in the catalog (same ids, same top
+    # slot). The ``/avatar/body`` preview ignores an ``outfit=`` param, so map it
+    # onto ``top`` like Tops does — otherwise the Outfits preview never renders.
+    "outfits": ("top", False),
     "tops": ("top", False),
     "bottoms": ("bottom", False),
     "dresses": ("bottom", False),
@@ -384,10 +387,42 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def _normalize_catalog(data: dict) -> dict:
+    """Fix up the raw catalog before it reaches the editor.
+
+    The scanner captured ``outfits`` as a byte-copy of ``tops`` (identical ids,
+    same ``top=`` render endpoint) but with empty per-option ``colors``. We keep
+    both categories, so here we (1) relabel Outfits to make the overlap explicit
+    and (2) backfill its colors from the matching ``tops`` option (same id) so
+    its swatches — and end-to-end colour apply — work like Tops. Idempotent."""
+    if not isinstance(data, dict):
+        return {}
+    features = data.get("features")
+    if not isinstance(features, dict):
+        return data
+    outfits = features.get("outfits")
+    tops = features.get("tops")
+    if isinstance(outfits, dict):
+        label = str(outfits.get("label") or "Outfits")
+        if "Tops" not in label:
+            outfits["label"] = f"{label} (Tops slot)"
+        tops_colors = {}
+        if isinstance(tops, dict):
+            for opt in tops.get("options") or []:
+                if isinstance(opt, dict) and opt.get("id") is not None:
+                    tops_colors[str(opt["id"])] = opt.get("colors") or []
+        for opt in outfits.get("options") or []:
+            if isinstance(opt, dict) and not opt.get("colors"):
+                backfill = tops_colors.get(str(opt.get("id")))
+                if backfill:
+                    opt["colors"] = list(backfill)
+    return data
+
+
 def load_catalog_raw() -> dict:
     """The full catalog file (``features`` + ``base_avatar`` + metadata)."""
     data = _read_json(CATALOG_PATH)
-    return data if isinstance(data, dict) else {}
+    return _normalize_catalog(data) if isinstance(data, dict) else {}
 
 
 def load_catalog() -> dict:

@@ -226,9 +226,12 @@ function renderPanel(p) {
   // Tiles — click to filter by status
   const tiles = el("tiles-" + p); tiles.innerHTML = "";
   cfg.tiles.forEach(k => {
-    const d = document.createElement("div"); d.className = "tile";
-    if (s.statusFilter === k) d.classList.add("tile-active");
+    const d = document.createElement("button"); d.className = "tile"; d.type = "button";
+    const on = s.statusFilter === k;
+    if (on) d.classList.add("tile-active");
     d.dataset.status = k;
+    d.setAttribute("aria-pressed", on ? "true" : "false");
+    d.setAttribute("aria-label", `Filter by ${k}: ${(s.counts && s.counts[k]) || 0}`);
     d.innerHTML = `<div class="n">${(s.counts && s.counts[k]) || 0}</div><div class="l">${k}</div>`;
     d.onclick = () => {
       if (s.statusFilter === k) s.statusFilter = "";
@@ -1004,12 +1007,42 @@ function proxyScoreClass(score) {
   return "score-bad";
 }
 
+// Hand-rolled inline-SVG bar chart (no chart lib — the dashboard is an offline
+// SPA). One bar per subnet, length ∝ score, coloured by the good/mid/bad bucket.
+// Snapshot only: the store keeps running counters, not history.
+function renderProxyRankChart(rows) {
+  const host = el("proxyrank-chart");
+  if (!host) return;
+  if (!rows || !rows.length) { host.innerHTML = ""; return; }
+  const data = rows.slice(0, 14);   // table below carries the full list
+  const W = 640, rowH = 26, top = 10, padL = 104, padR = 60;
+  const H = top * 2 + data.length * rowH;
+  const barMax = W - padL - padR;
+  const maxScore = Math.max(1, ...data.map(d => Number(d.score || 0)));
+  const bars = data.map((d, i) => {
+    const sc = Number(d.score || 0);
+    const y = top + i * rowH;
+    const bw = Math.max(2, (sc / maxScore) * barMax);
+    const cls = proxyScoreClass(sc).replace("score-", "prc-");
+    const subnet = escapeHtml(String(d.subnet || ""));
+    return `<text class="prc-label" x="0" y="${y + rowH / 2}" dominant-baseline="middle">${subnet}</text>`
+      + `<rect class="prc-track" x="${padL}" y="${y + 4}" width="${barMax}" height="${rowH - 12}" rx="3"></rect>`
+      + `<rect class="prc-bar ${cls}" x="${padL}" y="${y + 4}" width="${bw.toFixed(1)}" height="${rowH - 12}" rx="3"></rect>`
+      + `<text class="prc-val" x="${padL + barMax + 6}" y="${y + rowH / 2}" dominant-baseline="middle">${sc.toFixed(2)}</text>`;
+  }).join("");
+  const more = rows.length > data.length
+    ? `<div class="prc-more">+${rows.length - data.length} more subnets in the table below</div>` : "";
+  host.innerHTML = `<div class="prc-cap">Score by subnet — lower is better</div>`
+    + `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Proxy subnet score chart, lower is better">${bars}</svg>${more}`;
+}
+
 async function renderProxyRanking() {
   const tbody = el("proxyrank-tbody");
   if (!tbody) return;
   const r = await fetch(`http://${HOST}:8866/proxy_ranking`, { headers: tokenHeaders() })
     .then(r => r.json()).catch(() => ({ rows: [] }));
   const rows = (r && r.rows) || [];
+  renderProxyRankChart(rows);
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="hint" style="text-align:center;padding:14px">No proxy usage recorded yet.</td></tr>`;
     return;
@@ -1109,6 +1142,7 @@ function renderBitmojiAll() {
   el("bm-model-tag").textContent = bm.current;
   renderCatBar();
   renderSide();
+  shufflePreviewPicks();   // draw a real random sample so the preview isn't just pool[0]
   renderAvatar();
 }
 
@@ -1152,7 +1186,14 @@ function renderSide() {
   const mode = sel.mode || "preset";
   el("bm-feature-title").textContent = feat.label || f;
   el("bm-feature-count").textContent = feat.options.length + " options";
-  el("bm-mode-hint").textContent = (BM_HINTS[mode] || (() => ""))(bm.current);
+  let hintText = (BM_HINTS[mode] || (() => ""))(bm.current);
+  if (f === "outfits" || f === "tops") {
+    const other = f === "outfits" ? "tops" : "outfits";
+    const bothCfg = modelCfg()[f] && modelCfg()[other];
+    hintText += "  Note: Outfits and Tops are the same top slot" + (bothCfg ? " — both are configured, so whichever applies last wins." : ".");
+  }
+  el("bm-mode-hint").textContent = hintText;
+  el("bm-clear-feature").style.display = (mode === "preset") ? "none" : "";
   document.querySelectorAll("#bm-mode-group .bm-mode-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.mode === mode));
   const host = el("bm-options");
@@ -1214,15 +1255,22 @@ function renderOptions(feature, feat, sel) {
     }
     return `<button type="button" class="bm-opt${on}" data-id="${escapeAttr(o.id)}" title="${escapeAttr(o.id)}"><img loading="lazy" src="${escapeAttr(o.preview || "")}" alt=""></button>`;
   }).join("");
-  // Color swatch strip for outfit features
+  // Color swatch strip for outfit features. In Random mode ticking swatches builds
+  // the colour pool the bot draws from; in Fixed mode it sets the one colour.
   if (feat.type === "outfit" && feat.options.length) {
     const colors = feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, []);
     if (colors.length) {
-      html += `<div class="bm-color-strip"><span class="bm-color-label">Color:</span>`;
+      const poolColors = new Set((sel.colors || []).map(String));
+      html += `<div class="bm-color-strip"><span class="bm-color-label">${sel.mode === "random" ? "Colors" : "Color"}:</span>`;
       html += colors.map(c => {
-        const on = String(c) === String(chosenColor) ? " sel" : "";
-        return `<button type="button" class="bm-opt bm-opt-color${on} bm-opt-swatch" data-color="${escapeAttr(c)}" title="${escapeAttr(c)}" style="background:${escapeAttr(c)}"></button>`;
+        const on = sel.mode === "random"
+          ? (poolColors.has(String(c)) ? " sel" : "")
+          : (String(c) === String(chosenColor) ? " sel" : "");
+        return `<button type="button" class="bm-opt bm-opt-color${on} bm-opt-swatch" data-color="${escapeAttr(c)}" title="${escapeAttr(c)}" aria-label="Colour ${escapeAttr(c)}" style="background:${escapeAttr(c)}"></button>`;
       }).join("");
+      if (sel.mode === "random") {
+        html += `<span class="bm-color-actions"><button type="button" class="btn btn-sm bm-color-all">All</button><button type="button" class="btn btn-sm bm-color-none">Clear</button></span>`;
+      }
       html += `</div>`;
     }
   }
@@ -1257,9 +1305,16 @@ function bmRenderValue(feature, id) {
   return String(id);
 }
 
-function bmColorParam(feature) {
-  const colorParamMap = { "top_tone1": "top", "bottom_tone1": "bottom", "bottom": "dress", "footwear_tone": "footwear", "headwear_tone": "headwear", "outerwear_tone": "outerwear", "outfit_tone": "outfit" };
-  return null;
+function buildBaseAvatarUrl() {
+  // The model's baseline look with NO per-feature overrides — always a valid
+  // render, used as the preview's last-resort fallback so the stage never blanks.
+  if (!bm.baseAvatar) return "";
+  let url; try { url = new URL(bm.baseAvatar); } catch (e) { return ""; }
+  const p = url.searchParams;
+  p.set("scale", "1");
+  const preset = bm.presets[bm.current] || {};
+  Object.keys(preset).forEach(k => p.set(k, preset[k]));
+  return url.toString();
 }
 
 function buildAvatarUrl() {
@@ -1295,8 +1350,24 @@ function buildAvatarUrl() {
 }
 
 function renderAvatar() {
+  const img = el("bm-avatar");
+  const note = el("bm-avatar-err");
   const u = buildAvatarUrl();
-  if (u) el("bm-avatar").src = u;
+  if (!u) return;
+  img.onload = () => { img.style.display = ""; if (note) note.style.display = "none"; bm.lastGoodSrc = u; };
+  img.onerror = () => {
+    // Never blank the stage: fall back to the last good preview, else the model
+    // base look. A rare invalid param combo shows the base instead of nothing.
+    const fallback = bm.lastGoodSrc || buildBaseAvatarUrl();
+    img.onerror = null;  // don't loop if the fallback also fails
+    if (fallback && img.src !== fallback) {
+      if (note) { note.textContent = "Showing base look — that combination couldn't render."; note.style.display = ""; }
+      img.style.display = "";
+      img.src = fallback;
+    }
+  };
+  img.style.display = "";
+  img.src = u;
 }
 
 el("bm-model").addEventListener("change", e => { bm.current = e.target.value; bm.previewPick = {}; renderBitmojiAll(); });
@@ -1327,6 +1398,16 @@ document.getElementById("bm-mode-group").addEventListener("click", e => {
 });
 
 el("bm-options").addEventListener("click", e => {
+  const colorBulk = e.target.closest(".bm-color-all, .bm-color-none");
+  if (colorBulk) {
+    const f = bm.active; const sel = modelCfg()[f]; const feat = bm.catalog[f];
+    if (!sel || sel.mode !== "random" || !feat) return;
+    sel.colors = colorBulk.classList.contains("bm-color-all")
+      ? feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, [])
+      : [];
+    renderSide(); renderAvatar();
+    return;
+  }
   const swatchBtn = e.target.closest(".bm-opt-swatch");
   if (swatchBtn) {
     const f = bm.active; const color = swatchBtn.dataset.color; const sel = modelCfg()[f];
@@ -1338,7 +1419,11 @@ el("bm-options").addEventListener("click", e => {
       const ci = sel.colors.indexOf(color);
       if (ci >= 0) sel.colors.splice(ci, 1); else sel.colors.push(color);
     }
-    el("bm-options").querySelectorAll(".bm-opt-swatch").forEach(b => b.classList.toggle("sel", b.dataset.color === color));
+    if (sel.mode === "random") {
+      swatchBtn.classList.toggle("sel");   // multi-select colour pool
+    } else {
+      el("bm-options").querySelectorAll(".bm-opt-swatch").forEach(b => b.classList.toggle("sel", b.dataset.color === color));
+    }
     renderAvatar();
     return;
   }
@@ -1361,6 +1446,42 @@ el("bm-options").addEventListener("click", e => {
 el("bm-shuffle").addEventListener("click", () => {
   shufflePreviewPicks();
   renderAvatar();
+});
+
+el("bm-clear-feature").addEventListener("click", () => {
+  const f = bm.active;
+  delete modelCfg()[f];
+  delete bm.previewPick[f]; delete bm.previewPick[f + ":color"];
+  renderCatBar(); renderSide(); renderAvatar();
+});
+
+el("bm-recommend").addEventListener("click", () => {
+  if (!bm.loaded) return;
+  const cfg = modelCfg();
+  const sample = (arr, n) => {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a.slice(0, Math.min(n, a.length));
+  };
+  const setRandom = (feature, n, withColors) => {
+    const feat = bm.catalog[feature];
+    if (!feat || !feat.options || !feat.options.length) return;
+    const entry = { mode: "random", pool: sample(feat.options.map(o => String(o.id)), n) };
+    if (withColors) {
+      const colors = feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, []);
+      if (colors.length) entry.colors = colors;
+    }
+    cfg[feature] = entry;
+  };
+  // A coherent "vary the look" starting point: random outfit pieces + colours plus
+  // a little hair variety. Operators tweak from here, then Save.
+  setRandom("tops", 12, true);
+  setRandom("bottoms", 8, true);
+  setRandom("footwear", 6, true);
+  setRandom("hair_style", 10, false);
+  renderBitmojiAll();
+  el("bm-status").textContent = "Recommended a starting look — review, then Save.";
+  toast("Filled random pools with a recommended look. Review & Save.", true);
 });
 
 el("bm-save").addEventListener("click", async () => {
