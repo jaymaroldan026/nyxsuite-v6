@@ -1,5 +1,48 @@
 # Changelog
 
+## 6.0.8 — Bitmoji login-redirect recovery, real site theme, proxy rotation + ranking, macOS dashboard auto-refresh
+
+### Nyx: Bitmoji no longer gets stuck on the login page
+- After a Snapchat OAuth redirect, Bitmoji sometimes re-renders its own
+  `bitmoji.com/login` page (the `?code=` exchange didn't complete). That page
+  carries a "Log In with Snapchat" button, so it was mis-classified as a Snapchat
+  login and the flow ran the credential auto-login — which has no form to fill
+  there — looping "no login form context … falling back to manual login" until it
+  timed out. The callback is now detected as a distinct `LOGIN_REDIRECT` state and
+  recovered by reloading (to finish the code exchange) and, if still stuck,
+  re-clicking "Log In with Snapchat" to re-run OAuth against the existing session.
+
+### Nyx: automation keeps the site's real theme (no more white editor)
+- The Bitmoji editor is dark only via `@media(prefers-color-scheme: dark)`.
+  Automation used to leave the page in light, so it rendered **white** during a
+  run and snapped back to dark afterwards. The forced-dark override (injected CSS,
+  `matchMedia` patch, MutationObserver) is gone; automated pages now simply mirror
+  the host OS appearance, so the site's own theme renders exactly as it does for a
+  human — including the editor tab that previously flashed white.
+
+### Nyxify: more reliable proxy blocker + GUI proxy-checker rotation
+- The runner-driven SnapBoard rotation now uses the same robust multi-click path
+  as the manual rotate (clicks up to N times, waits ~22s for the proxy cell to
+  actually change) instead of a single click with a 16s window that reported a
+  slow-but-successful rotation as "did not change".
+- Blocked/failed rotations are tagged by reason (`blocked` vs `check_failed`),
+  back off between failed rotation requests, and surface why they failed.
+- The in-form "Check Proxy" wait was widened (a failing connection test can take
+  longer than a few seconds to say so) and now logs at WARNING when it proceeds
+  with no verdict, so a proxy that was never rotated is visible.
+
+### Nyxify: Proxy Ranking dashboard (new)
+- New **Proxy Ranking** panel (button next to Full Auto Editor) ranks proxies by
+  **subnet**, good → bad, from how often each needed a retry, failed a creation,
+  or hit a ban — updated every time a proxy is used. Each row has a one-click
+  **Ban** that adds the subnet straight to the Proxy Blocker.
+
+### macOS: auto-refresh an unresponsive AdsPower dashboard
+- When the AdsPower dashboard hangs during GUI automation (New Profile button or
+  Profiles search bar never resolves), Nyx now triggers **Window ▸ Refresh**
+  (Shift-Cmd-R) automatically and retries, instead of failing the profile — no
+  manual menu click needed.
+
 ## 6.0.7 — Bitmoji outfit fallback, roll back to any version, Windows Chrome-kill fix, SnapBoard auto-refresh
 
 ### Bitmoji: stop "scrolling forever" when an item leaves the catalog

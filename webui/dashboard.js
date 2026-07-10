@@ -55,7 +55,7 @@ const PRODUCTS = {
 
 const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
-  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, advancedVisible: false },
+  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false },
   version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [], availableVersions: [] },
 };
@@ -241,7 +241,7 @@ function renderPanel(p) {
   renderRunnerButtons(p);
   buildToolbar("queue-" + p, cfg.queue, p, false);
   buildToolbar("row-" + p, cfg.row, p, true);
-  if (p === "nyxify") renderFullAutoSection();
+  if (p === "nyxify") { renderFullAutoSection(); renderProxyRankingSection(); if (state.nyxify.proxyrankVisible) renderProxyRanking(); }
 
   const searchEl = el("search-" + p);
   if (searchEl) { searchEl.value = s.search || ""; }
@@ -987,6 +987,74 @@ el("fullauto-toggle-btn").addEventListener("click", () => {
   renderFullAutoSection();
   if (willShow) renderFullAuto();
 });
+
+// ---------- Proxy Ranking ----------
+function renderProxyRankingSection() {
+  const section = el("proxyrank-section");
+  const btn = el("proxyrank-toggle-btn");
+  if (!section || !btn) return;
+  const visible = state.nyxify.proxyrankVisible;
+  section.style.display = visible ? "block" : "none";
+  btn.textContent = visible ? "Hide Proxy Ranking" : "Proxy Ranking";
+}
+
+function proxyScoreClass(score) {
+  if (score <= 0.34) return "score-good";
+  if (score <= 1.0) return "score-mid";
+  return "score-bad";
+}
+
+async function renderProxyRanking() {
+  const tbody = el("proxyrank-tbody");
+  if (!tbody) return;
+  const r = await fetch(`http://${HOST}:8866/proxy_ranking`, { headers: tokenHeaders() })
+    .then(r => r.json()).catch(() => ({ rows: [] }));
+  const rows = (r && r.rows) || [];
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="hint" style="text-align:center;padding:14px">No proxy usage recorded yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(row => {
+    const subnet = escapeHtml(String(row.subnet || ""));
+    const sc = Number(row.score || 0);
+    return `<tr>
+      <td>${subnet}</td>
+      <td>${row.uses || 0}</td>
+      <td>${row.retries || 0}</td>
+      <td>${row.creation_fails || 0}</td>
+      <td>${row.ban_hits || 0}</td>
+      <td class="${proxyScoreClass(sc)}">${sc}</td>
+      <td><button class="btn btn-sm proxyrank-ban" data-subnet="${escapeAttr(String(row.subnet || ""))}" type="button">Ban</button></td>
+    </tr>`;
+  }).join("");
+  tbody.querySelectorAll(".proxyrank-ban").forEach(b => {
+    b.addEventListener("click", async () => {
+      const subnet = b.getAttribute("data-subnet");
+      if (!subnet) return;
+      b.disabled = true;
+      const res = await fetch(`http://${HOST}:8866/proxy_ranking/ban`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...tokenHeaders() },
+        body: JSON.stringify({ subnet, token: TOKEN }),
+      }).then(r => r.json()).catch(() => ({ ok: false }));
+      toast(res.ok ? `Subnet ${subnet} added to Proxy Blocker.` : (res.error || "Ban failed."), res.ok);
+      if (res.ok && res.config) {
+        state.nyxify.config = res.config;
+        if (typeof renderNyxifyAdvanced === "function") renderNyxifyAdvanced();
+      }
+      renderProxyRanking();
+    });
+  });
+}
+
+el("proxyrank-toggle-btn").addEventListener("click", () => {
+  const willShow = !state.nyxify.proxyrankVisible;
+  state.nyxify.proxyrankVisible = willShow;
+  renderProxyRankingSection();
+  if (willShow) renderProxyRanking();
+});
+
+el("proxyrank-refresh").addEventListener("click", () => renderProxyRanking());
 
   // ---------- Configure Nyxmoji (editor) ----------
 const bm = {

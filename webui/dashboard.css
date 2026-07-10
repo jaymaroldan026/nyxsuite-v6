@@ -235,6 +235,18 @@ tr.group-header td{background:rgba(99,102,241,.08);font-weight:600;font-size:13p
 .fullauto-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px}
 @media(max-width:900px){.fullauto-grid{grid-template-columns:1fr}}
 .fullauto-section{margin-bottom:8px}
+.proxyrank-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 6px}
+.proxyrank-head h3{margin:0;font-size:14px;display:flex;align-items:baseline;gap:8px}
+.proxyrank-head h3 .hint{margin:0;font-weight:400}
+table.proxyrank-table tbody td{white-space:nowrap;cursor:default}
+table.proxyrank-table tbody tr{cursor:default}
+.proxyrank-table .score-good{color:var(--ok);font-weight:600}
+.proxyrank-table .score-mid{color:var(--warn);font-weight:600}
+.proxyrank-table .score-bad{color:var(--bad);font-weight:600}
+.btn-sm{font-size:11px;padding:3px 10px;min-width:0}
+.proxyrank-ban{color:var(--bad);border-color:rgba(239,68,68,.3)}
+.proxyrank-ban:hover{background:rgba(239,68,68,.12);border-color:var(--bad)}
+.proxyrank-ban:disabled{opacity:.5;cursor:default}
 .fullauto-col{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--r-lg);padding:18px;box-shadow:var(--card-shadow)}
 .fullauto-col h3{margin:0 0 8px;font-size:14px;color:#aeb6ff;font-weight:600}
 .textarea-full{width:100%;min-height:320px;font-family:"Fira Code",Consolas,monospace;font-size:12px;resize:vertical;line-height:1.6}

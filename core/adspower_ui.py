@@ -362,8 +362,13 @@ class AdsPowerUIConfig:
     # the manager doesn't set it explicitly.
     assume_presearch: bool = field(
         default_factory=lambda: _env_bool("ADSPOWER_UI_ASSUME_PRESEARCH", False))
+    # A failing connection test can take longer than a few seconds to surface
+    # its "connection test failed" verdict; too short a window times out into the
+    # "no verdict -> assume OK" branch and a bad proxy is never rotated. Good
+    # proxies still break early on a success marker, so this only bounds the
+    # ambiguous/failing case.
     proxy_check_timeout: float = field(
-        default_factory=lambda: _env_float("ADSPOWER_UI_PROXY_CHECK_TIMEOUT", 6.0))
+        default_factory=lambda: _env_float("ADSPOWER_UI_PROXY_CHECK_TIMEOUT", 10.0))
     require_proxy_ok: bool = False     # if True, abort create when proxy check fails
     # Skip the in-form 'Check Proxy' step entirely. The proxy is already
     # validated upstream (Nyxify's _rotate_proxy_until_usable) before create is
@@ -524,6 +529,31 @@ class AdsPowerUIController:
         self._a11y_depth = getattr(self, "_a11y_depth", 0)
         self._prev_fg = getattr(self, "_prev_fg", None)
         return self._win
+
+    def _refresh_dashboard(self):
+        """Recover an unresponsive AdsPower dashboard by triggering Window >
+        Refresh, then reconnecting. Returns True if a refresh was issued. No-op
+        (returns False) on backends that don't expose ``refresh_window`` (e.g.
+        the Windows UIA backend)."""
+        backend = getattr(self, "_backend", None)
+        if backend is None or not hasattr(backend, "refresh_window"):
+            return False
+        try:
+            logger.warning(
+                "AdsPower dashboard appears unresponsive; auto-refreshing (Window > Refresh)."
+            )
+            issued = bool(backend.refresh_window())
+        except Exception as exc:
+            logger.debug(f"AdsPower auto-refresh failed: {exc}")
+            return False
+        if issued:
+            # Let the dashboard re-render, then rebuild our window handle.
+            time.sleep(1.5)
+            try:
+                self._connect()
+            except Exception:
+                pass
+        return issued
 
     def _a11y_enter(self):
         """Enter a UIA-operation depth level, saving the previous foreground
@@ -889,6 +919,17 @@ class AdsPowerUIController:
             self._foreground()
             self._connect()
         rect = self._rect("New Profile", "Button", timeout=3)
+        if rect is None:
+            # The New Profile button never resolved: the dashboard is very likely
+            # unresponsive (a known macOS AdsPower quirk under heavy GUI
+            # automation). Auto-refresh (Window > Refresh) and retry before the
+            # vision fallback / raising, so a stuck dashboard self-recovers.
+            for _ in range(2):
+                if not self._refresh_dashboard():
+                    break
+                rect = self._rect("New Profile", "Button", timeout=4)
+                if rect is not None:
+                    break
         if rect is not None:
             self._click_rect(rect, template_name="new_profile_btn")
         elif not self._click_vision("new_profile_btn"):
@@ -1204,10 +1245,15 @@ class AdsPowerUIController:
                 break
             time.sleep(min(poll, max(0.0, deadline - time.time())))
         if result is None:
-            # No explicit verdict — assume OK (production pre-validates proxies
-            # via SnapBoard before we ever get here).
+            # No explicit verdict within the window — assume OK (production
+            # pre-validates proxies via SnapBoard before we ever get here). Logged
+            # at WARNING so a proxy that silently never rendered a verdict — and so
+            # was never rotated — is visible in the logs.
             result = True
-            logger.info("Proxy check: no explicit verdict; proceeding (assumed OK).")
+            logger.warning(
+                "Proxy check: no explicit verdict within "
+                f"{self.config.proxy_check_timeout:.0f}s; proceeding (assumed OK)."
+            )
         else:
             logger.info(f"Proxy check verdict: {'OK' if result else 'FAILED'}.")
         return result
@@ -1704,6 +1750,12 @@ class AdsPowerUIController:
         if search is None:
             self._goto_profiles()
             search = self._rect("Search or new search criteria", "Edit", timeout=4)
+        if search is None:
+            # Profiles page never rendered its search bar — auto-refresh the
+            # (likely unresponsive) dashboard and try once more before raising.
+            if self._refresh_dashboard():
+                self._goto_profiles()
+                search = self._rect("Search or new search criteria", "Edit", timeout=4)
         if search is None:
             raise AdsPowerUIError("Search bar not found on the Profiles page.")
         below = search.bottom

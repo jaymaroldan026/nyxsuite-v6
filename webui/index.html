@@ -57,6 +57,7 @@
           <span class="detail" id="usage-nyxify"></span>
         </div>
         <div class="panel-head-btns">
+          <button id="proxyrank-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Proxy Ranking</button>
           <button id="fullauto-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Full Auto Editor</button>
           <button id="nyxify-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
             <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
@@ -89,6 +90,19 @@
             <textarea id="fullauto-signup-names" class="input textarea-full" placeholder="Jane Doe&#10;Alice Smith"></textarea>
             <button id="fullauto-save-signup" class="btn primary" type="button">Save Signup Names</button>
           </div>
+        </div>
+      </div>
+      <div id="proxyrank-section" class="fullauto-section" style="display:none">
+        <div class="proxyrank-head">
+          <h3>Proxy Ranking <span class="hint">by subnet · good → bad</span></h3>
+          <button id="proxyrank-refresh" class="btn" type="button">Refresh</button>
+        </div>
+        <p class="hint">Ranked from how often each subnet needed a retry, failed a creation, or hit a ban. Updates every time a proxy is used.</p>
+        <div class="tablewrap">
+          <table class="queue proxyrank-table">
+            <thead><tr><th>Subnet</th><th>Uses</th><th>Retries</th><th>Fails</th><th>Bans</th><th>Score</th><th></th></tr></thead>
+            <tbody id="proxyrank-tbody"></tbody>
+          </table>
         </div>
       </div>
       <div class="searchbar"><input class="input search-input" id="search-nyxify" type="text" placeholder="Search AdsPower ID or username…"></div>

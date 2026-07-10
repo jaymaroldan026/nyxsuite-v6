@@ -1139,30 +1139,26 @@
       var rowId = extractRowId(rowKey);
       if (!rowId) return;
 
-      var oldProxy = readProxyFromRow(rowId);
-      var clicked = clickRotateButton(rowId);
+      // Use the same robust multi-click rotate as the manual path: click the
+      // rotate button up to maxClicks times and wait PROXY_ROTATE_WAIT_MS for the
+      // proxy cell to actually change. The single-click / 16s wait this replaced
+      // reported "did not change" when SnapBoard simply took longer than 16s to
+      // swap the proxy, which read to the runner as a failed rotation.
+      var maxClicks = parseInt(payload.max_clicks, 10);
+      if (!(maxClicks >= 1)) maxClicks = 3;
 
-      if (!clicked) {
-        headers["Content-Type"] = "application/json";
-        await fetch(apiConfig.localApiUrl + "/proxy/rotate_result", {
-          method: "POST", headers: headers,
-          body: JSON.stringify({ row_key: rowKey, error: "No rotate button found for row " + rowId }),
-        });
-        return;
-      }
-
-      var newProxy = await waitForProxyChange(rowId, oldProxy, 16000);
+      var result = await rotateProxyUntilChanged(rowId, PROXY_ROTATE_WAIT_MS, maxClicks);
 
       headers["Content-Type"] = "application/json";
-      if (newProxy && newProxy !== oldProxy) {
+      if (result && result.ok && result.proxy) {
         await fetch(apiConfig.localApiUrl + "/proxy/rotate_result", {
           method: "POST", headers: headers,
-          body: JSON.stringify({ row_key: rowKey, proxy: newProxy }),
+          body: JSON.stringify({ row_key: rowKey, proxy: result.proxy }),
         });
       } else {
         await fetch(apiConfig.localApiUrl + "/proxy/rotate_result", {
           method: "POST", headers: headers,
-          body: JSON.stringify({ row_key: rowKey, error: "Proxy did not change after rotation" }),
+          body: JSON.stringify({ row_key: rowKey, error: (result && result.error) || "Proxy did not change after rotation" }),
         });
       }
     } catch (error) {

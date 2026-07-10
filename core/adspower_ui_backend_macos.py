@@ -324,6 +324,49 @@ class MacOSAdsPowerBackend:
             self.set_attr(self._window, "AXFocused", True)
         time.sleep(max(0.0, float(getattr(self, "_foreground_settle_seconds", 0.08))))
 
+    def refresh_window(self) -> bool:
+        """Trigger AdsPower's Window > Refresh (shown as Shift-Cmd-R) without a
+        manual menu click.
+
+        Brings AdsPower forward, then asks System Events to click the actual
+        menu item; if the menu wording differs across builds, it falls back to
+        the Shift-Cmd-R keystroke, which reaches AdsPower because we just focused
+        it. Used to recover an unresponsive dashboard during GUI automation."""
+        try:
+            self.foreground(force=True)
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+        proc_name = ""
+        try:
+            if self._app is not None:
+                proc_name = str(self._app.localizedName() or "")
+        except Exception:
+            proc_name = ""
+        proc_name = (proc_name or "AdsPower Global").replace('"', '\\"')
+
+        scripts = [
+            (
+                f'tell application "System Events" to tell process "{proc_name}" '
+                'to click menu item "Refresh" of menu "Window" of menu bar 1'
+            ),
+            'tell application "System Events" to keystroke "r" using {command down, shift down}',
+        ]
+        for script in scripts:
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=6,
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _cached_window_is_usable(self) -> bool:
         if self._window is None or self._app is None or self._app_ref is None:
             return False

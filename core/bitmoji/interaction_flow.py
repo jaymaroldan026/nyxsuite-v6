@@ -125,6 +125,23 @@ class BitmojiInteractionMixin:
 
         return False
 
+    async def is_bitmoji_login_redirect_context(self, ctx):
+        """The bitmoji.com/login page that shows up after the Snapchat OAuth
+        redirect. Bitmoji is meant to exchange the ``?code=`` and bounce to the
+        avatar editor, but it sometimes re-renders its own login page (with the
+        "Log In with Snapchat" button). This is NOT a Snapchat credential page
+        (accounts.snapchat.com): the correct recovery is to reload / re-click
+        "Log In with Snapchat" so OAuth completes against the existing Snapchat
+        session — never the Snapchat username/password auto-login, which has no
+        form to fill here and just spins into the manual-login timeout."""
+        try:
+            current_url = (ctx.url or "").lower()
+        except Exception:
+            current_url = ""
+        if "accounts.snapchat.com" in current_url:
+            return False
+        return "bitmoji.com/login" in current_url
+
     async def get_snapchat_login_context(self):
         for ctx in await self.get_contexts():
             try:
@@ -1084,6 +1101,8 @@ class BitmojiInteractionMixin:
                         if await self.is_editor_context(ctx):
                             return "EDITOR"
                         if await self.find_login_with_snapchat_locator(ctx):
+                            if await self.is_bitmoji_login_redirect_context(ctx):
+                                return "LOGIN_REDIRECT"
                             return "LOGIN"
                         if await self.is_snapchat_login_context(ctx):
                             return "LOGIN"
@@ -1159,6 +1178,8 @@ class BitmojiInteractionMixin:
                 return "CONTINUE"
             if "accounts.snapchat.com" in current_url:
                 return "LOGIN"
+            if "bitmoji.com/login" in current_url:
+                return "LOGIN_REDIRECT"
             if "bitmoji.com/avatar/create" in current_url:
                 return "GENDER"
 

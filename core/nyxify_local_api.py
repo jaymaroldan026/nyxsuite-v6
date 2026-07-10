@@ -405,6 +405,12 @@ class NyxifyLocalApiServer:
         self.phone_fetch_store = _PhoneFetchStore()
         self.sms_fetch_store = _SmsFetchStore()
         self.full_auto_username_store = FullAutoUsernameStore()
+        try:
+            from core.proxy_ranking_store import ProxyRankingStore
+
+            self.proxy_ranking_store = ProxyRankingStore()
+        except Exception:
+            self.proxy_ranking_store = None
         self._server = None
         self._thread = None
 
@@ -655,6 +661,17 @@ class NyxifyLocalApiServer:
                     except Exception:
                         pass
                     self._write_json(200, {"ok": True, "model": model, "resolved": resolved, "signup_names": lines})
+                    return
+
+                if parsed_path.path == "/proxy_ranking":
+                    rows = []
+                    if outer.proxy_ranking_store is not None:
+                        try:
+                            rows = outer.proxy_ranking_store.ranked()
+                        except Exception as exc:
+                            self._write_json(500, {"ok": False, "error": str(exc)})
+                            return
+                    self._write_json(200, {"ok": True, "rows": rows})
                     return
 
                 if self.path == "/proxy/rotate_pending":
@@ -1056,6 +1073,26 @@ class NyxifyLocalApiServer:
                             updates[key] = payload.get(key)
                     config = save_nyxify_config(updates)
                     self._write_json(200, {"ok": True, "config": config, "message": "Nyxify config saved locally."})
+                    return
+
+                if self.path == "/proxy_ranking/ban":
+                    subnet = str(payload.get("subnet") or "").strip()
+                    if not subnet:
+                        self._write_json(400, {"ok": False, "error": "Missing subnet to ban."})
+                        return
+                    current = load_nyxify_config()
+                    blocked = list(current.get("blocked_proxies") or [])
+                    if subnet not in blocked:
+                        blocked.append(subnet)
+                    config = save_nyxify_config({"blocked_proxies": blocked})
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "config": config,
+                            "message": f"Subnet {subnet} added to the Proxy Blocker.",
+                        },
+                    )
                     return
 
                 if self.path.startswith("/bot/"):

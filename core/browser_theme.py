@@ -1,226 +1,107 @@
-_DARK_MODE_INIT_SCRIPT = """
-() => {
-    try {
-        const keys = [
-            'theme',
-            'color-theme',
-            'ui-theme',
-            'appearance',
-            'mode',
-            'snapTheme',
-            'colorScheme',
-            'prefers-color-scheme',
-            'preferred-theme'
-        ];
-        const styleId = '__nyxify_force_dark_mode';
-        const styleContent = `
-            :root {
-                color-scheme: dark !important;
-            }
-            html, body {
-                background-color: #101317 !important;
-                color: #e6ebf0 !important;
-                color-scheme: dark !important;
-            }
-            input, textarea, select, button, [role="button"] {
-                color-scheme: dark !important;
-            }
-            a {
-                color: #8ab4f8 !important;
-            }
-        `;
+"""Color-scheme handling for automated pages.
 
-        const ensureDarkMarkers = () => {
-            for (const key of keys) {
-                try { localStorage.setItem(key, 'dark'); } catch (_) {}
-                try { sessionStorage.setItem(key, 'dark'); } catch (_) {}
-            }
+This module used to *force* dark mode (injected CSS, patched ``matchMedia``, a
+``MutationObserver`` re-applying dark markers, etc.). That fought each site's own
+theming: the Bitmoji editor is dark only via ``@media(prefers-color-scheme:
+dark)`` and rendered **white** whenever Playwright left the page in light, then
+snapped back to dark once the run finished.
 
-            try {
-                document.documentElement.setAttribute('data-theme', 'dark');
-                document.documentElement.classList.add('dark');
-                document.documentElement.style.colorScheme = 'dark';
-            } catch (_) {}
+We now simply mirror the host OS appearance on every automated page, so the
+site's own light/dark CSS activates exactly as it does when a human uses the
+browser — no injected colors, no overrides. Playwright clears the emulation when
+it disconnects, so the browser returns to its normal (OS) appearance on its own.
 
-            try {
-                if (document.body) {
-                    document.body.classList.add('dark');
-                    document.body.style.colorScheme = 'dark';
-                }
-            } catch (_) {}
-
-            try {
-                let meta = document.querySelector('meta[name="color-scheme"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'color-scheme';
-                    (document.head || document.documentElement).appendChild(meta);
-                }
-                meta.content = 'dark';
-            } catch (_) {}
-
-            try {
-                let style = document.getElementById(styleId);
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = styleId;
-                    style.textContent = styleContent;
-                    (document.head || document.documentElement).appendChild(style);
-                }
-            } catch (_) {}
-        };
-
-        if (typeof window.matchMedia === 'function' && !window.__nyxifyDarkMediaPatched) {
-            const originalMatchMedia = window.matchMedia.bind(window);
-            window.matchMedia = (query) => {
-                const text = String(query || '');
-                if (text.toLowerCase().includes('prefers-color-scheme')) {
-                    const matchesDark = text.toLowerCase().includes('dark');
-                    return {
-                        matches: matchesDark,
-                        media: text,
-                        onchange: null,
-                        addListener() {},
-                        removeListener() {},
-                        addEventListener() {},
-                        removeEventListener() {},
-                        dispatchEvent() { return false; },
-                    };
-                }
-                return originalMatchMedia(text);
-            };
-            window.__nyxifyDarkMediaPatched = true;
-        }
-
-        ensureDarkMarkers();
-
-        if (!window.__nyxifyDarkObserver) {
-            const observer = new MutationObserver(() => ensureDarkMarkers());
-            observer.observe(document.documentElement || document, {
-                childList: true,
-                subtree: true,
-            });
-            window.__nyxifyDarkObserver = observer;
-        }
-    } catch (_) {}
-}
+The old public names are kept as thin aliases so existing call sites keep working
+with the new, correct behavior.
 """
+from __future__ import annotations
 
-_NORMAL_THEME_INIT_SCRIPT = """
-() => {
-    try {
-        const styleId = '__nyxify_force_dark_mode';
-        const meta = document.querySelector('meta[name="color-scheme"]');
-        const html = document.documentElement;
-        const body = document.body;
+import asyncio
+import subprocess
+import sys
 
-        try {
-            if (window.__nyxifyDarkObserver && typeof window.__nyxifyDarkObserver.disconnect === 'function') {
-                window.__nyxifyDarkObserver.disconnect();
-            }
-            window.__nyxifyDarkObserver = null;
-        } catch (_) {}
-
-        try {
-            delete window.__nyxifyDarkMediaPatched;
-        } catch (_) {
-            window.__nyxifyDarkMediaPatched = false;
-        }
-
-        const clearStorageKey = (key) => {
-            try { localStorage.removeItem(key); } catch (_) {}
-            try { sessionStorage.removeItem(key); } catch (_) {}
-        };
-
-        [
-            'theme',
-            'color-theme',
-            'ui-theme',
-            'appearance',
-            'mode',
-            'snapTheme',
-            'colorScheme',
-            'prefers-color-scheme',
-            'preferred-theme'
-        ].forEach(clearStorageKey);
-
-        try {
-            if (html) {
-                html.removeAttribute('data-theme');
-                html.classList.remove('dark');
-                html.style.removeProperty('color-scheme');
-            }
-        } catch (_) {}
-
-        try {
-            if (body) {
-                body.classList.remove('dark');
-                body.style.removeProperty('color-scheme');
-            }
-        } catch (_) {}
-
-        try {
-            if (meta) {
-                meta.content = 'light dark';
-            }
-        } catch (_) {}
-
-        try {
-            const style = document.getElementById(styleId);
-            if (style && style.parentNode) {
-                style.parentNode.removeChild(style);
-            }
-        } catch (_) {}
-    } catch (_) {}
-}
-"""
+# Resolved once per process: reading the OS appearance is cheap but not free, and
+# it does not change mid-run in any way we care about.
+_CACHED_SCHEME = None
 
 
-async def apply_dark_mode_to_page(page, logger=None):
+def resolve_os_color_scheme():
+    """Return ``"dark"`` or ``"light"`` for the host OS appearance (cached).
+
+    macOS: ``defaults read -g AppleInterfaceStyle`` prints ``Dark`` in dark mode
+    and errors (no key) in light mode. Windows: the ``AppsUseLightTheme`` registry
+    value is ``0`` in dark mode. Anything unknown falls back to ``"light"``.
+    """
+    global _CACHED_SCHEME
+    if _CACHED_SCHEME is not None:
+        return _CACHED_SCHEME
+
+    scheme = "light"
     try:
-        await page.emulate_media(color_scheme="dark")
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.returncode == 0 and "dark" in (result.stdout or "").strip().lower():
+                scheme = "dark"
+        elif sys.platform.startswith("win"):
+            import winreg  # type: ignore
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            try:
+                apps_use_light, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                scheme = "light" if apps_use_light else "dark"
+            finally:
+                winreg.CloseKey(key)
+    except Exception:
+        scheme = "light"
+
+    _CACHED_SCHEME = scheme
+    return scheme
+
+
+async def apply_native_color_scheme_to_page(page, logger=None):
+    """Emulate the host OS color scheme on a single page so the site's own
+    ``prefers-color-scheme`` CSS activates naturally."""
+    scheme = resolve_os_color_scheme()
+    try:
+        await page.emulate_media(color_scheme=scheme)
     except Exception as exc:
         if logger:
-            logger.debug(f"Could not emulate dark color scheme on page: {exc}")
-
-    try:
-        await page.add_init_script(_DARK_MODE_INIT_SCRIPT)
-    except Exception as exc:
-        if logger:
-            logger.debug(f"Could not add dark-mode init script to page: {exc}")
-
-    try:
-        await page.evaluate(_DARK_MODE_INIT_SCRIPT)
-    except Exception as exc:
-        if logger:
-            logger.debug(f"Could not apply dark-mode script to current page: {exc}")
+            logger.debug(f"Could not emulate '{scheme}' color scheme on page: {exc}")
 
 
-async def apply_dark_mode_preferences(context, logger=None):
-    try:
-        await context.add_init_script(_DARK_MODE_INIT_SCRIPT)
-    except Exception as exc:
-        if logger:
-            logger.debug(f"Could not add dark-mode init script to context: {exc}")
-
+async def apply_native_color_scheme_to_context(context, logger=None):
+    """Apply the OS color scheme to every current page in the context, and to any
+    page opened later in the same context (e.g. the Bitmoji editor tab)."""
     for page in list(getattr(context, "pages", []) or []):
-        await apply_dark_mode_to_page(page, logger=logger)
+        await apply_native_color_scheme_to_page(page, logger=logger)
 
+    def _on_new_page(page):
+        try:
+            asyncio.get_event_loop().create_task(
+                apply_native_color_scheme_to_page(page, logger=logger)
+            )
+        except Exception:
+            pass
 
-async def apply_normal_theme_to_page(page, logger=None):
     try:
-        await page.emulate_media(color_scheme="no-preference")
+        context.on("page", _on_new_page)
     except Exception as exc:
         if logger:
-            logger.debug(f"Could not restore default color scheme on page: {exc}")
-
-    try:
-        await page.evaluate(_NORMAL_THEME_INIT_SCRIPT)
-    except Exception as exc:
-        if logger:
-            logger.debug(f"Could not clear dark-mode script from current page: {exc}")
+            logger.debug(f"Could not register color-scheme handler on context: {exc}")
 
 
-async def apply_normal_theme_preferences(context, logger=None):
-    for page in list(getattr(context, "pages", []) or []):
-        await apply_normal_theme_to_page(page, logger=logger)
+# --- Backwards-compatible aliases -------------------------------------------
+# These names historically forced dark mode; they now mirror the OS appearance,
+# which is the behavior we want everywhere they were used.
+apply_dark_mode_to_page = apply_native_color_scheme_to_page
+apply_dark_mode_preferences = apply_native_color_scheme_to_context
+apply_normal_theme_to_page = apply_native_color_scheme_to_page
+apply_normal_theme_preferences = apply_native_color_scheme_to_context

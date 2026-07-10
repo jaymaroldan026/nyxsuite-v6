@@ -119,6 +119,46 @@ def _is_proxy_banned(proxy_value, banned_proxies):
     return False
 
 
+_proxy_ranking_store = None
+
+
+def _get_proxy_ranking_store():
+    """Lazily open the per-subnet proxy ranking store. Returns None (and never
+    raises) if it can't be opened, so ranking is best-effort telemetry that can
+    never break a creation run."""
+    global _proxy_ranking_store
+    if _proxy_ranking_store is None:
+        try:
+            from core.proxy_ranking_store import ProxyRankingStore
+
+            _proxy_ranking_store = ProxyRankingStore()
+        except Exception as exc:
+            logger.debug(f"Proxy ranking store unavailable: {exc}")
+            _proxy_ranking_store = False
+    return _proxy_ranking_store or None
+
+
+def _record_proxy_ranking_event(proxy_value, event, reason=""):
+    """Record a proxy-ranking event ('use' | 'retry' | 'creation_fail' | 'ban').
+    Best-effort: any failure is swallowed so telemetry never affects the run."""
+    if not str(proxy_value or "").strip():
+        return
+    store = _get_proxy_ranking_store()
+    if not store:
+        return
+    try:
+        if event == "use":
+            store.record_use(proxy_value)
+        elif event == "retry":
+            store.record_retry(proxy_value, reason=reason)
+        elif event == "creation_fail":
+            store.record_creation_fail(proxy_value)
+        elif event == "ban":
+            store.record_ban_hit(proxy_value)
+    except Exception as exc:
+        logger.debug(f"Could not record proxy ranking event {event!r}: {exc}")
+
+
 def _classify_failure_last_step(created, last_step, error_message):
     normalized_error = str(error_message or "").strip().lower()
     normalized_step = str(last_step or "").strip()
@@ -947,32 +987,46 @@ async def _rotate_proxy_until_usable(
             )
             if proxy_check.get("ok"):
                 return proxy_value, proxy_check
+            reason = "check_failed"
             last_message = str(proxy_check.get("message") or "Proxy check failed.").strip()
             logger.info(f"Task {task_id}: proxy check failed ({last_message}), rotating proxy")
         else:
+            reason = "blocked"
             last_message = "Proxy matches a blocked pattern."
             logger.info(f"Task {task_id}: proxy {proxy_value[:60]!r} is blocked, rotating proxy")
 
+        _record_proxy_ranking_event(proxy_value, "retry", reason=reason)
+
         attempt += 1
         if attempt > max_rotation_attempts:
-            raise ValueError(last_message or "Proxy could not be rotated to a usable value.")
+            raise ValueError(
+                f"{last_message} (proxy could not be rotated to a usable value after "
+                f"{max_rotation_attempts} attempts; reason={reason})"
+            )
 
         old_proxy = str(proxy_value or "").strip()
-        new_proxy = await _request_snapboard_rotation(task_row_key, timeout_seconds=55)
+        # Ask SnapBoard to click rotate a few times: escaping a blocked subnet or
+        # a dead proxy often needs more than one swap, and a single click that
+        # lands on another bad proxy would otherwise burn an attempt.
+        new_proxy = await _request_snapboard_rotation(task_row_key, timeout_seconds=55, max_clicks=3)
         if new_proxy:
             store.update_task_proxy(task_id, new_proxy)
             proxy_value = new_proxy
             proxy_check_id = new_proxy
             logger.info(
-                f"Task {task_id}: SnapBoard rotated proxy on attempt {attempt}/{max_rotation_attempts}: "
-                f"{old_proxy[:40]!r} -> {proxy_value[:40]!r}"
+                f"Task {task_id}: SnapBoard rotated proxy on attempt {attempt}/{max_rotation_attempts} "
+                f"(reason={reason}): {old_proxy[:40]!r} -> {proxy_value[:40]!r}"
             )
             continue
 
+        # No new proxy came back (rotate button missing on SnapBoard, or the
+        # proxy cell never changed). Back off briefly and log why, instead of
+        # hammering SnapBoard and looking like a generic stall.
         logger.warning(
             f"Task {task_id}: SnapBoard proxy rotation attempt {attempt}/{max_rotation_attempts} "
-            f"did not return a new proxy."
+            f"(reason={reason}) did not return a new proxy; retrying."
         )
+        await asyncio.sleep(min(5.0, 1.0 + attempt * 0.5))
 
 
 async def process_task(task, store, adspower):
@@ -1130,6 +1184,10 @@ async def process_task(task, store, adspower):
             proxy_checker_enabled=proxy_checker_enabled,
             proxy_check_id=task_adspower_id or proxy_value,
         )
+
+        # The proxy is now validated and about to be used for a real creation —
+        # count the use so its subnet's ranking reflects every time it ran.
+        _record_proxy_ranking_event(proxy_value, "use")
 
         last_step = "creating_adspower_profile"
         store.update_task_state(task_id, last_step=last_step)
@@ -1557,6 +1615,19 @@ async def process_task(task, store, adspower):
     except Exception as exc:
         error_message = str(exc) or f"{type(exc).__name__}: {exc!r}"
         failure_last_step = _classify_failure_last_step(created, last_step, error_message)
+        # Proxy-ranking telemetry (best-effort): attribute account bans and
+        # creation failures to the proxy's subnet, skipping host-side infra
+        # errors that have nothing to do with the proxy.
+        if failure_last_step != "adspower_accessibility_permission_missing":
+            low_error = error_message.lower()
+            if (
+                "banned" in low_error
+                or "authorization error" in low_error
+                or failure_last_step == "account_creation_blocked"
+            ):
+                _record_proxy_ranking_event(proxy_value, "ban")
+            else:
+                _record_proxy_ranking_event(proxy_value, "creation_fail")
         should_retry = _should_cleanup_failed_created_profile(failure_last_step, error_message)
         if created and should_retry:
             await _cleanup_failed_created_profile(

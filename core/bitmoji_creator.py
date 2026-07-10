@@ -6,6 +6,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from core.browser_window import maximize_browser_window
+from core.browser_theme import apply_native_color_scheme_to_context
 from core.bitmoji.interaction_flow import BannedSnapError, BitmojiInteractionMixin
 from core.bitmoji.proxy_failure import BitmojiProxyFailureError
 from core.bitmoji.outfit_flow import BitmojiOutfitMixin
@@ -250,6 +251,10 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 for _ in range(20):
                     if self.browser.contexts:
                         self.context = self.browser.contexts[0]
+                        # Mirror the host OS appearance on the editor context so
+                        # the Bitmoji editor keeps its real (dark) theme during
+                        # automation instead of rendering white.
+                        await apply_native_color_scheme_to_context(self.context, logger=self.logger)
                         await maximize_browser_window(self.browser, logger=self.logger)
                         return
                     await asyncio.sleep(0.25)
@@ -536,6 +541,14 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                     return "LOGIN"
 
                 if await self.find_login_with_snapchat_locator(ctx):
+                    # The bitmoji.com/login OAuth-callback page also carries a
+                    # "Log In with Snapchat" button. Route it to the reload /
+                    # re-OAuth recovery (LOGIN_REDIRECT) instead of the Snapchat
+                    # credential auto-login, which would find no form here and
+                    # loop into the manual-login timeout.
+                    if await self.is_bitmoji_login_redirect_context(ctx):
+                        print("State: LOGIN_REDIRECT")
+                        return "LOGIN_REDIRECT"
                     print("State: LOGIN")
                     return "LOGIN"
 
@@ -596,6 +609,53 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 self.logger.warning(f"Mid-flow auto sign-in attempt failed: {exc}")
             return None
 
+    async def recover_login_redirect(self, where=""):
+        """Recover the bitmoji.com/login OAuth-callback page (LOGIN_REDIRECT).
+
+        First reload so Bitmoji can finish exchanging the ``?code=`` and bounce
+        to the editor; if it's still stuck on the login page, re-click "Log In
+        with Snapchat" to re-run OAuth against the existing Snapchat session
+        (consent completes silently). Returns the resulting session state, or
+        None when it could not progress (the caller keeps looping within its own
+        deadline)."""
+        if self.logger:
+            self.logger.info(
+                f"Bitmoji login-redirect page detected {where or 'mid-flow'} for "
+                f"{self._profile_id or 'profile'}; reloading to finish the OAuth code exchange."
+            )
+
+        reload_target = self.page
+        for ctx in await self.get_contexts():
+            try:
+                if "bitmoji.com/login" in (ctx.url or "").lower():
+                    reload_target = ctx
+                    break
+            except Exception:
+                continue
+
+        try:
+            if reload_target is not None:
+                await reload_target.reload(timeout=30000, wait_until="domcontentloaded")
+        except Exception:
+            pass
+        await asyncio.sleep(2.0)
+
+        state = await self.check_session_state(fast=True)
+        if state != "LOGIN_REDIRECT":
+            return state
+
+        # Still stuck after the reload — re-run OAuth explicitly.
+        try:
+            await self.click_login_with_snapchat()
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(
+                    f"Re-clicking 'Log In with Snapchat' during login-redirect recovery failed: {exc}"
+                )
+            return None
+        await asyncio.sleep(1.5)
+        return await self.check_session_state(fast=True)
+
     async def wait_for_post_login_state(self, timeout_seconds=None):
         print("Waiting for Bitmoji redirect...")
 
@@ -603,7 +663,7 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
             timeout_seconds = self.long_wait_seconds
 
         login_code_retries = 0
-        max_login_code_retries = 3
+        max_login_code_retries = 5
         continue_retries = 0
         max_continue_retries = 3
         relogin_attempts = 0
@@ -615,6 +675,24 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
             if state == "BANNED":
                 raise BannedSnapError("Snapchat authorization error after login redirect.")
+
+            # Bitmoji stayed on its own login page after the OAuth redirect (the
+            # ?code= exchange didn't complete). Reload / re-run OAuth instead of
+            # the Snapchat credential auto-login, which has no form to fill here
+            # and just loops into the manual-login timeout.
+            if state == "LOGIN_REDIRECT" and login_code_retries < max_login_code_retries:
+                login_code_retries += 1
+                print(
+                    f"Login-redirect page after OAuth "
+                    f"(attempt {login_code_retries}/{max_login_code_retries}); recovering..."
+                )
+                recovered = await self.recover_login_redirect("after login redirect")
+                if recovered in ["GENDER", "EDITOR", "ACCOUNT_HOME"]:
+                    print(f"Arrived at: {recovered}")
+                    return recovered
+                if recovered == "CONTINUE":
+                    await self.handle_oauth_continue()
+                continue
 
             # Session dropped back to the sign-in page after the redirect —
             # sign in again instead of spinning until "Timeout after login
@@ -690,6 +768,7 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         gender_retries = 0
         oauth_retries = 0
         relogin_attempts = 0
+        login_redirect_retries = 0
 
         while asyncio.get_event_loop().time() < end_time:
             await self.wait_if_paused()
@@ -729,6 +808,21 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 raise
             except Exception:
                 pass
+
+            # Bitmoji stuck on its own login page after the OAuth redirect —
+            # reload / re-run OAuth (bounded) rather than the Snapchat credential
+            # auto-login, which has no form to fill here.
+            if state == "LOGIN_REDIRECT" and login_redirect_retries < 5:
+                login_redirect_retries += 1
+                recovered = await self.recover_login_redirect("while waiting for editor")
+                if recovered in ["EDITOR", "ACCOUNT_HOME"]:
+                    print("Editor ready" if recovered == "EDITOR" else "Account home detected while waiting for editor")
+                    if recovered == "ACCOUNT_HOME":
+                        self.last_result = "already_has_bitmoji"
+                    return
+                if recovered == "CONTINUE":
+                    await self.handle_oauth_continue()
+                continue
 
             # Session dropped to the sign-in page while waiting for the editor
             # — sign in again (bounded) instead of timing out with "Editor
@@ -822,6 +916,18 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
             if state == "BANNED":
                 raise BannedSnapError("Snapchat authorization error on Bitmoji open.")
+
+            # Bitmoji opened straight onto its own login page (either the OAuth
+            # ?code= callback that didn't finish exchanging, or a logged-out
+            # start page). Reload / re-run OAuth to move forward before falling
+            # into the Snapchat-credential login handling below.
+            redirect_attempts = 0
+            while state == "LOGIN_REDIRECT" and redirect_attempts < 5:
+                redirect_attempts += 1
+                if callable(progress_callback):
+                    progress_callback("authorizing_bitmoji")
+                recovered = await self.recover_login_redirect("on Bitmoji open")
+                state = recovered or await self.check_session_state(fast=True)
 
             if state == "LOGIN":
                 if callable(progress_callback):
