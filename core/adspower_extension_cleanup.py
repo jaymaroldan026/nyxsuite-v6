@@ -752,16 +752,45 @@ async def _warm_one_cookie_site(context, url, duration_seconds, logger, profile_
     return True
 
 
+def _resolve_cookie_warmup_settings():
+    """Merge the dashboard config over the env/module defaults.
+
+    Returns ``(enabled, sites)`` where ``sites`` is the pool to sample from.
+    The dashboard toggle wins over the ``NYXIFY_COOKIE_WARMUP_ENABLED`` env
+    default, and a non-empty custom site list replaces the built-in pool.
+    """
+    enabled = COOKIE_WARMUP_ENABLED
+    sites = list(COOKIE_WARMUP_GOOD_WEBSITES)
+    try:
+        from core.nyxify_runtime_config import load_nyxify_config
+
+        config = load_nyxify_config()
+        if "cookie_warmup_enabled" in config:
+            enabled = bool(config.get("cookie_warmup_enabled"))
+        custom = config.get("cookie_warmup_sites") or []
+        custom = [str(url).strip() for url in custom if str(url).strip()]
+        if custom:
+            sites = custom
+    except Exception:
+        pass
+    return enabled, sites
+
+
 async def _warm_ads_profile_cookies(context, logger, profile_id):
-    if not COOKIE_WARMUP_ENABLED or COOKIE_WARMUP_MAX_SECONDS <= 0:
+    warmup_enabled, warmup_sites = _resolve_cookie_warmup_settings()
+    if not warmup_enabled or COOKIE_WARMUP_MAX_SECONDS <= 0 or not warmup_sites:
+        if logger and not warmup_enabled:
+            logger.info(f"Cookie warm-up disabled for {profile_id}; skipping.")
         return {"enabled": False, "visited": []}
 
-    site_count = random.randint(
-        COOKIE_WARMUP_MIN_SITES,
-        min(COOKIE_WARMUP_MAX_SITES, len(COOKIE_WARMUP_GOOD_WEBSITES)),
-    )
+    # Clamp the sample window to the available pool so a short custom list
+    # (e.g. a single site) never trips random.randint's empty-range error.
+    pool_size = len(warmup_sites)
+    min_sites = min(COOKIE_WARMUP_MIN_SITES, pool_size)
+    max_sites = min(COOKIE_WARMUP_MAX_SITES, pool_size)
+    site_count = random.randint(min_sites, max_sites)
     total_seconds = random.randint(COOKIE_WARMUP_MIN_SECONDS, COOKIE_WARMUP_MAX_SECONDS)
-    selected_sites = random.sample(list(COOKIE_WARMUP_GOOD_WEBSITES), site_count)
+    selected_sites = random.sample(warmup_sites, site_count)
     seconds_per_site = max(2, total_seconds / max(1, site_count))
     concurrency = max(1, min(COOKIE_WARMUP_MAX_CONCURRENT_TABS, site_count))
     baseline_pages = set(getattr(context, "pages", []) or [])

@@ -28,6 +28,7 @@ from core.nyxify_cleanup import (
 )
 from core.nyx_handoff import enqueue_profile_for_nyx
 from core.nyxify_runtime_config import load_nyxify_config
+from core.whox_check import run_whox_trust_check
 from core.nyxify_task_store import NyxifyTaskStore
 from core.process_utils import APP_DATA_DIR, LOGS_DIR
 from core.signup_data import DEFAULT_SIGNUP_NAMES_DIR, resolve_model_name
@@ -219,6 +220,9 @@ def _classify_failure_last_step(created, last_step, error_message):
     ):
         return "signup_handoff_failed"
 
+    if "whox_trust_score_below_threshold" in normalized_error or normalized_step == "whox_trust_check":
+        return "whox_trust_score_below_threshold"
+
     if last_step == "cookie_warmup" or "cookie warm" in normalized_error:
         return "cookie_warmup_failed"
 
@@ -307,6 +311,7 @@ def _should_cleanup_failed_created_profile(failure_last_step, error_message):
     if normalized_step == "unable_to_process":
         return True
     if normalized_step in {
+        "whox_trust_score_below_threshold",
         "signup_navigation_failed",
         "signup_handoff_failed",
         "cookie_warmup_failed",
@@ -1288,6 +1293,32 @@ async def process_task(task, store, adspower):
 
         if context is None:
             raise RuntimeError("AdsPower browser context was missing after profile open.")
+
+        # whox.com trust-score gate — runs before cookie warm-up. A deep score
+        # below the configured threshold means this proxy/profile is not clean
+        # enough to proceed, so we raise a marker error that routes into the
+        # standard cleanup+retry path (delete profile, clear SnapBoard id,
+        # requeue the row to create from scratch).
+        whox_check_enabled = bool(config.get("whox_check_enabled", True))
+        if whox_check_enabled:
+            last_step = "whox_trust_check"
+            store.update_task_state(task_id, last_step=last_step)
+            whox_min_score = int(config.get("whox_min_trust_score", 70) or 70)
+            whox_url = str(config.get("whox_url") or "").strip() or None
+            whox_result = await run_whox_trust_check(
+                context,
+                logger,
+                created.get("profile_id"),
+                whox_min_score,
+                whox_url=whox_url,
+            )
+            if not whox_result.get("passed"):
+                score_value = whox_result.get("score")
+                raise RuntimeError(
+                    "whox_trust_score_below_threshold: deep trust score "
+                    f"{score_value if score_value is not None else 'unknown'} "
+                    f"is below the configured threshold {whox_result.get('threshold')}."
+                )
 
         last_step = "cookie_warmup"
         store.update_task_state(task_id, last_step=last_step)

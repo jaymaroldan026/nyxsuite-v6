@@ -1067,7 +1067,14 @@ class NyxifyLocalApiServer:
                         "push_adspower_id_enabled",
                         "full_auto_mode_enabled",
                         "continuous_mode_enabled",
+                        "disable_extensions_enabled",
                         "launch_on_windows_startup",
+                        "names_dir",
+                        "cookie_warmup_enabled",
+                        "cookie_warmup_sites",
+                        "whox_check_enabled",
+                        "whox_min_trust_score",
+                        "whox_url",
                     ):
                         if key in payload:
                             updates[key] = payload.get(key)

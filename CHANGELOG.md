@@ -1,5 +1,34 @@
 # Changelog
 
+## 6.1.1 — whox.com trust-score gate, editable cookie warm-up
+
+### Nyxify: whox.com deep-scan trust gate before signup
+- After an AdsPower profile opens (before cookie warm-up), Nyxify now opens
+  **whox.com**, runs its **Deep Scan**, and reads the resulting Deep Trust Score.
+  If the score is **at or above the threshold** the profile continues to warm-up
+  and signup; if it's **below**, the profile is closed + deleted, its SnapBoard
+  AdsPower id is cleared, the proxy is refreshed, and the row is requeued to be
+  created from scratch — the same cleanup+retry path a failed signup uses.
+- The gate reads the **real** settled score, not the count-up animation whox
+  plays after the scan completes: it waits for the score to hold steady before
+  deciding, and likewise waits for the Fast score to settle before triggering the
+  Deep Scan (clicking too early yields a degenerate result).
+- **Fail-open by design:** if whox can't be reached, the page never settles, or
+  the scan times out, the profile is **kept** (never wrongly deleted). Set
+  `NYXIFY_WHOX_FAIL_OPEN=0` to fail-closed instead.
+- New dashboard controls (Nyxify config): **whox Trust Check** on/off toggle
+  (on by default), **whox min trust score** (1–100, default 70), and **whox URL**.
+
+### Nyxify: cookie warm-up is now configurable from the dashboard
+- **Cookie Warm-up** on/off toggle and an editable **warm-up sites** list (one
+  URL per line; leave blank to use the built-in curated pool). A short custom
+  list is handled safely — the sample size clamps to the number of sites given.
+
+### Nyxify: config-save fixes
+- The `/config` endpoint now persists **Disable extensions on create** and the
+  names directory, which were previously dropped on save, alongside the new
+  whox / cookie-warmup settings.
+
 ## 6.0.9 — Nyxmoji preview + colours + Recommend, proxy ranking chart, compact dashboard
 
 ### Nyxmoji: the avatar preview always renders (and reflects the randomizer)

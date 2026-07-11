@@ -24,6 +24,20 @@ DEFAULTS = {
     "disable_extensions_enabled": False,
     "launch_on_windows_startup": False,
     "names_dir": "",
+    # Cookie warm-up (runs right after the profile opens, before signup). The
+    # site list is now editable from the dashboard; an empty list falls back to
+    # the built-in curated pool in core/adspower_extension_cleanup.py.
+    "cookie_warmup_enabled": True,
+    "cookie_warmup_sites": [],
+    # whox.com trust-score gate. When enabled, the runner opens whox.com right
+    # after the profile opens (before cookie warm-up), runs the deep scan, and
+    # only continues when the deep trust score is >= the threshold. Below it, the
+    # AdsPower profile is closed + deleted, its SnapBoard id is cleared, and the
+    # row is requeued to create from scratch. ON by default; toggle it off in the
+    # dashboard to skip the gate entirely.
+    "whox_check_enabled": True,
+    "whox_min_trust_score": 70,
+    "whox_url": "https://whox.com/",
 }
 
 
@@ -61,6 +75,24 @@ def _safe_bool(value, default):
     if value is None:
         return default
     return bool(value)
+
+
+def _safe_score(value, default, lo=1, hi=100):
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, parsed))
+
+
+def _safe_str_list(value):
+    if isinstance(value, str):
+        items = [part.strip() for part in value.splitlines()]
+    elif isinstance(value, (list, tuple)):
+        items = [str(part).strip() for part in value]
+    else:
+        items = []
+    return [item for item in items if item]
 
 
 def _safe_proxy_patterns(value):
@@ -119,6 +151,20 @@ def load_nyxify_config():
             DEFAULTS["launch_on_windows_startup"],
         ),
         "names_dir": _safe_str(raw.get("names_dir"), DEFAULTS["names_dir"]),
+        "cookie_warmup_enabled": _safe_bool(
+            raw.get("cookie_warmup_enabled"),
+            DEFAULTS["cookie_warmup_enabled"],
+        ),
+        "cookie_warmup_sites": _safe_str_list(raw.get("cookie_warmup_sites")),
+        "whox_check_enabled": _safe_bool(
+            raw.get("whox_check_enabled"),
+            DEFAULTS["whox_check_enabled"],
+        ),
+        "whox_min_trust_score": _safe_score(
+            raw.get("whox_min_trust_score"),
+            DEFAULTS["whox_min_trust_score"],
+        ),
+        "whox_url": _stored_str(raw, "whox_url", DEFAULTS["whox_url"]),
     }
 
 
@@ -182,6 +228,30 @@ def save_nyxify_config(updates):
             current["launch_on_windows_startup"],
         ),
         "names_dir": _updated_str(updates, current, "names_dir"),
+        "cookie_warmup_enabled": _safe_bool(
+            updates.get("cookie_warmup_enabled"),
+            current["cookie_warmup_enabled"],
+        ),
+        "cookie_warmup_sites": (
+            _safe_str_list(updates.get("cookie_warmup_sites"))
+            if "cookie_warmup_sites" in updates
+            else current["cookie_warmup_sites"]
+        ),
+        "whox_check_enabled": _safe_bool(
+            updates.get("whox_check_enabled"),
+            current["whox_check_enabled"],
+        ),
+        "whox_min_trust_score": _safe_score(
+            updates.get("whox_min_trust_score", current["whox_min_trust_score"]),
+            current["whox_min_trust_score"],
+        ),
+        "whox_url": _updated_str(
+            updates,
+            current,
+            "whox_url",
+            allow_blank=False,
+            blank_default=DEFAULTS["whox_url"],
+        ),
     }
     CONFIG_PATH.write_text(json.dumps(next_config, indent=2), encoding="utf-8")
     return next_config

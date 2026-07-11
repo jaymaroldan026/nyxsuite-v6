@@ -647,7 +647,12 @@ function renderNyxifyAdvanced() {
       <div class="adv-field toggle-row"><span class="toggle-text">Full Auto Mode</span><label class="toggle-switch"><input id="ncfg-full_auto_mode_enabled" type="checkbox" ${v.full_auto_mode_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
       <div class="adv-field toggle-row"><span class="toggle-text">Continuous Mode <span class="muted">(send completed signups to Nyx)</span></span><label class="toggle-switch"><input id="ncfg-continuous_mode_enabled" type="checkbox" ${v.continuous_mode_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
       <div class="adv-field toggle-row"><span class="toggle-text">Disable extensions on create <span class="muted">(off = leave extensions on during signup)</span></span><label class="toggle-switch"><input id="ncfg-disable_extensions_enabled" type="checkbox" ${v.disable_extensions_enabled === true ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">Cookie Warm-up <span class="muted">(browse sites before signup)</span></span><label class="toggle-switch"><input id="ncfg-cookie_warmup_enabled" type="checkbox" ${v.cookie_warmup_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <div class="adv-field toggle-row"><span class="toggle-text">whox Trust Check <span class="muted">(deep-scan whox.com before warm-up)</span></span><label class="toggle-switch"><input id="ncfg-whox_check_enabled" type="checkbox" ${v.whox_check_enabled !== false ? "checked" : ""}><span class="toggle-slider"></span></label></div>
+      <label class="adv-field"><span>whox min trust score <span class="muted">(below = delete + recreate)</span></span><input id="ncfg-whox_min_trust_score" class="input" type="number" min="1" max="100" value="${escapeAttr(v.whox_min_trust_score || 70)}"></label>
+      <label class="adv-field"><span>whox URL</span><input id="ncfg-whox_url" class="input" value="${escapeAttr(v.whox_url || "https://whox.com/")}"></label>
     </div>
+    <label class="adv-field adv-field-wide"><span>Cookie warm-up sites (one per line, blank = built-in list)</span><textarea id="ncfg-cookie_warmup_sites" class="input textarea-full" placeholder="https://wikipedia.org/&#10;https://cnn.com/">${escapeHtml((Array.isArray(v.cookie_warmup_sites) ? v.cookie_warmup_sites : []).join("\n"))}</textarea></label>
     <label class="adv-field adv-field-wide"><span>Banned proxies (one per line)</span><textarea id="ncfg-banned_proxies" class="input textarea-full">${escapeHtml(banned.join("\n"))}</textarea></label>
     <button id="ncfg-save-btn" class="btn primary" type="button">Save Config</button>
   `;
@@ -836,6 +841,11 @@ document.addEventListener("click", async (e) => {
       full_auto_mode_enabled: el("ncfg-full_auto_mode_enabled").checked,
       continuous_mode_enabled: el("ncfg-continuous_mode_enabled").checked,
       disable_extensions_enabled: el("ncfg-disable_extensions_enabled").checked,
+      cookie_warmup_enabled: el("ncfg-cookie_warmup_enabled").checked,
+      cookie_warmup_sites: el("ncfg-cookie_warmup_sites").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
+      whox_check_enabled: el("ncfg-whox_check_enabled").checked,
+      whox_min_trust_score: parseInt(el("ncfg-whox_min_trust_score").value) || 70,
+      whox_url: el("ncfg-whox_url").value.trim(),
       banned_proxies: el("ncfg-banned_proxies").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
     };
     const res = await callAction("nyxify", "/config", cfg);
