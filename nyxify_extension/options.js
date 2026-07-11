@@ -12,6 +12,7 @@ const TOGGLE_OPTIONS = [
   ["continuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["autoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
   ["lockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
+  ["lockTVToggle", "lockTV", "Lock in TV enabled.", "Lock in TV disabled."],
   ["enabledToggle", "enabled", "Nyxify enabled.", "Nyxify disabled."],
 ];
 
@@ -53,6 +54,7 @@ function normalizeConfig(config) {
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: Number.isFinite(parsedAutoFillTarget) && parsedAutoFillTarget > 0 ? parsedAutoFillTarget : 0,
     lockG5: safeConfig.lockG5 === true,
+    lockTV: safeConfig.lockTV === true,
   };
 }
 
@@ -77,6 +79,7 @@ function loadOptions() {
     document.getElementById("autoFillRowToggle").checked = config.autoFillRow;
     document.getElementById("autoFillAccountTarget").value = config.autoFillAccountTarget > 0 ? config.autoFillAccountTarget : "";
     document.getElementById("lockG5Toggle").checked = config.lockG5;
+    document.getElementById("lockTVToggle").checked = config.lockTV;
     document.getElementById("enabledToggle").checked = config.enabled;
   });
 }
@@ -101,6 +104,7 @@ function saveOptions() {
     autoFillRow: document.getElementById("autoFillRowToggle").checked,
     autoFillAccountTarget: document.getElementById("autoFillAccountTarget").value,
     lockG5: document.getElementById("lockG5Toggle").checked,
+    lockTV: document.getElementById("lockTVToggle").checked,
     enabled: document.getElementById("enabledToggle").checked,
   });
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.1.2 — SnapBoard auto-login, Lock in TV phone provider
+
+### SnapBoard: auto-login when logged out
+- When a SnapBoard tab shows the sign-in screen (session expired / logged out),
+  Nyxify now **auto-clicks "Sign In"** so the dashboard comes back on its own.
+  It does **not** type any credentials — it relies on Chrome's saved-password
+  autofill for that profile, and only submits once the name field is populated,
+  so it never posts an empty login. Attempts are spaced out and capped per
+  sign-in-screen appearance, and reset automatically once the dashboard loads.
+
+### Nyxify: Lock in TV (phone provider)
+- New **Lock in TV** toggle (popup + options), mirroring **Lock in G5**: it keeps
+  the SnapBoard **phone/SMS provider pinned to TextVerified (TV)** after a
+  refresh, re-selecting it whenever the toggle drifts back to SMSPool. Lock in G5
+  (email → G5) and Lock in TV (phone → TV) work independently and can both be on.
+
 ## 6.1.1 — whox.com trust-score gate, editable cookie warm-up
 
 ### Nyxify: whox.com deep-scan trust gate before signup

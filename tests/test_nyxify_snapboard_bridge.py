@@ -68,6 +68,28 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn("const password = String(row.password || \"\").trim();", background)
         self.assertIn("password: entry.password", background)
 
+    def test_content_script_locks_tv_phone_provider(self):
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+
+        # Lock in TV mirrors Lock in G5 but targets the SMS/phone provider toggle.
+        self.assertIn("function findTVProviderButton()", content)
+        self.assertIn("function lockProviderToTV()", content)
+        self.assertIn('data-provider="textverified"', content)
+        self.assertIn("setphoneprovider('textverified')", content)
+        self.assertIn("if (config.lockTV)", content)
+        self.assertIn("if (config.lockG5)", content)
+
+    def test_content_script_auto_clicks_sign_in_when_logged_out(self):
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+
+        # Auto-login only clicks Sign In; Chrome supplies the saved credentials.
+        self.assertIn("function isLoginScreenVisible()", content)
+        self.assertIn("function findSignInButton()", content)
+        self.assertIn("function loginCredentialsPrefilled()", content)
+        self.assertIn("function attemptAutoLogin()", content)
+        self.assertIn('button[type="submit"]', content)
+        self.assertIn("startAutoLoginPoll();", content)
+
 
 if __name__ == "__main__":
     unittest.main()

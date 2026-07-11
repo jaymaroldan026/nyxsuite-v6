@@ -28,6 +28,12 @@
   var AUTO_FILL_POLL_MS = 5000;
   var providerLockTimer = null;
   var PROVIDER_LOCK_POLL_MS = 1500;
+  var autoLoginTimer = null;
+  var AUTO_LOGIN_POLL_MS = 2000;
+  var AUTO_LOGIN_MAX_ATTEMPTS = 5;
+  var AUTO_LOGIN_MIN_GAP_MS = 4000;
+  var autoLoginAttempts = 0;
+  var autoLoginLastAttemptAt = 0;
 
   function toArray(nodeList) {
     return Array.prototype.slice.call(nodeList || []);
@@ -359,7 +365,7 @@
     return false;
   }
 
-  function isG5ProviderActive(button) {
+  function isProviderOptionActive(button) {
     if (!button) {
       return false;
     }
@@ -385,7 +391,30 @@
     if (!button) {
       return false;
     }
-    if (isG5ProviderActive(button)) {
+    if (isProviderOptionActive(button)) {
+      return true;
+    }
+    return clickElement(button);
+  }
+
+  function findTVProviderButton() {
+    return document.querySelector('button.provider-option[data-provider="textverified"]')
+      || document.querySelector('[data-provider="textverified"]')
+      || toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = normalizeText(node.getAttribute("onclick") || "").toLowerCase();
+        var text = normalizeText(node.innerText || node.textContent || "").toLowerCase();
+        return onclickText.indexOf("setphoneprovider('textverified')") >= 0
+          || onclickText.indexOf('setphoneprovider("textverified")') >= 0
+          || text === "tv";
+      }) || null;
+  }
+
+  function lockProviderToTV() {
+    var button = findTVProviderButton();
+    if (!button) {
+      return false;
+    }
+    if (isProviderOptionActive(button)) {
       return true;
     }
     return clickElement(button);
@@ -393,10 +422,12 @@
 
   async function checkProviderLock() {
     var config = await getStoredConfig();
-    if (!config.lockG5) {
-      return;
+    if (config.lockG5) {
+      lockProviderToG5();
     }
-    lockProviderToG5();
+    if (config.lockTV) {
+      lockProviderToTV();
+    }
   }
 
   function scheduleProviderLock() {
@@ -413,6 +444,74 @@
       checkProviderLock();
     }, PROVIDER_LOCK_POLL_MS);
     scheduleProviderLock();
+  }
+
+  function isLoginScreenVisible() {
+    var screen = document.getElementById("loginScreen");
+    if (!screen) {
+      return false;
+    }
+    // SnapBoard toggles the overlay with an inline display style
+    // ('flex' when logged out, 'none' when signed in); fall back to the
+    // computed style if the inline one was never set.
+    var display = normalizeText(screen.style && screen.style.display);
+    if (!display) {
+      try {
+        display = window.getComputedStyle(screen).display;
+      } catch (_error) {
+        display = "";
+      }
+    }
+    return display !== "" && display.toLowerCase() !== "none";
+  }
+
+  function findSignInButton() {
+    var form = document.getElementById("loginForm");
+    var scope = form || document;
+    return scope.querySelector('button[type="submit"]')
+      || toArray(scope.querySelectorAll("button")).find(function (node) {
+        var text = normalizeText(node.innerText || node.textContent || "").toLowerCase();
+        return text === "sign in" || text === "log in" || text === "login";
+      }) || null;
+  }
+
+  function loginCredentialsPrefilled() {
+    // Chrome auto-fills the saved SnapBoard credentials on load. Only submit
+    // once the name field is populated so we never post an empty login.
+    var name = document.getElementById("loginName");
+    return !!(name && normalizeText(name.value));
+  }
+
+  function attemptAutoLogin() {
+    if (!isLoginScreenVisible()) {
+      autoLoginAttempts = 0;
+      return;
+    }
+    if (autoLoginAttempts >= AUTO_LOGIN_MAX_ATTEMPTS) {
+      return;
+    }
+    var now = Date.now();
+    if (now - autoLoginLastAttemptAt < AUTO_LOGIN_MIN_GAP_MS) {
+      return;
+    }
+    if (!loginCredentialsPrefilled()) {
+      return;
+    }
+    var button = findSignInButton();
+    if (!button) {
+      return;
+    }
+    autoLoginAttempts += 1;
+    autoLoginLastAttemptAt = now;
+    clickElement(button);
+  }
+
+  function startAutoLoginPoll() {
+    if (autoLoginTimer) {
+      return;
+    }
+    autoLoginTimer = window.setInterval(attemptAutoLogin, AUTO_LOGIN_POLL_MS);
+    window.setTimeout(attemptAutoLogin, 500);
   }
 
   function getCodeTextForRow(rowId, displayAttribute) {
@@ -1889,5 +1988,6 @@
   startAdspowerNameUpdatePoll();
   startStatusUpdatePoll();
   startProviderLockPoll();
+  startAutoLoginPoll();
 
 })();

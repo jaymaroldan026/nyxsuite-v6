@@ -32,6 +32,7 @@ function normalizePopupConfig(config) {
     continuousModeEnabled: safeConfig.continuousModeEnabled === true,
     autoFillRow: safeConfig.autoFillRow === true,
     lockG5: safeConfig.lockG5 === true,
+    lockTV: safeConfig.lockTV === true,
     temporaryProfileName: String(safeConfig.temporaryProfileName || DEFAULT_TEMPORARY_PROFILE_NAME),
     adspowerGroup: String(safeConfig.adspowerGroup || DEFAULT_ADSPOWER_GROUP),
     extensionCategory: String(safeConfig.extensionCategory || DEFAULT_EXTENSION_CATEGORY),
@@ -311,6 +312,7 @@ function applyPopupStatusSnapshot(status) {
   document.getElementById("popupContinuousModeToggle").checked = config.continuousModeEnabled === true;
   document.getElementById("popupAutoFillRowToggle").checked = config.autoFillRow === true;
   document.getElementById("popupLockG5Toggle").checked = config.lockG5 === true;
+  document.getElementById("popupLockTVToggle").checked = config.lockTV === true;
   document.getElementById("countReady").textContent = String(counts.ready || 0);
   document.getElementById("countWaiting").textContent = String(counts.waiting || 0);
   document.getElementById("countRunning").textContent = String(counts.running || 0);
@@ -419,6 +421,7 @@ function savePopupSettings() {
     continuousModeEnabled: document.getElementById("popupContinuousModeToggle").checked,
     autoFillRow: document.getElementById("popupAutoFillRowToggle").checked,
     lockG5: document.getElementById("popupLockG5Toggle").checked,
+    lockTV: document.getElementById("popupLockTVToggle").checked,
     temporaryProfileName: document.getElementById("popupTemporaryName").value,
     adspowerGroup: document.getElementById("popupGroup").value,
     extensionCategory: document.getElementById("popupExtensionCategory").value,
@@ -630,6 +633,7 @@ chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => 
   ["popupContinuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["popupAutoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
   ["popupLockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
+  ["popupLockTVToggle", "lockTV", "Lock in TV enabled.", "Lock in TV disabled."],
 ].forEach(([toggleId, configKey, enabledMessage, disabledMessage]) => {
   const toggle = document.getElementById(toggleId);
   if (!toggle) {

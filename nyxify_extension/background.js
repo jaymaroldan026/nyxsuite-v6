@@ -94,6 +94,7 @@ function normalizeConfig(config) {
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: normalizePositiveInteger(safeConfig.autoFillAccountTarget, 0),
     lockG5: safeConfig.lockG5 === true,
+    lockTV: safeConfig.lockTV === true,
   };
 }
 

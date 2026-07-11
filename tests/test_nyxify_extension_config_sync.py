@@ -201,3 +201,23 @@ def test_nyxify_popup_and_options_expose_synced_runner_controls():
     assert "v.adspower_tags_enabled === true" in dashboard_js
     assert 'proxy_blocker_enabled: el("ncfg-proxy_blocker_enabled").checked' in dashboard_js
     assert 'proxy_checker_enabled: el("ncfg-proxy_checker_enabled").checked' in dashboard_js
+
+
+def test_nyxify_extension_exposes_lock_tv_toggle():
+    ext = ROOT / "nyxify_extension"
+    popup_html = (ext / "popup.html").read_text()
+    options_html = (ext / "options.html").read_text()
+    popup_js = (ext / "popup.js").read_text()
+    options_js = (ext / "options.js").read_text()
+    background_js = (ext / "background.js").read_text()
+
+    # UI toggles mirror the existing "Lock in G5" control.
+    assert 'id="popupLockTVToggle"' in popup_html
+    assert 'id="lockTVToggle"' in options_html
+    assert '["popupLockTVToggle", "lockTV"' in popup_js
+    assert '["lockTVToggle", "lockTV"' in options_js
+
+    # lockTV survives every config normalizer so the runner sync never drops it.
+    assert "lockTV: safeConfig.lockTV === true" in background_js
+    assert "lockTV: safeConfig.lockTV === true" in options_js
+    assert "lockTV: safeConfig.lockTV === true" in popup_js
