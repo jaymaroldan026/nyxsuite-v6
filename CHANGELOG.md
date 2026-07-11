@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.1.3 — Cookie warm-up sites are prefilled and editable
+
+### Nyxify: the built-in warm-up site list shows in the dashboard
+- The **Cookie warm-up sites** editor now comes pre-filled with the full built-in
+  list, so every site is visible and can be **edited or removed** individually
+  instead of being a hidden fallback. Clearing the box entirely restores the
+  built-in list on the next open. The list now lives in one place shared by the
+  editor and the runner.
+
 ## 6.1.2 — SnapBoard auto-login, Lock in TV phone provider
 
 ### SnapBoard: auto-login when logged out

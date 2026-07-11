@@ -632,6 +632,11 @@ function renderNyxifyAdvanced() {
   const v = state.nyxify.config || {};
   const banned = Array.isArray(v.blocked_proxies) ? v.blocked_proxies
     : (Array.isArray(v.banned_proxies) ? v.banned_proxies : []);
+  // Pre-fill the warm-up editor with the built-in list when no custom list has
+  // been saved yet, so the sites are visible and can be edited/removed.
+  const warmupSites = (Array.isArray(v.cookie_warmup_sites) && v.cookie_warmup_sites.length)
+    ? v.cookie_warmup_sites
+    : (Array.isArray(v.cookie_warmup_sites_default) ? v.cookie_warmup_sites_default : []);
   body.innerHTML = `
     <div class="adv-grid">
       <label class="adv-field"><span>Max parallel</span><input id="ncfg-max_parallel_profiles" class="input" value="${escapeAttr(v.max_parallel_profiles || 1)}"></label>
@@ -652,7 +657,7 @@ function renderNyxifyAdvanced() {
       <label class="adv-field"><span>whox min trust score <span class="muted">(below = delete + recreate)</span></span><input id="ncfg-whox_min_trust_score" class="input" type="number" min="1" max="100" value="${escapeAttr(v.whox_min_trust_score || 70)}"></label>
       <label class="adv-field"><span>whox URL</span><input id="ncfg-whox_url" class="input" value="${escapeAttr(v.whox_url || "https://whox.com/")}"></label>
     </div>
-    <label class="adv-field adv-field-wide"><span>Cookie warm-up sites (one per line, blank = built-in list)</span><textarea id="ncfg-cookie_warmup_sites" class="input textarea-full" placeholder="https://wikipedia.org/&#10;https://cnn.com/">${escapeHtml((Array.isArray(v.cookie_warmup_sites) ? v.cookie_warmup_sites : []).join("\n"))}</textarea></label>
+    <label class="adv-field adv-field-wide"><span>Cookie warm-up sites (one per line — edit or remove; clear all to restore the built-in list)</span><textarea id="ncfg-cookie_warmup_sites" class="input textarea-full" placeholder="https://wikipedia.org/&#10;https://cnn.com/">${escapeHtml(warmupSites.join("\n"))}</textarea></label>
     <label class="adv-field adv-field-wide"><span>Banned proxies (one per line)</span><textarea id="ncfg-banned_proxies" class="input textarea-full">${escapeHtml(banned.join("\n"))}</textarea></label>
     <button id="ncfg-save-btn" class="btn primary" type="button">Save Config</button>
   `;

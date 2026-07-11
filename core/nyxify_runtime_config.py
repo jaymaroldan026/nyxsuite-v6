@@ -4,6 +4,60 @@ from core.process_utils import APP_DATA_DIR
 
 DATA_DIR = APP_DATA_DIR / "data"
 CONFIG_PATH = DATA_DIR / "nyxify_config.json"
+
+# Canonical cookie warm-up site pool. This is the list the dashboard textbox
+# pre-fills with (so it can be edited/removed) and the list the runner samples
+# from when the user hasn't saved a custom one. Kept in this lightweight module
+# so the config API and the warm-up code share a single source of truth
+# (core/adspower_extension_cleanup.py imports it as COOKIE_WARMUP_GOOD_WEBSITES).
+DEFAULT_COOKIE_WARMUP_SITES = [
+    "https://wikipedia.org/",
+    "https://cnn.com/",
+    "https://nytimes.com/",
+    "https://washingtonpost.com/",
+    "https://nbcnews.com/",
+    "https://cbsnews.com/",
+    "https://abcnews.go.com/",
+    "https://apnews.com/",
+    "https://reuters.com/",
+    "https://usatoday.com/",
+    "https://npr.org/",
+    "https://foxnews.com/",
+    "https://bloomberg.com/",
+    "https://wsj.com/",
+    "https://forbes.com/",
+    "https://businessinsider.com/",
+    "https://theverge.com/",
+    "https://wired.com/",
+    "https://techcrunch.com/",
+    "https://medium.com/",
+    "https://quora.com/",
+    "https://hulu.com/",
+    "https://disneyplus.com/",
+    "https://max.com/",
+    "https://paramountplus.com/",
+    "https://peacocktv.com/",
+    "https://spotify.com/",
+    "https://soundcloud.com/",
+    "https://imdb.com/",
+    "https://rottentomatoes.com/",
+    "https://homedepot.com/",
+    "https://lowes.com/",
+    "https://costco.com/",
+    "https://macys.com/",
+    "https://kohls.com/",
+    "https://wayfair.com/",
+    "https://gap.com/",
+    "https://nordstrom.com/",
+    "https://chewy.com/",
+    "https://yelp.com/",
+    "https://starbucks.com/",
+    "https://weather.com/",
+    "https://accuweather.com/",
+    "https://opentable.com/",
+    "https://alltrails.com/",
+]
+
 DEFAULTS = {
     "max_parallel_profiles": 1,
     "temporary_profile_name": "Snapchat:",
@@ -156,6 +210,9 @@ def load_nyxify_config():
             DEFAULTS["cookie_warmup_enabled"],
         ),
         "cookie_warmup_sites": _safe_str_list(raw.get("cookie_warmup_sites")),
+        # Read-only: the built-in pool, so the dashboard can pre-fill the editor
+        # when no custom list is saved. Not persisted by save_nyxify_config.
+        "cookie_warmup_sites_default": list(DEFAULT_COOKIE_WARMUP_SITES),
         "whox_check_enabled": _safe_bool(
             raw.get("whox_check_enabled"),
             DEFAULTS["whox_check_enabled"],
@@ -254,4 +311,7 @@ def save_nyxify_config(updates):
         ),
     }
     CONFIG_PATH.write_text(json.dumps(next_config, indent=2), encoding="utf-8")
+    # Return (but never persist) the read-only built-in pool so the dashboard's
+    # post-save re-render stays consistent with load_nyxify_config().
+    next_config["cookie_warmup_sites_default"] = list(DEFAULT_COOKIE_WARMUP_SITES)
     return next_config

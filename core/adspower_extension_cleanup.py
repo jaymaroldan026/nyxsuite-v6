@@ -37,53 +37,13 @@ COOKIE_WARMUP_PER_SITE_HARD_TIMEOUT = max(
 # after this the remaining tabs are dropped and the signup proceeds.
 COOKIE_WARMUP_TOTAL_HARD_TIMEOUT = max(
     60, _env_int("NYXIFY_COOKIE_WARMUP_TOTAL_HARD_TIMEOUT", 240))
-COOKIE_WARMUP_GOOD_WEBSITES = (
-    "https://wikipedia.org/",
-    "https://cnn.com/",
-    "https://nytimes.com/",
-    "https://washingtonpost.com/",
-    "https://nbcnews.com/",
-    "https://cbsnews.com/",
-    "https://abcnews.go.com/",
-    "https://apnews.com/",
-    "https://reuters.com/",
-    "https://usatoday.com/",
-    "https://npr.org/",
-    "https://foxnews.com/",
-    "https://bloomberg.com/",
-    "https://wsj.com/",
-    "https://forbes.com/",
-    "https://businessinsider.com/",
-    "https://theverge.com/",
-    "https://wired.com/",
-    "https://techcrunch.com/",
-    "https://medium.com/",
-    "https://quora.com/",
-    "https://hulu.com/",
-    "https://disneyplus.com/",
-    "https://max.com/",
-    "https://paramountplus.com/",
-    "https://peacocktv.com/",
-    "https://spotify.com/",
-    "https://soundcloud.com/",
-    "https://imdb.com/",
-    "https://rottentomatoes.com/",
-    "https://homedepot.com/",
-    "https://lowes.com/",
-    "https://costco.com/",
-    "https://macys.com/",
-    "https://kohls.com/",
-    "https://wayfair.com/",
-    "https://gap.com/",
-    "https://nordstrom.com/",
-    "https://chewy.com/",
-    "https://yelp.com/",
-    "https://starbucks.com/",
-    "https://weather.com/",
-    "https://accuweather.com/",
-    "https://opentable.com/",
-    "https://alltrails.com/",
-)
+# The curated warm-up pool lives in the lightweight config module so the
+# dashboard editor and the runner share one source of truth. Kept here under the
+# original name (tests patch this attribute; the resolver samples from it when no
+# custom list is saved).
+from core.nyxify_runtime_config import DEFAULT_COOKIE_WARMUP_SITES
+
+COOKIE_WARMUP_GOOD_WEBSITES = tuple(DEFAULT_COOKIE_WARMUP_SITES)
 
 from playwright.async_api import async_playwright
 from core.browser_window import maximize_browser_window
