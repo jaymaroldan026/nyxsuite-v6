@@ -1950,6 +1950,22 @@ async def _fetch_email_from_provider(email_fetcher, force_new: bool, logger=None
     return ""
 
 
+async def _fetch_phone_from_provider(phone_fetcher, force_new: bool, logger=None, profile_id: str = "") -> str:
+    if phone_fetcher is None:
+        return ""
+    try:
+        try:
+            fetched_phone = phone_fetcher(force_new=force_new)
+        except TypeError:
+            fetched_phone = phone_fetcher()
+        if asyncio.iscoroutine(fetched_phone):
+            fetched_phone = await fetched_phone
+        return str(fetched_phone or "").strip()
+    except Exception as exc:
+        logger and logger.warning(f"[{profile_id}] Could not fetch verification phone from SnapBoard: {exc}")
+    return ""
+
+
 async def _fill_and_submit_verification_email(signup_page, email: str, logger=None, profile_id: str = "") -> bool:
     for email_sel in _EMAIL_INPUT_SELECTORS:
         try:
@@ -2142,6 +2158,22 @@ async def _handle_optional_phone_sms_verification(
         sms_code = await sms_code
     sms_code = str(sms_code or "").strip()
     if not sms_code:
+        # The code never came through — rather than failing the account (which
+        # deletes the profile and recreates it), go back, rotate to a fresh
+        # number, and refetch the SMS on the same account.
+        logger and logger.warning(
+            f"[{profile_id}] Could not retrieve SMS OTP from SnapBoard; "
+            "trying back + fresh-number recovery."
+        )
+        sms_code, signup_page = await _recover_sms_via_new_phone(
+            signup_page,
+            phone_fetcher,
+            sms_fetcher,
+            logger,
+            profile_id,
+            progress_callback=progress_callback,
+        )
+    if not sms_code:
         logger and logger.warning(f"[{profile_id}] Could not retrieve SMS OTP from SnapBoard.")
         return result
 
@@ -2270,6 +2302,73 @@ async def _recover_otp_via_back_and_new_email(
         otp = await otp_fetcher()
         if otp:
             return str(otp), signup_page
+    return "", signup_page
+
+
+async def _recover_sms_via_new_phone(
+    signup_page,
+    phone_fetcher,
+    sms_fetcher,
+    logger,
+    profile_id,
+    progress_callback=None,
+    max_attempts: int = 2,
+):
+    """Recover when the SMS code never arrives — the number went dead or the
+    order got stuck. Go back to the phone-entry step, order a fresh number
+    (force_new, which waits out SnapBoard's ~60s redo cooldown so the number
+    actually changes), resubmit it, wait for the code step again, and refetch the
+    SMS. Mirrors :func:`_recover_otp_via_back_and_new_email` for the phone path:
+    rather than failing the whole account (which tears the profile down and
+    recreates from scratch), we keep the same account and just rotate the number
+    and get the OTP. Strictly additive — any failure returns ``("", page)`` so
+    the caller behaves exactly as before. Returns ``(sms_code, signup_page)``.
+    """
+    if phone_fetcher is None or sms_fetcher is None:
+        return "", signup_page
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
+        # Return to the phone-entry step so a fresh number can be submitted.
+        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+        if not clicked_back and not await _is_phone_verification_step(signup_page):
+            return "", signup_page
+
+        on_phone_step = await _is_phone_verification_step(signup_page)
+        for _ in range(6):
+            if on_phone_step:
+                break
+            await signup_page.wait_for_timeout(500)
+            on_phone_step = await _is_phone_verification_step(signup_page)
+        if not on_phone_step:
+            continue
+
+        logger and logger.info(
+            f"[{profile_id}] SMS code never arrived; ordering a fresh number and resubmitting "
+            f"(attempt {attempt}/{max_attempts})."
+        )
+        await _emit_signup_progress(progress_callback, "fetching_phone_verification", logger, profile_id)
+        phone = await _fetch_phone_from_provider(phone_fetcher, force_new=True, logger=logger, profile_id=profile_id)
+        if not phone:
+            continue
+        await _emit_signup_progress(progress_callback, "filling_phone_verification", logger, profile_id)
+        if not await _fill_and_submit_phone_number(signup_page, phone, logger, profile_id):
+            continue
+
+        stage = await _wait_for_signup_progress(
+            signup_page, logger, profile_id, timeout_ms=120000, progress_callback=progress_callback
+        )
+        if stage == "welcome":
+            # The fresh number was enough on its own — no SMS step at all.
+            return "", signup_page
+        if stage != "otp":
+            continue
+        await _emit_signup_progress(progress_callback, "fetching_sms_otp", logger, profile_id)
+        sms_code = sms_fetcher()
+        if asyncio.iscoroutine(sms_code):
+            sms_code = await sms_code
+        sms_code = str(sms_code or "").strip()
+        if sms_code:
+            return sms_code, signup_page
     return "", signup_page
 
 

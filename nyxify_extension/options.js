@@ -1,4 +1,5 @@
 const CONFIG_KEY = "nyxifyConfig";
+const SNAPBOARD_LOGIN_KEY = "nyxifySnapboardLogin";
 const DEFAULT_TEMPORARY_PROFILE_NAME = "Snapchat:";
 const DEFAULT_ADSPOWER_GROUP = "Snapchat";
 const DEFAULT_EXTENSION_CATEGORY = "Snap";
@@ -81,6 +82,11 @@ function loadOptions() {
     document.getElementById("lockG5Toggle").checked = config.lockG5;
     document.getElementById("lockTVToggle").checked = config.lockTV;
     document.getElementById("enabledToggle").checked = config.enabled;
+    chrome.storage.local.get(SNAPBOARD_LOGIN_KEY, (localResult) => {
+      const creds = (localResult && localResult[SNAPBOARD_LOGIN_KEY]) || {};
+      document.getElementById("snapboardLoginName").value = creds.name || "";
+      document.getElementById("snapboardLoginPassword").value = creds.password || "";
+    });
   });
 }
 
@@ -106,6 +112,13 @@ function saveOptions() {
     lockG5: document.getElementById("lockG5Toggle").checked,
     lockTV: document.getElementById("lockTVToggle").checked,
     enabled: document.getElementById("enabledToggle").checked,
+  });
+
+  chrome.storage.local.set({
+    [SNAPBOARD_LOGIN_KEY]: {
+      name: document.getElementById("snapboardLoginName").value.trim(),
+      password: document.getElementById("snapboardLoginPassword").value,
+    },
   });
 
   chrome.runtime.sendMessage({

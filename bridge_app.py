@@ -767,8 +767,44 @@ class BridgeApp:
             parts.append("Nyxify running")
         return "Nyx Suite — " + (", ".join(parts) if parts else "idle")
 
+    def _refresh_tray_menu(self):
+        """Rebuild the tray menu so the Start/Stop enabled-state and the status
+        lines track the live runner state.
+
+        pystray only re-evaluates a menu's dynamic (callable) ``enabled`` and
+        label properties when :meth:`update_menu` is called — on macOS *and*
+        Windows opening the menu does NOT regenerate it (the native menu is
+        built once and cached, see pystray's own docstring). So when a runner
+        is started or stopped from the dashboard or a Ctrl+F7/F8 hotkey — i.e.
+        not from a tray click, which pystray refreshes for us — the menu goes
+        stale and can show an enabled "Start X" while X is already running (or
+        vice versa). Re-running update_menu on every observed state change keeps
+        it honest. On macOS ``setMenu_`` is an AppKit mutation, so marshal it
+        onto the main thread exactly like the icon repaint."""
+        icon = self._tray_icon
+        if icon is None:
+            return
+
+        def _apply():
+            try:
+                icon.update_menu()
+            except Exception:
+                pass
+
+        if sys.platform == "darwin":
+            try:
+                from Foundation import NSOperationQueue
+
+                NSOperationQueue.mainQueue().addOperationWithBlock_(_apply)
+                return
+            except Exception:
+                pass
+        _apply()
+
     def _start_tray_status_updater(self):
-        """Poll the runner state and repaint the dot when it changes."""
+        """Poll the runner state and repaint the dot + rebuild the menu when it
+        changes, so both the menu-bar dot and the Start/Stop items stay in sync
+        with runners started/stopped from anywhere (tray, dashboard, hotkey)."""
         def loop():
             last = None
             # Small initial delay so the pystray run loop is up before the first
@@ -782,6 +818,11 @@ class BridgeApp:
                             self._make_status_dot(*state),
                             self._tray_title(*state),
                         )
+                        # Keep the Start/Stop enabled-state and status lines
+                        # honest — repainting the dot alone leaves the menu
+                        # frozen at its last-built state (the "shows Start while
+                        # already running" report).
+                        self._refresh_tray_menu()
                         last = state
                 except Exception:
                     pass

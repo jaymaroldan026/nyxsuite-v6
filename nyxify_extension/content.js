@@ -1,6 +1,11 @@
 (function () {
   var debounceTimer = null;
   var CONFIG_KEY = "nyxifyConfig";
+  // Separate local-storage key for the SnapBoard sign-in credentials — kept out
+  // of the synced nyxifyConfig (and the runner config) so the password isn't
+  // pushed around. The options page writes it; auto-login types it when the
+  // board is signed out and the fields aren't already filled.
+  var SNAPBOARD_LOGIN_KEY = "nyxifySnapboardLogin";
   var otpPollTimer = null;
   var otpPollInFlight = false;
   var proxyRotatePollTimer = null;
@@ -20,6 +25,9 @@
   var USERNAME_UPDATE_POLL_INTERVAL_MS = 1200;
   var OTP_FETCH_TIMEOUT_MS = 30000;
   var EMAIL_FETCH_TIMEOUT_MS = 45000;
+  // SnapBoard's "get new email / number" (redo) buttons enforce a ~60s cooldown
+  // after each order. Wait a little past that so a reorder click isn't a no-op.
+  var REDO_COOLDOWN_MAX_WAIT_MS = 72000;
   var OTP_CLICK_RETRY_INTERVAL_MS = 2500;
   var PROXY_ROTATE_WAIT_MS = 22000;
   var PROXY_ROTATE_CLICK_ATTEMPTS = 4;
@@ -476,13 +484,71 @@
   }
 
   function loginCredentialsPrefilled() {
-    // Chrome auto-fills the saved SnapBoard credentials on load. Only submit
-    // once the name field is populated so we never post an empty login.
+    // Require BOTH fields before submitting so we never post an empty password.
+    // Chrome's password manager often can't/ won't fill this form (the "name"
+    // field isn't a recognized username), and even when it fills visually the
+    // password value can be unreadable to JS — which is why the autofill-only
+    // approach failed. fillLoginCredentialsIfNeeded() populates blanks from the
+    // stored credentials first, so this gate then passes.
     var name = document.getElementById("loginName");
-    return !!(name && normalizeText(name.value));
+    var pass = document.getElementById("loginPassword");
+    return !!(name && normalizeText(name.value) && pass && pass.value);
   }
 
-  function attemptAutoLogin() {
+  function getSnapboardLoginCredentials() {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.get(SNAPBOARD_LOGIN_KEY, function (result) {
+          var stored = (result && result[SNAPBOARD_LOGIN_KEY]) || {};
+          resolve({
+            name: normalizeText(stored.name || ""),
+            password: String(stored.password || ""),
+          });
+        });
+      } catch (_error) {
+        resolve({ name: "", password: "" });
+      }
+    });
+  }
+
+  // Fill the sign-in fields from the stored credentials, but only the blanks —
+  // "uses it if not filled yet when signed out" — so anything Chrome did fill
+  // (or a value the user typed) is respected.
+  async function fillLoginCredentialsIfNeeded() {
+    var nameField = document.getElementById("loginName");
+    var passField = document.getElementById("loginPassword");
+    if (!nameField || !passField) {
+      return;
+    }
+    var needName = !normalizeText(nameField.value);
+    var needPass = !passField.value;
+    if (!needName && !needPass) {
+      return;
+    }
+    var creds = await getSnapboardLoginCredentials();
+    if (needName && creds.name) {
+      setElementValue(nameField, creds.name);
+    }
+    if (needPass && creds.password) {
+      setElementValue(passField, creds.password);
+    }
+  }
+
+  function submitLoginForm(button) {
+    // The login handler is a form 'submit' listener, so requestSubmit() (which
+    // fires submit) is more reliable than a bare button.click(); fall back to a
+    // click where requestSubmit is unavailable.
+    var form = document.getElementById("loginForm");
+    if (form && typeof form.requestSubmit === "function") {
+      try {
+        form.requestSubmit(button || undefined);
+        return true;
+      } catch (_error) {}
+    }
+    return clickElement(button);
+  }
+
+  async function attemptAutoLogin() {
     if (!isLoginScreenVisible()) {
       autoLoginAttempts = 0;
       return;
@@ -494,6 +560,7 @@
     if (now - autoLoginLastAttemptAt < AUTO_LOGIN_MIN_GAP_MS) {
       return;
     }
+    await fillLoginCredentialsIfNeeded();
     if (!loginCredentialsPrefilled()) {
       return;
     }
@@ -503,15 +570,41 @@
     }
     autoLoginAttempts += 1;
     autoLoginLastAttemptAt = now;
-    clickElement(button);
+    submitLoginForm(button);
   }
 
   function startAutoLoginPoll() {
     if (autoLoginTimer) {
       return;
     }
-    autoLoginTimer = window.setInterval(attemptAutoLogin, AUTO_LOGIN_POLL_MS);
-    window.setTimeout(attemptAutoLogin, 500);
+    autoLoginTimer = window.setInterval(function () { attemptAutoLogin(); }, AUTO_LOGIN_POLL_MS);
+    window.setTimeout(function () { attemptAutoLogin(); }, 500);
+  }
+
+  // Drive + await a re-login on demand. A logged-out SnapBoard silently drops
+  // its rows and stops handing out emails/numbers/OTPs, so a fetch that comes
+  // back empty asks us (via the background bridge) to get the session back
+  // before it retries. Types the stored credentials into any blank field, then
+  // submits — bypassing attemptAutoLogin's attempt-cap/min-gap guards but still
+  // only once both fields are populated so we never post an empty login.
+  // Returns true once the login overlay is gone (or was never showing).
+  async function ensureSnapboardLoggedIn(maxWaitMs) {
+    if (!isLoginScreenVisible()) {
+      return true;
+    }
+    autoLoginAttempts = 0;  // let the background-poll auto-login keep trying too
+    var deadline = Date.now() + (maxWaitMs || 15000);
+    while (isLoginScreenVisible() && Date.now() < deadline) {
+      await fillLoginCredentialsIfNeeded();
+      if (loginCredentialsPrefilled()) {
+        var button = findSignInButton();
+        if (button) {
+          submitLoginForm(button);
+        }
+      }
+      await sleep(1500);
+    }
+    return !isLoginScreenVisible();
   }
 
   function getCodeTextForRow(rowId, displayAttribute) {
@@ -708,38 +801,69 @@
     return clickElement(button);
   }
 
-  function clickRedoEmailButton(rowId) {
-    var button = document.querySelector('button.btn-redo-email[data-redo-email="' + rowId + '"]')
-      || document.querySelector('button[data-redo-email="' + rowId + '"]');
-    if (!button) {
-      button = toArray(document.querySelectorAll("button")).find(function (node) {
+  function findRedoEmailButton(rowId) {
+    return document.querySelector('button.btn-redo-email[data-redo-email="' + rowId + '"]')
+      || document.querySelector('button[data-redo-email="' + rowId + '"]')
+      || toArray(document.querySelectorAll("button")).find(function (node) {
         var onclickText = String(node.getAttribute("onclick") || "");
         var title = normalizeText(node.getAttribute("title") || "").toLowerCase();
         return onclickText.indexOf("redo2faEmail") >= 0 && onclickText.indexOf(rowId) >= 0
           || (title.indexOf("get new email") >= 0 && onclickText.indexOf(rowId) >= 0);
       }) || null;
-    }
-    if (!button) {
-      return false;
-    }
-    return clickElement(button);
   }
 
-  function clickRedoPhoneButton(rowId) {
-    var button = document.querySelector('button.btn-redo-email[data-redo-phone="' + rowId + '"]')
-      || document.querySelector('button[data-redo-phone="' + rowId + '"]');
-    if (!button) {
-      button = toArray(document.querySelectorAll("button")).find(function (node) {
+  function findRedoPhoneButton(rowId) {
+    return document.querySelector('button.btn-redo-email[data-redo-phone="' + rowId + '"]')
+      || document.querySelector('button[data-redo-phone="' + rowId + '"]')
+      || toArray(document.querySelectorAll("button")).find(function (node) {
         var onclickText = String(node.getAttribute("onclick") || "");
         var title = normalizeText(node.getAttribute("title") || "").toLowerCase();
         return onclickText.indexOf("redoPhone") >= 0 && onclickText.indexOf(rowId) >= 0
           || (title.indexOf("get new number") >= 0 && onclickText.indexOf(rowId) >= 0);
       }) || null;
-    }
+  }
+
+  function clickRedoEmailButton(rowId) {
+    return clickElement(findRedoEmailButton(rowId));
+  }
+
+  function clickRedoPhoneButton(rowId) {
+    return clickElement(findRedoPhoneButton(rowId));
+  }
+
+  // A redo button on cooldown renders disabled with a "⏳ 45s" label; clicking
+  // it does nothing. Read the remaining seconds so we can wait it out instead
+  // of firing a silent no-op that looks like "the email/number never changed".
+  function readRedoCooldownSeconds(button) {
     if (!button) {
-      return false;
+      return 0;
     }
-    return clickElement(button);
+    var text = normalizeText(button.innerText || button.textContent || "");
+    var match = text.match(/(\d+)\s*s/i);
+    if (match) {
+      var seconds = parseInt(match[1], 10);
+      return isNaN(seconds) ? 0 : seconds;
+    }
+    // Disabled but no readable countdown — assume a full window so we still wait.
+    return button.disabled ? 60 : 0;
+  }
+
+  function isRedoOnCooldown(button) {
+    return !!button && (button.disabled || readRedoCooldownSeconds(button) > 0);
+  }
+
+  // Wait (bounded) for a redo button to leave its cooldown so a reorder click
+  // actually lands. Re-locates the button each tick because SnapBoard re-renders
+  // the row while the countdown ticks. Returns the ready button, or the latest
+  // one found (possibly still on cooldown) once the cap elapses.
+  async function waitForRedoReady(findButton, maxWaitMs) {
+    var deadline = Date.now() + (maxWaitMs || REDO_COOLDOWN_MAX_WAIT_MS);
+    var button = findButton();
+    while (button && isRedoOnCooldown(button) && Date.now() < deadline) {
+      await sleep(1000);
+      button = findButton();
+    }
+    return button;
   }
 
   function waitForEmailForRow(rowId, timeoutMs, previousEmail) {
@@ -885,11 +1009,22 @@
       return { ok: true, email: currentEmail };
     }
 
-    var clicked = forceNew ? clickRedoEmailButton(rowId) : clickGetEmailButton(rowId);
-    if (!clicked) {
-      // Fall back to the other button so a missing Redo (or Get) button still
-      // orders an email instead of failing outright.
-      clicked = forceNew ? clickGetEmailButton(rowId) : clickRedoEmailButton(rowId);
+    var clicked;
+    if (forceNew) {
+      // Reorder path: the redo button carries a ~60s cooldown. Wait it out so
+      // the click actually orders a new email instead of no-opping while
+      // disabled (the "email never changed → account failed" symptom).
+      var redoEmail = await waitForRedoReady(function () { return findRedoEmailButton(rowId); });
+      clicked = redoEmail ? clickElement(redoEmail) : false;
+      if (!clicked) {
+        // Fall back to Get Email so we still order one instead of failing.
+        clicked = clickGetEmailButton(rowId);
+      }
+    } else {
+      clicked = clickGetEmailButton(rowId);
+      if (!clicked) {
+        clicked = clickRedoEmailButton(rowId);
+      }
     }
     if (!clicked) {
       return { ok: false, error: "No Get/Redo Email button found for row." };
@@ -928,9 +1063,22 @@
       return { ok: true, phone: currentPhone };
     }
 
-    var clicked = forceNew ? clickRedoPhoneButton(rowId) : clickGetPhoneButton(rowId);
-    if (!clicked) {
-      clicked = forceNew ? clickGetPhoneButton(rowId) : clickRedoPhoneButton(rowId);
+    var clicked;
+    if (forceNew) {
+      // Reorder path: the redo button carries a ~60s cooldown. Wait it out so
+      // the click actually orders a new number instead of no-opping while
+      // disabled (the "phone never changed → account failed" symptom).
+      var redoPhone = await waitForRedoReady(function () { return findRedoPhoneButton(rowId); });
+      clicked = redoPhone ? clickElement(redoPhone) : false;
+      if (!clicked) {
+        // Fall back to Request Number so we still order one instead of failing.
+        clicked = clickGetPhoneButton(rowId);
+      }
+    } else {
+      clicked = clickGetPhoneButton(rowId);
+      if (!clicked) {
+        clicked = clickRedoPhoneButton(rowId);
+      }
     }
     if (!clicked) {
       return { ok: false, error: "No Request/Redo Phone button found for row." };
@@ -1857,6 +2005,19 @@
     }
 
     (async function () {
+      // Session recovery is row-agnostic — handle it before the row-id check so
+      // the background bridge can re-login a logged-out board on any empty fetch.
+      if (message.action === "ensure_logged_in") {
+        // Report whether the board was actually signed out so callers can tell a
+        // real session problem apart from a fetch that's merely "not ready yet"
+        // (e.g. an OTP that hasn't landed) — the latter must NOT trigger a
+        // disruptive board reload for every other concurrent account.
+        var wasLoggedOut = isLoginScreenVisible();
+        var loggedIn = await ensureSnapboardLoggedIn(message.timeout_ms);
+        sendResponse({ ok: loggedIn, logged_in: loggedIn, was_logged_out: wasLoggedOut });
+        return;
+      }
+
       var rowKey = normalizeText(message.row_key);
       var rowId = extractRowId(rowKey);
       if (!rowId) {

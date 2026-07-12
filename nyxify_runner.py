@@ -1113,9 +1113,12 @@ async def process_task(task, store, adspower):
                 logger.warning(f"Task {task_id} is missing row_key for email retrieval.")
                 return ""
             store.update_task_state(task_id, last_step="fetching_replacement_email" if force_new else "fetching_email")
+            # Replacement orders wait out SnapBoard's ~60s redo cooldown in the
+            # content script, so give the fetch room past that (cooldown + the
+            # ~45s appear window + refresh/relogin retries) before timing out.
             fetched_email = await _request_snapboard_email(
                 task_row_key,
-                timeout_seconds=90,
+                timeout_seconds=165,
                 force_new=force_new,
             )
             if fetched_email:
@@ -1159,9 +1162,12 @@ async def process_task(task, store, adspower):
                 task_id,
                 last_step="fetching_phone_verification",
             )
+            # Replacement numbers wait out SnapBoard's ~60s redo cooldown in the
+            # content script, so allow past that (cooldown + appear window +
+            # refresh/relogin retries) before timing out.
             phone = await _request_snapboard_phone(
                 task_row_key,
-                timeout_seconds=120,
+                timeout_seconds=165,
                 force_new=force_new,
             )
             if phone:

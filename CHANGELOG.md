@@ -1,5 +1,41 @@
 # Changelog
 
+## 6.1.4 — Tray sync fix, OTP/phone retry hardening, SnapBoard re-login
+
+### Tray: Start/Stop now tracks the real state (macOS + Windows)
+- The menu-bar/tray menu could show an enabled **Start** while a product was
+  already running (or the reverse) when it had been started/stopped from the
+  dashboard or a hotkey. The tray now **rebuilds its menu whenever the runner
+  state changes**, so Start/Stop and the status lines always match reality.
+
+### Nyxify: email/phone re-order respects the 60-second cooldown
+- SnapBoard's "get new email / number" buttons enforce a ~60s cooldown, during
+  which they are disabled and a click does nothing. Requesting a replacement now
+  **waits the cooldown out and then re-orders**, instead of silently clicking a
+  disabled button — the old behaviour looked like "the number never changed" and
+  failed the account.
+
+### Nyxify: SMS code missing → rotate the number instead of failing
+- When a phone is accepted but the **SMS code never arrives**, Nyxify now goes
+  back, orders a **fresh number**, resubmits it, and refetches the code **on the
+  same account** — rather than failing the profile and recreating it from
+  scratch. Only a persistently rejected number still routes to the recreate path.
+
+### Nyxify: recover an unresponsive / logged-out SnapBoard
+- Email, phone and OTP/SMS fetches now **recover a signed-out board by logging
+  back in** before retrying. Email/phone additionally fall back to a full board
+  refresh (a stale board is a common "no pending order" cause). OTP/SMS use a
+  lighter re-login-only retry so a code that simply "hasn't landed yet" never
+  triggers a board reload that would disrupt other in-flight accounts.
+
+### SnapBoard: auto sign-in now types stored credentials
+- Auto sign-in no longer depends on Chrome autofill (which usually won't fill
+  SnapBoard's login form, and can hide the password from the page). Enter your
+  SnapBoard **Name + Password** in the **Nyxify extension Options** — they're
+  stored locally (kept out of the synced runner config) and typed into the login
+  form **only when a field is blank on a signed-out board**, then submitted once
+  both fields are populated (so it never posts an empty login).
+
 ## 6.1.3 — Cookie warm-up sites are prefilled and editable
 
 ### Nyxify: the built-in warm-up site list shows in the dashboard

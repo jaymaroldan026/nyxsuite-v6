@@ -1531,6 +1531,27 @@ let lastSnapboardReloadAt = 0;
 const SNAPBOARD_RELOAD_COOLDOWN_MS = 20000;
 const SNAPBOARD_RECONNECT_TIMEOUT_MS = 15000;
 
+// Ask the content bridge to re-login a logged-out SnapBoard. A logged-out board
+// silently drops its rows and stops handing out emails/numbers/OTPs, so we drive
+// its Sign In button (credentials are typed from the extension options) before
+// falling back to a heavier full reload. Returns { loggedIn, wasLoggedOut } so
+// callers can distinguish a recovered session from a board that was fine.
+async function ensureSnapboardLoggedIn(timeoutMs) {
+  try {
+    const resp = await sendMessageToSnapboardTab({
+      type: "NYXIFY_SNAPBOARD_ACTION",
+      action: "ensure_logged_in",
+      timeout_ms: timeoutMs || 15000,
+    });
+    return {
+      loggedIn: !!(resp && resp.ok && resp.logged_in),
+      wasLoggedOut: !!(resp && resp.was_logged_out),
+    };
+  } catch (error) {
+    return { loggedIn: false, wasLoggedOut: false };
+  }
+}
+
 async function refreshSnapboardTab() {
   const now = Date.now();
   if (now - lastSnapboardReloadAt < SNAPBOARD_RELOAD_COOLDOWN_MS) {
@@ -1555,6 +1576,12 @@ async function refreshSnapboardTab() {
     const current = snapboardPorts.get(tabId);
     if (current && current !== oldPort) {
       await delay(1500);  // let SnapBoard render its rows before we retry
+      // A fresh load can come up logged out (expired session) — recover the
+      // session before the caller retries, or the rows won't be there yet.
+      const recovered = await ensureSnapboardLoggedIn();
+      if (recovered.wasLoggedOut) {
+        await delay(1500);  // give the re-login'd board a moment to render rows
+      }
       return true;
     }
     await delay(300);
@@ -1562,16 +1589,45 @@ async function refreshSnapboardTab() {
   return false;
 }
 
-// Send a fetch to SnapBoard and, if it comes back empty/failed, refresh the
-// board once and retry — "refresh the SnapBoard first before retrying", since a
-// stale board is a common cause of a missing email/number.
+// Send a fetch to SnapBoard and, if it comes back empty/failed, recover the
+// board and retry — "refresh / re-login the SnapBoard first before retrying",
+// since a stale OR logged-out board is a common cause of a missing
+// email/number/OTP. Try the cheap in-place re-login first, then the reload.
 async function snapboardFetchWithRefresh(message) {
   const response = await sendMessageToSnapboardTab(message);
   if (response && response.ok) {
     return response;
   }
+  // Cheap path: a logged-out board answers empty for everything — sign back in
+  // and retry without a full reload.
+  const recovered = await ensureSnapboardLoggedIn();
+  if (recovered.loggedIn) {
+    const afterLogin = await sendMessageToSnapboardTab(message);
+    if (afterLogin && afterLogin.ok) {
+      return afterLogin;
+    }
+  }
   const refreshed = await refreshSnapboardTab();
   if (refreshed) {
+    const retry = await sendMessageToSnapboardTab(message);
+    if (retry) {
+      return retry;
+    }
+  }
+  return response;
+}
+
+// Lighter recovery for OTP/SMS: an empty code usually just means "not landed
+// yet" (normal), so we must NOT reload the whole board — that would disrupt
+// every other account's in-flight fetch. Only retry when the board was actually
+// signed out, which is the real "OTP unresponsive because logged out" case.
+async function snapboardFetchWithRelogin(message) {
+  const response = await sendMessageToSnapboardTab(message);
+  if (response && response.ok) {
+    return response;
+  }
+  const recovered = await ensureSnapboardLoggedIn();
+  if (recovered.wasLoggedOut && recovered.loggedIn) {
     const retry = await sendMessageToSnapboardTab(message);
     if (retry) {
       return retry;
@@ -1744,7 +1800,7 @@ async function processBridgeActionsOnce() {
     const otpPayload = await callLocalNyxify("GET", "/otp/pending");
     const otpRequest = otpPayload && otpPayload.request ? otpPayload.request : null;
     if (otpRequest && otpRequest.row_key) {
-      const otpResponse = await sendMessageToSnapboardTab({
+      const otpResponse = await snapboardFetchWithRelogin({
         type: "NYXIFY_SNAPBOARD_ACTION",
         action: "otp",
         row_key: otpRequest.row_key,
@@ -1765,7 +1821,7 @@ async function processBridgeActionsOnce() {
     const smsPayload = await callLocalNyxify("GET", "/sms/pending");
     const smsRequest = smsPayload && smsPayload.request ? smsPayload.request : null;
     if (smsRequest && smsRequest.row_key) {
-      const smsResponse = await sendMessageToSnapboardTab({
+      const smsResponse = await snapboardFetchWithRelogin({
         type: "NYXIFY_SNAPBOARD_ACTION",
         action: "sms",
         row_key: smsRequest.row_key,
