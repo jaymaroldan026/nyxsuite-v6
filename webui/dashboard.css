@@ -98,9 +98,9 @@ main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .bm-avatar-err{position:absolute;left:8px;right:8px;bottom:6px;text-align:center;font-size:11px;color:var(--warn)}
 
 /* Editor body: avatar stage (left) + options (right) */
-.bm-editor{display:flex;gap:16px;align-items:stretch}
-.bm-stage{flex:0 0 420px;display:flex;flex-direction:column;border:none;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
-.bm-stage-inner{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:560px;background:transparent}
+.bm-editor{display:flex;gap:16px;align-items:flex-start}
+.bm-stage{flex:0 0 380px;position:sticky;top:72px;align-self:flex-start;display:flex;flex-direction:column;border:none;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
+.bm-stage-inner{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:520px;background:transparent}
 .bm-avatar{max-width:100%;max-height:600px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.45))}
 .bm-stage-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 4px 0}
 .bm-model-tag{font-size:12px;color:var(--muted)}
@@ -130,15 +130,34 @@ main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .bm-color-actions{display:inline-flex;gap:6px;margin-left:auto}
 .bm-side-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
-.bm-options{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;overflow-y:auto;max-height:430px;padding:2px}
+.bm-options{display:block;margin-top:12px;overflow-y:auto;max-height:calc(100vh - 250px);padding:2px 6px 2px 2px;scrollbar-width:thin}
 .bm-options.empty{color:var(--muted);font-size:13px}
-.bm-opt{position:relative;width:64px;height:64px;padding:0;border:2px solid var(--line);border-radius:12px;background:var(--panel2);cursor:pointer;overflow:hidden;transition:border-color 150ms,transform 150ms}
+/* Grid fills the panel width — denser packing = more options visible at once. */
+.bm-opt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:10px}
+.bm-opt-grid.is-color{grid-template-columns:repeat(auto-fill,minmax(46px,1fr));justify-items:center}
+/* Sticky filter + bulk toolbar above the grid. */
+.bm-opt-tools{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.bm-opt-search{flex:1 1 200px;min-width:140px;font-size:12px;padding:7px 11px}
+.bm-opt-bulk{display:inline-flex;gap:6px;flex-shrink:0}
+/* Full outfit colour palette. */
+.bm-color-block{margin-top:16px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.bm-color-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.bm-color-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:8px;max-height:180px;overflow-y:auto;padding:2px;scrollbar-width:thin}
+.bm-opt-swatch:disabled{cursor:default;opacity:.85}
+.bm-opt-preset{cursor:pointer}
+.bm-opt-preset.sel{border-color:var(--accent);box-shadow:var(--glow)}
+.bm-opt-preset.sel::before{content:"model";position:absolute;left:0;right:0;bottom:0;font-size:8px;font-weight:700;text-align:center;color:#fff;background:linear-gradient(0deg,rgba(99,102,241,.92),transparent);padding:5px 0 1px;letter-spacing:.3px}
+.bm-opt{position:relative;width:100%;aspect-ratio:1;height:auto;padding:0;border:2px solid var(--line);border-radius:12px;background:var(--panel2);cursor:pointer;overflow:hidden;transition:border-color 150ms,transform 150ms}
 .bm-opt:hover{transform:translateY(-2px);border-color:var(--muted)}
 .bm-opt img{width:100%;height:100%;object-fit:contain;display:block}
 .bm-opt-color{width:48px;height:48px;border-radius:50%}
+/* Colour cells (skin/eye swatches + the outfit palette) fill their grid cell as
+   uniform circles instead of a fixed 48px, so the palette packs tightly. */
+.bm-opt-grid.is-color .bm-opt-color,.bm-color-grid .bm-opt-swatch{width:100%;height:auto;aspect-ratio:1;border-radius:50%}
 .bm-opt.sel{border-color:var(--accent);box-shadow:var(--glow)}
 .bm-opt.sel::after{content:"✓";position:absolute;top:-1px;right:2px;font-size:12px;font-weight:800;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8)}
-@media(max-width:780px){.bm-editor{flex-direction:column}.bm-stage{flex-basis:auto}}
+.bm-opt-swatch.sel::after{top:auto;bottom:1px;right:auto;left:50%;transform:translateX(-50%);font-size:11px}
+@media(max-width:780px){.bm-editor{flex-direction:column}.bm-stage{position:static;flex-basis:auto;max-height:none}.bm-options{max-height:none}}
 
 /* ---------------- Tiles ---------------- */
 .tiles{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}

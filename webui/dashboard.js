@@ -1112,13 +1112,26 @@ el("proxyrank-refresh").addEventListener("click", () => renderProxyRanking());
 const bm = {
   catalog: {}, order: [], groups: {}, models: {}, modelNames: [], presets: {}, renderParams: {},
   baseAvatar: "", current: "", active: "", previewPick: {}, featGroup: {}, openGroups: new Set(), loaded: false,
+  optFilter: "",
 };
 const NYX_BASE = PRODUCTS.nyx.base;
 const BM_HINTS = {
-  preset: m => `Using ${m}'s built-in option for this feature.`,
+  preset: m => `Using ${m}'s built-in look. Browse every option below — click one to pin it (Fixed).`,
   fixed: () => "Always use the one option you pick below.",
-  random: () => "Tick every option to allow — the bot picks one at random for each profile. Pick a handful that look good together.",
+  random: () => "Tick every option to allow — the bot picks one at random for each profile. Use Select all / Clear to build the pool fast.",
 };
+
+// Full-spectrum outfit colour palette ("all colors"). The live editor snaps each
+// choice to the nearest real swatch, and the preview renders the exact hex via
+// <slot>_tone1, so a dense, evenly-spread palette gives the operator every colour
+// while still applying cleanly. Neutrals ramp → 13 hue families × 6 shades →
+// earthy browns → the original captured Bitmoji swatches (exact matches kept).
+const BM_OUTFIT_COLORS = ["#ffffff","#e6e6e6","#c7c7c7","#a3a3a3","#808080","#616161","#424242","#242424","#0a0a0a","#efc8c8","#ea8686","#ee2b2b","#c52020","#981616","#5f1111","#efdac8","#eab486","#ee862b","#c56d20","#985216","#5f3511","#efe3c8","#eacc86","#eeb32b","#c59420","#987116","#5f4811","#efebc8","#eae086","#eeda2b","#c5b520","#988b16","#5f5811","#e2efc8","#c8ea86","#adee2b","#8ec520","#6c9816","#455f11","#c8efce","#86ea96","#2bee4b","#20c53c","#16982b","#115f1e","#c8efe7","#86ead6","#2beec7","#20c5a4","#16987e","#115f50","#c8e8ef","#86d9ea","#2bcdee","#20aac5","#168298","#11525f","#c8daef","#86b4ea","#2b86ee","#206dc5","#165298","#11355f","#c8caef","#868cea","#2b38ee","#202bc5","#161e98","#11165f","#d9c8ef","#b186ea","#7f2bee","#6820c5","#4e1698","#33115f","#efc8ef","#ea86ea","#ee2bee","#c520c5","#981698","#5f115f","#efc8db","#ea86b8","#ee2b8c","#c52073","#981657","#5f1138","#9b613b","#773e22","#b48c64","#472b1f","#c6b495","#ec2020","#f5bebc","#be6a75","#581d38","#43342d","#a08e82","#a0a1a4","#707071","#29282d","#3a3d5c","#83b6d1","#79a88e","#2ba84d","#004932"];
+
+// An outfit feature's colours can be tinted via the *_tone1 render param. Skin,
+// eye, makeup etc. are "color" type but pick a fixed swatch id, not a tint.
+function bmIsOutfit(f) { return (bm.catalog[f] && bm.catalog[f].type) === "outfit"; }
+function bmOutfitColors() { return BM_OUTFIT_COLORS; }
 
 async function loadBitmoji() {
   el("bm-status").textContent = "Loading…";
@@ -1161,7 +1174,7 @@ function renderBitmojiAll() {
   el("bm-model-tag").textContent = bm.current;
   renderCatBar();
   renderSide();
-  shufflePreviewPicks();   // draw a real random sample so the preview isn't just pool[0]
+  samplePreviewPicks();   // draw a real random sample so the preview isn't just pool[0]
   renderAvatar();
 }
 
@@ -1198,9 +1211,37 @@ function renderCatBar() {
   el("bm-catbar").innerHTML = html;
 }
 
+// Resolve the model's baseline (preset) option id for a feature so the preset
+// gallery can highlight "the one this model uses now". Colour features store
+// the preset as a decimal tone; catalog option ids are #hex — normalise both.
+function bmPresetOptionId(f) {
+  const rp = bm.renderParams[f];
+  const presetParams = bm.presets[bm.current] || {};
+  if (!rp || presetParams[rp.param] == null) return null;
+  return String(presetParams[rp.param]);
+}
+function bmOptionMatchesPreset(f, o, presetVal) {
+  if (presetVal == null) return false;
+  const rp = bm.renderParams[f];
+  if (rp && rp.color) {
+    const dec = parseInt(String(o.id).replace("#", ""), 16);
+    return !isNaN(dec) && String(dec) === presetVal;
+  }
+  return String(o.id) === presetVal;
+}
+
+// One option cell — an image thumbnail, or a colour swatch for "color" features.
+function bmOptCellHtml(feat, o, on, extraClass) {
+  const cls = `bm-opt${feat.type === "color" ? " bm-opt-color" : ""}${on ? " sel" : ""}${extraClass ? " " + extraClass : ""}`;
+  if (feat.type === "color") {
+    return `<button type="button" class="${cls}" data-id="${escapeAttr(o.id)}" title="${escapeAttr(o.id)}" style="background:${escapeAttr(o.id)}"></button>`;
+  }
+  return `<button type="button" class="${cls}" data-id="${escapeAttr(o.id)}" title="${escapeAttr(o.id)}"><img loading="lazy" src="${escapeAttr(o.preview || "")}" alt=""></button>`;
+}
+
 function renderSide() {
   const f = bm.active; const feat = bm.catalog[f];
-  if (!feat) { el("bm-options").innerHTML = ""; return; }
+  if (!feat) { el("bm-options").innerHTML = ""; renderOptTools(null, "preset"); return; }
   const sel = modelCfg()[f] || { mode: "preset" };
   const mode = sel.mode || "preset";
   el("bm-feature-title").textContent = feat.label || f;
@@ -1215,22 +1256,12 @@ function renderSide() {
   el("bm-clear-feature").style.display = (mode === "preset") ? "none" : "";
   document.querySelectorAll("#bm-mode-group .bm-mode-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.mode === mode));
+  renderOptTools(feat, mode);
   const host = el("bm-options");
-  if (mode === "preset") {
-    host.className = "bm-options empty";
-    // Try to show the model's actual preset value
-    const presetParams = bm.presets[bm.current] || {};
-    const rp = bm.renderParams[f];
-    if (rp && presetParams[rp.param]) {
-      host.innerHTML = `<div class="bm-preset-info">Current preset: <code>${escapeHtml(rp.param)}=${escapeHtml(presetParams[rp.param])}</code></div>`;
-    } else {
-      host.textContent = "Preset — this feature keeps the model's original look.";
-    }
-    return;
-  }
   host.className = "bm-options";
-  host.innerHTML = renderOptions(f, feat, sel);
-  // Show current selection as thumbnails (not ids) below the option grid.
+  host.innerHTML = renderOptions(f, feat, sel, mode);
+  // Selection summary below the grid (skipped in preset — the gallery is the view).
+  if (mode === "preset") return;
   const optById = {}; feat.options.forEach(o => { optById[String(o.id)] = o; });
   const thumb = id => {
     const o = optById[String(id)];
@@ -1263,56 +1294,109 @@ function renderSide() {
   host.insertAdjacentHTML("beforeend", info);
 }
 
-function renderOptions(feature, feat, sel) {
-  const chosen = sel.mode === "fixed" ? [sel.id] : (sel.pool || []);
+// The sticky toolbar above the option grid: a filter box (all modes with options)
+// plus Select all / Clear / Invert for the Random pool.
+function renderOptTools(feat, mode) {
+  const tools = el("bm-opt-tools"); if (!tools) return;
+  if (!feat || !feat.options || !feat.options.length) { tools.style.display = "none"; return; }
+  tools.style.display = "";
+  const bulk = mode === "random"
+    ? `<div class="bm-opt-bulk">
+         <button type="button" class="btn btn-sm" data-bulk="all">Select all</button>
+         <button type="button" class="btn btn-sm" data-bulk="clear">Clear</button>
+         <button type="button" class="btn btn-sm" data-bulk="invert">Invert</button>
+       </div>` : "";
+  tools.innerHTML = `<input id="bm-opt-search" class="input bm-opt-search" type="text" placeholder="Filter ${feat.options.length} options by id…" value="${escapeAttr(bm.optFilter || "")}">${bulk}`;
+}
+
+function renderOptions(feature, feat, sel, mode) {
+  const filter = String(bm.optFilter || "").trim().toLowerCase();
+  const presetVal = mode === "preset" ? bmPresetOptionId(feature) : null;
+  const chosen = mode === "fixed" ? [sel.id] : (mode === "random" ? (sel.pool || []) : []);
   const chosenSet = new Set(chosen.map(String));
   const chosenColor = sel.color || (sel.colors && sel.colors.length ? sel.colors[0] : "");
-  let html = feat.options.map(o => {
-    const on = chosenSet.has(String(o.id)) ? " sel" : "";
-    if (feat.type === "color") {
-      return `<button type="button" class="bm-opt bm-opt-color${on}" data-id="${escapeAttr(o.id)}" title="${escapeAttr(o.id)}" style="background:${escapeAttr(o.id)}"></button>`;
-    }
-    return `<button type="button" class="bm-opt${on}" data-id="${escapeAttr(o.id)}" title="${escapeAttr(o.id)}"><img loading="lazy" src="${escapeAttr(o.preview || "")}" alt=""></button>`;
+  const matches = o => !filter || String(o.id).toLowerCase().includes(filter);
+  const shown = feat.options.filter(matches);
+  let grid = shown.map(o => {
+    const on = mode === "preset"
+      ? bmOptionMatchesPreset(feature, o, presetVal)
+      : chosenSet.has(String(o.id));
+    const extra = mode === "preset" ? "bm-opt-preset" : "";
+    return bmOptCellHtml(feat, o, on, extra);
   }).join("");
-  // Color swatch strip for outfit features. In Random mode ticking swatches builds
-  // the colour pool the bot draws from; in Fixed mode it sets the one colour.
-  if (feat.type === "outfit" && feat.options.length) {
-    const colors = feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, []);
-    if (colors.length) {
-      const poolColors = new Set((sel.colors || []).map(String));
-      html += `<div class="bm-color-strip"><span class="bm-color-label">${sel.mode === "random" ? "Colors" : "Color"}:</span>`;
-      html += colors.map(c => {
-        const on = sel.mode === "random"
-          ? (poolColors.has(String(c)) ? " sel" : "")
-          : (String(c) === String(chosenColor) ? " sel" : "");
-        return `<button type="button" class="bm-opt bm-opt-color${on} bm-opt-swatch" data-color="${escapeAttr(c)}" title="${escapeAttr(c)}" aria-label="Colour ${escapeAttr(c)}" style="background:${escapeAttr(c)}"></button>`;
-      }).join("");
-      if (sel.mode === "random") {
-        html += `<span class="bm-color-actions"><button type="button" class="btn btn-sm bm-color-all">All</button><button type="button" class="btn btn-sm bm-color-none">Clear</button></span>`;
-      }
-      html += `</div>`;
+  if (!shown.length) grid = `<div class="bm-pool-empty">No option id matches “${escapeHtml(bm.optFilter || "")}”.</div>`;
+  let html = `<div class="bm-opt-grid${feat.type === "color" ? " is-color" : ""}">${grid}</div>`;
+  // Outfit colour palette — every colour. Random mode multi-selects a colour pool;
+  // Fixed/Preset pick one tint. (Preset shows it read-only for reference.)
+  if (feat.type === "outfit") {
+    const colors = bmOutfitColors();
+    const poolColors = new Set((sel.colors || []).map(String).map(s => s.toLowerCase()));
+    const chosenLc = String(chosenColor || "").toLowerCase();
+    const label = mode === "random" ? "Colours (pool)" : "Colour";
+    html += `<div class="bm-color-block"><div class="bm-color-head"><span class="bm-color-label">${label}</span>`;
+    if (mode === "random") {
+      html += `<span class="bm-color-actions"><button type="button" class="btn btn-sm bm-color-all">All</button><button type="button" class="btn btn-sm bm-color-none">Clear</button></span>`;
     }
+    html += `</div><div class="bm-color-grid">`;
+    html += colors.map(c => {
+      const on = mode === "random" ? poolColors.has(c.toLowerCase()) : (c.toLowerCase() === chosenLc);
+      const dis = mode === "preset" ? " disabled" : "";
+      return `<button type="button" class="bm-opt bm-opt-color bm-opt-swatch${on ? " sel" : ""}"${dis} data-color="${escapeAttr(c)}" title="${escapeAttr(c)}" aria-label="Colour ${escapeAttr(c)}" style="background:${escapeAttr(c)}"></button>`;
+    }).join("");
+    html += `</div></div>`;
   }
   return html;
 }
 
-function shufflePreviewPicks() {
+const bmRandOf = arr => arr[Math.floor(Math.random() * arr.length)];
+
+// Conservative sampler used on load / re-render: only re-rolls features the
+// operator set to Random, drawing from THAT pool. Fixed and preset features keep
+// the model's chosen/baseline look, so opening a model shows its clean preset.
+function samplePreviewPicks() {
   const cfg = bm.models[bm.current] || {};
   bm.order.forEach(f => {
     const rp = bm.renderParams[f];
     const feat = bm.catalog[f];
     if (!rp || !feat || !feat.options || !feat.options.length) return;
     const sel = cfg[f];
-    // Only shuffle features the operator set to Random — pick from THAT pool.
-    // Fixed and preset features keep the model's chosen/baseline look so the
-    // preview stays a valid render (randomizing everything produced invalid
-    // param combinations that 404'd and blanked the preview).
     if (!sel || sel.mode !== "random") { delete bm.previewPick[f]; delete bm.previewPick[f + ":color"]; return; }
     const pool = (sel.pool || []).map(String).filter(id => feat.options.some(o => String(o.id) === id));
     if (!pool.length) { delete bm.previewPick[f]; return; }
-    bm.previewPick[f] = pool[Math.floor(Math.random() * pool.length)];
+    bm.previewPick[f] = bmRandOf(pool);
     const colors = sel.colors || [];
-    if (colors.length) bm.previewPick[f + ":color"] = colors[Math.floor(Math.random() * colors.length)];
+    if (colors.length) bm.previewPick[f + ":color"] = bmRandOf(colors);
+    else delete bm.previewPick[f + ":color"];
+  });
+}
+
+// The Shuffle button: roll a brand-new complete look, like generating a random
+// Bitmoji. Fixed pins are respected; Random features draw from their pool; every
+// other (preset / unconfigured) feature draws from its FULL catalog — so every
+// press visibly changes, covering all possibilities. renderAvatar() falls back to
+// the last good / base look if a rare param combo can't render, so it never blanks.
+function shuffleAllPicks() {
+  const cfg = bm.models[bm.current] || {};
+  bm.order.forEach(f => {
+    const rp = bm.renderParams[f];
+    const feat = bm.catalog[f];
+    if (!rp || !feat || !feat.options || !feat.options.length) return;
+    const sel = cfg[f];
+    if (sel && sel.mode === "fixed") {  // honour the pin — keep the fixed id/colour
+      delete bm.previewPick[f]; delete bm.previewPick[f + ":color"]; return;
+    }
+    let pool;
+    if (sel && sel.mode === "random") {
+      pool = (sel.pool || []).map(String).filter(id => feat.options.some(o => String(o.id) === id));
+    } else {
+      pool = feat.options.map(o => String(o.id));  // preset / unconfigured → whole catalog
+    }
+    if (!pool.length) { delete bm.previewPick[f]; delete bm.previewPick[f + ":color"]; return; }
+    bm.previewPick[f] = bmRandOf(pool);
+    let colorPool = null;
+    if (sel && sel.mode === "random" && (sel.colors || []).length) colorPool = sel.colors;
+    else if (bmIsOutfit(f)) colorPool = bmOutfitColors();
+    if (colorPool && colorPool.length) bm.previewPick[f + ":color"] = bmRandOf(colorPool);
     else delete bm.previewPick[f + ":color"];
   });
 }
@@ -1355,8 +1439,13 @@ function buildAvatarUrl() {
       if (pool.length) id = (bm.previewPick[f] && pool.includes(bm.previewPick[f])) ? bm.previewPick[f] : pool[0];
       const colors = sel.colors || [];
       if (colors.length) color = (bm.previewPick[f + ":color"] && colors.includes(bm.previewPick[f + ":color"])) ? bm.previewPick[f + ":color"] : colors[0];
+    } else if (bm.previewPick[f]) {
+      // Preset/unconfigured feature the Shuffle button rolled — render that pick so
+      // Shuffle visibly changes every feature. Cleared on model change / re-render.
+      id = bm.previewPick[f];
+      if (bm.previewPick[f + ":color"]) color = bm.previewPick[f + ":color"];
     }
-    // Preset/unconfigured features inherit the model preset already applied above.
+    // Otherwise preset/unconfigured features inherit the model preset applied above.
     if (id) { const v = bmRenderValue(f, id); if (v != null) p.set(rp.param, v); }
     if (color) {
       // Outfit colors are #hex swatches but the *_tone1 render param wants a decimal.
@@ -1402,6 +1491,7 @@ el("bm-catbar").addEventListener("click", e => {
   }
   const cat = e.target.closest(".bm-cat"); if (!cat) return;
   bm.active = cat.dataset.feature;
+  bm.optFilter = "";   // a filter for one feature shouldn't leak into the next
   const g = bm.featGroup[bm.active];
   if (g) { bm.openGroups.clear(); bm.openGroups.add(g); }
   renderCatBar(); renderSide();
@@ -1419,39 +1509,41 @@ document.getElementById("bm-mode-group").addEventListener("click", e => {
 el("bm-options").addEventListener("click", e => {
   const colorBulk = e.target.closest(".bm-color-all, .bm-color-none");
   if (colorBulk) {
-    const f = bm.active; const sel = modelCfg()[f]; const feat = bm.catalog[f];
-    if (!sel || sel.mode !== "random" || !feat) return;
-    sel.colors = colorBulk.classList.contains("bm-color-all")
-      ? feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, [])
-      : [];
+    const f = bm.active; const sel = modelCfg()[f];
+    if (!sel || sel.mode !== "random") return;
+    sel.colors = colorBulk.classList.contains("bm-color-all") ? bmOutfitColors().slice() : [];
     renderSide(); renderAvatar();
     return;
   }
   const swatchBtn = e.target.closest(".bm-opt-swatch");
   if (swatchBtn) {
+    if (swatchBtn.disabled) return;   // preset shows the palette read-only
     const f = bm.active; const color = swatchBtn.dataset.color; const sel = modelCfg()[f];
     if (!sel) return;
     if (sel.mode === "fixed") {
       sel.color = color;
+      el("bm-options").querySelectorAll(".bm-opt-swatch").forEach(b => b.classList.toggle("sel", (b.dataset.color || "").toLowerCase() === color.toLowerCase()));
     } else if (sel.mode === "random") {
       sel.colors = sel.colors || [];
-      const ci = sel.colors.indexOf(color);
+      const ci = sel.colors.findIndex(c => String(c).toLowerCase() === color.toLowerCase());
       if (ci >= 0) sel.colors.splice(ci, 1); else sel.colors.push(color);
-    }
-    if (sel.mode === "random") {
       swatchBtn.classList.toggle("sel");   // multi-select colour pool
-    } else {
-      el("bm-options").querySelectorAll(".bm-opt-swatch").forEach(b => b.classList.toggle("sel", b.dataset.color === color));
     }
     renderAvatar();
     return;
   }
   const optBtn = e.target.closest(".bm-opt"); if (!optBtn || optBtn.classList.contains("bm-opt-swatch")) return;
-  const f = bm.active; const id = optBtn.dataset.id; const sel = modelCfg()[f];
-  if (!sel) return;
+  const f = bm.active; const id = optBtn.dataset.id; const cfg = modelCfg(); let sel = cfg[f];
+  if (!sel) {
+    // Preset gallery: clicking any option pins it as Fixed — a fast path from
+    // "just browsing" to "use this exact one", without hunting for the mode tab.
+    cfg[f] = { mode: "fixed", id };
+    renderCatBar(); renderSide(); renderAvatar();
+    return;
+  }
   if (sel.mode === "fixed") {
     sel.id = id;
-    el("bm-options").querySelectorAll(".bm-opt").forEach(b => b.classList.toggle("sel", b.dataset.id === id));
+    el("bm-options").querySelectorAll(".bm-opt:not(.bm-opt-swatch)").forEach(b => b.classList.toggle("sel", b.dataset.id === id));
   } else if (sel.mode === "random") {
     sel.pool = sel.pool || [];
     const i = sel.pool.indexOf(id);
@@ -1462,8 +1554,33 @@ el("bm-options").addEventListener("click", e => {
   renderAvatar();
 });
 
+// Filter box + Select all / Clear / Invert for the option grid.
+el("bm-opt-tools").addEventListener("input", e => {
+  if (e.target.id !== "bm-opt-search") return;
+  bm.optFilter = e.target.value;
+  const f = bm.active; const feat = bm.catalog[f]; const sel = modelCfg()[f] || { mode: "preset" };
+  const host = el("bm-options");
+  const info = host.querySelector(".bm-selection-info");
+  host.innerHTML = renderOptions(f, feat, sel, sel.mode || "preset");
+  if (info) host.appendChild(info);   // keep the selection summary in place
+});
+el("bm-opt-tools").addEventListener("click", e => {
+  const btn = e.target.closest("[data-bulk]"); if (!btn) return;
+  const f = bm.active; const feat = bm.catalog[f]; const sel = modelCfg()[f];
+  if (!feat || !sel || sel.mode !== "random") return;
+  const filter = String(bm.optFilter || "").trim().toLowerCase();
+  const shownIds = feat.options.filter(o => !filter || String(o.id).toLowerCase().includes(filter)).map(o => String(o.id));
+  const kind = btn.dataset.bulk;
+  const cur = new Set((sel.pool || []).map(String));
+  if (kind === "all") shownIds.forEach(id => cur.add(id));
+  else if (kind === "clear") shownIds.forEach(id => cur.delete(id));
+  else if (kind === "invert") shownIds.forEach(id => cur.has(id) ? cur.delete(id) : cur.add(id));
+  sel.pool = Array.from(cur);
+  renderCatBar(); renderSide(); renderAvatar();
+});
+
 el("bm-shuffle").addEventListener("click", () => {
-  shufflePreviewPicks();
+  shuffleAllPicks();
   renderAvatar();
 });
 
@@ -1486,9 +1603,10 @@ el("bm-recommend").addEventListener("click", () => {
     const feat = bm.catalog[feature];
     if (!feat || !feat.options || !feat.options.length) return;
     const entry = { mode: "random", pool: sample(feat.options.map(o => String(o.id)), n) };
-    if (withColors) {
-      const colors = feat.options.reduce((acc, o) => { (o.colors || []).forEach(c => { if (!acc.includes(c)) acc.push(c); }); return acc; }, []);
-      if (colors.length) entry.colors = colors;
+    if (withColors && bmIsOutfit(feature)) {
+      // A varied but coherent colour pool from the full palette (skip near-white
+      // extremes so recommended looks stay wearable).
+      entry.colors = sample(bmOutfitColors().slice(1), 16);
     }
     cfg[feature] = entry;
   };

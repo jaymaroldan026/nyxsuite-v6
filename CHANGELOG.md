@@ -1,5 +1,36 @@
 # Changelog
 
+## 6.1.6 — Nyxmoji editor overhaul: every outfit colour, working Shuffle, preset gallery
+
+### Nyxmoji: full outfit colour palette (all colours)
+- Every outfit slot (**Tops, Outfits, Bottoms, Dresses, Footwear, Outerwear**) now
+  offers a **complete full-spectrum colour palette** — neutrals, every hue family,
+  and earthy browns — instead of the old 14-swatch strip. Pick one colour in
+  **Fixed**, or tick a whole **colour pool** in **Random** (with **All / Clear**).
+- The live editor already snaps each choice to the nearest real Bitmoji swatch and
+  the preview renders the exact tint, so any colour applies cleanly and never fails
+  a profile — an unmatched colour just falls back to a random valid pick.
+
+### Nyxmoji: Shuffle preview actually shuffles
+- **Shuffle preview** now rolls a brand-new complete look on every press — like
+  generating a random Bitmoji. It honours your **Fixed** pins, draws **Random**
+  features from their pool, and fills every **Preset/unconfigured** feature from the
+  full catalogue, so the preview visibly changes each time. The stage falls back to
+  the last good / base look if a rare combination can't render, so it never blanks.
+
+### Nyxmoji: Preset shows the whole gallery
+- A feature left on **Preset** now displays a **read-only gallery of every option's
+  PNG** (and the full colour palette for outfits), with the model's built-in choice
+  highlighted — filling the space that used to be an empty panel. **Click any option
+  to pin it as Fixed** without hunting for the mode tab.
+
+### Nyxmoji: a roomier, faster editor
+- The option grid now **fills the panel width and viewport height** (denser packing =
+  far more options visible at once), the **avatar stage stays pinned** while you
+  scroll, and a new **filter box** narrows big lists (e.g. 291 tops) by id.
+- **Random** pools gain **Select all / Clear / Invert** (filter-aware), so building a
+  pool is a couple of clicks instead of tapping dozens of thumbnails.
+
 ## 6.1.5 — Banned proxies persist (no more clearing on save/restart)
 
 ### Nyxify: banning a proxy now sticks
