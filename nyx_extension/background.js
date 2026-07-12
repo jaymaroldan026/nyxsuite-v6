@@ -1137,6 +1137,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message && message.type === "NYX_REPLACE_SNAPBOARD_ROW") {
+    callLocalNyxify("POST", "/replace_banned/replace", { rows: [message.row || {}] })
+      .then((payload) => sendResponse({ ok: payload.ok !== false, payload }))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : "Replace failed." }));
+    return true;
+  }
+
+  if (message && message.type === "NYX_ADD_TO_NYX_PENDING") {
+    callLocalNyx("POST", "/queue/upsert", {
+      allow_done_requeue: true,
+      entries: [{
+        profile_id: message.profileId,
+        model: message.model,
+      }],
+    })
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : "Add to Nyx pending failed." }));
+    return true;
+  }
+
   if (message && message.type === "NYX_DETECTED_ROWS") {
     chrome.storage.sync.get(STORAGE_KEYS.config)
       .then(async (syncData) => {
@@ -2012,6 +2032,36 @@ async function callLocalNyx(method, path, payload) {
     throw new Error(result.error || `Request failed with status ${response.status}`);
   }
 
+  return result;
+}
+
+async function callLocalNyxify(method, path, payload) {
+  const syncData = await chrome.storage.sync.get(STORAGE_KEYS.config);
+  const config = normalizeConfig(syncData[STORAGE_KEYS.config] || {});
+  const nyxBase = config.localApiUrl || "http://127.0.0.1:8865";
+  const localApiUrl = nyxBase.replace(/:8865\b/, ":8866");
+  let token = config.localToken;
+
+  if (!token) {
+    token = await fetchAndSaveLocalToken(localApiUrl);
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  const bodyPayload = { ...(payload || {}) };
+  if (token) {
+    headers["X-Nyxify-Token"] = token;
+    bodyPayload.token = token;
+  }
+
+  const response = await fetch(`${localApiUrl}${path}`, {
+    method,
+    headers,
+    body: method === "GET" ? undefined : JSON.stringify(bodyPayload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || `Request failed with status ${response.status}`);
+  }
   return result;
 }
 

@@ -262,6 +262,37 @@
     return "";
   }
 
+  function readValueFromAliases(row, headerMap, aliases) {
+    var index = findHeaderIndex(headerMap || {}, aliases || []);
+    var rowCells = getRowCells(row);
+    if (index >= 0 && rowCells[index]) {
+      return readCellText(rowCells[index]);
+    }
+    return "";
+  }
+
+  function buildNyxifyReplacementRow(row) {
+    var headerMap = getTableHeaderMap(getRowCollectionRoot());
+    var model = readSelectedModel(row, headerMap);
+    var ipAddress = readValueFromAliases(row, headerMap, ["ip", "ip address", "proxy", "proxy ip", "proxy address"]);
+    var proxyAddress = readValueFromAliases(row, headerMap, ["proxy", "proxy address", "ip", "ip address"]) || ipAddress;
+    var rowId = normalizeText(row.getAttribute("data-id") || "");
+    var email = readValueFromAliases(row, headerMap, ["email", "gmail", "google", "mail", "google mail"]);
+    var password = readValueFromAliases(row, headerMap, ["password", "pass", "snap password", "snapchat password", "account password"]);
+    return {
+      row_key: rowId ? ("snapboard:" + rowId.toLowerCase()) : "",
+      row_id: rowId,
+      model: model,
+      ip_address: ipAddress,
+      proxy_address: proxyAddress,
+      username: readUsername(row, headerMap),
+      email: email,
+      password: password,
+      adspower_id: readAdsPowerId(row, headerMap),
+      status: "Banned",
+    };
+  }
+
   function getRowCollectionRoot() {
     return document.querySelector("#tableBody")
       || document.querySelector("tbody")
@@ -829,23 +860,26 @@
     var menu = document.createElement("div");
     menu.id = REPLACE_MENU_ID;
     menu.className = "nyx-replace-menu";
-    var item = document.createElement("button");
-    item.type = "button";
-    item.className = "nyx-replace-menu-item";
-    item.textContent = "Replace profile";
-    item.addEventListener("click", function (event) {
-      event.stopPropagation();
-      closeReplaceMenu();
-      var ok = window.confirm(
-        "Replace this profile?\n\nThis refreshes the proxy, sets the status to Warm Up, "
-        + "clears the AdsPower ID on SnapBoard, deletes the AdsPower profile, and re-queues "
-        + "the row in Nyxify."
-      );
-      if (ok) {
-        replaceProfileForRow(row);
-      }
+
+    function addItem(label, handler) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "nyx-replace-menu-item";
+      item.textContent = label;
+      item.addEventListener("click", function (event) {
+        event.stopPropagation();
+        closeReplaceMenu();
+        handler();
+      });
+      menu.appendChild(item);
+    }
+
+    addItem("Replace profile", function () {
+      replaceProfileForRow(row);
     });
-    menu.appendChild(item);
+    addItem("Add to Nyx pending", function () {
+      addRowToNyxPending(row);
+    });
     document.body.appendChild(menu);
     var rect = indicator.getBoundingClientRect();
     menu.style.top = (window.scrollY + rect.bottom + 4) + "px";
@@ -855,52 +889,53 @@
     }, 0);
   }
 
-  function replaceProfileForRow(row) {
+  function addRowToNyxPending(row) {
     var headerMap = getTableHeaderMap(getRowCollectionRoot());
-    var rowId = row.getAttribute("data-id") || "";
     var adspowerId = readAdsPowerId(row, headerMap);
-    var reasons = [];
-
-    showRowOutcome(row, true, "Replacing…");
-
-    // 1) Refresh the proxy for this row.
-    var proxyButton = findRotateProxyButtonInRow(row);
-    if (proxyButton) {
-      clickNode(proxyButton);
-    } else {
-      reasons.push("proxy button not found");
-    }
-
-    // 2) Set the SnapBoard status to "Warm Up".
-    if (!setRowStatusWarmup(row)) {
-      reasons.push("could not set Warm Up status");
-    }
-
-    // 3) Clear the AdsPower ID on SnapBoard. Nyxify only queues rows with no
-    //    AdsPower ID, so clearing it makes Nyxify re-detect and re-queue this
-    //    row as PENDING (the "move to pending in nyxify" step).
-    clearAdspowerIdInRow(row, rowId);
-
-    // 4) Delete the old AdsPower profile via the local Nyx runner.
-    if (!adspowerId) {
-      showRowOutcome(row, false, "no AdsPower ID" + (reasons.length ? "; " + reasons.join("; ") : ""));
+    var model = readSelectedModel(row, headerMap);
+    if (!adspowerId || !model) {
+      showRowOutcome(row, false, "missing ID/model");
       return;
     }
-    chrome.runtime.sendMessage({ type: "NYX_DELETE_ADSPOWER_PROFILE", profileId: adspowerId }, function (response) {
+    showRowOutcome(row, true, "Adding...");
+    chrome.runtime.sendMessage({
+      type: "NYX_ADD_TO_NYX_PENDING",
+      profileId: adspowerId,
+      model: model,
+    }, function (response) {
+      if (chrome.runtime.lastError || !response || !response.ok) {
+        showRowOutcome(row, false, (response && response.error) || "add failed");
+        return;
+      }
+      showRowOutcome(row, true, "Added");
+    });
+  }
+
+  function replaceProfileForRow(row) {
+    var replacementRow = buildNyxifyReplacementRow(row);
+    if (!replacementRow.row_key || !replacementRow.model || !replacementRow.ip_address) {
+      showRowOutcome(row, false, "missing row data");
+      return;
+    }
+    showRowOutcome(row, true, "Replacing...");
+    chrome.runtime.sendMessage({ type: "NYX_REPLACE_SNAPBOARD_ROW", row: replacementRow }, function (response) {
+      var payload;
+      var firstResult;
       if (chrome.runtime.lastError) {
-        showRowOutcome(row, false, "runner unreachable" + (reasons.length ? "; " + reasons.join("; ") : ""));
+        showRowOutcome(row, false, "runner unreachable");
         return;
       }
       if (!response || !response.ok) {
-        var error = (response && response.error) ? response.error : "delete failed";
-        showRowOutcome(row, false, error + (reasons.length ? "; " + reasons.join("; ") : ""));
+        showRowOutcome(row, false, (response && response.error) || "replace failed");
         return;
       }
-      if (reasons.length) {
-        showRowOutcome(row, false, "partial — " + reasons.join("; "));
-      } else {
-        showRowOutcome(row, true, "Replaced");
+      payload = response.payload || {};
+      firstResult = payload.results && payload.results.length ? payload.results[0] : null;
+      if (firstResult && firstResult.status === "failed") {
+        showRowOutcome(row, false, firstResult.error || "replace failed");
+        return;
       }
+      showRowOutcome(row, firstResult ? firstResult.status !== "partial" : true, firstResult && firstResult.status === "partial" ? "Partial" : "Replaced");
     });
   }
 

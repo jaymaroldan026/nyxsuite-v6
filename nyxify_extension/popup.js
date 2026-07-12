@@ -6,6 +6,7 @@ let renderedScrapeSignature = "";
 let popupLivePort = null;
 let popupLiveReconnectTimer = null;
 let scrapeInputSaveTimer = null;
+let latestBannedRows = [];
 
 const POPUP_VIEW_STORAGE_KEY = "nyxifyPopupView";
 const POPUP_CONFIG_STORAGE_KEY = "nyxifyConfig";
@@ -470,6 +471,59 @@ function runBotAction(action, loadingMessage, fallbackMessage) {
   });
 }
 
+function setReplaceBannedStatus(message, rows) {
+  const status = document.getElementById("replaceBannedStatus");
+  const replaceButton = document.getElementById("replaceBannedButton");
+  latestBannedRows = Array.isArray(rows) ? rows : latestBannedRows;
+  if (status) {
+    status.textContent = String(message || "");
+  }
+  if (replaceButton) {
+    replaceButton.disabled = latestBannedRows.length === 0;
+  }
+}
+
+function scanBannedRows() {
+  setReplaceBannedStatus("Scanning active SnapBoard tab...", []);
+  chrome.runtime.sendMessage({ type: "NYXIFY_SCAN_BANNED_ROWS", count: 100000 }, (response) => {
+    if (!response || !response.ok) {
+      setReplaceBannedStatus((response && response.error) || "Could not scan banned rows.", []);
+      return;
+    }
+    const rows = response.rows || [];
+    setReplaceBannedStatus(
+      rows.length
+        ? `Found ${rows.length} banned row(s).`
+        : "No banned rows found.",
+      rows
+    );
+  });
+}
+
+function replaceBannedRows() {
+  if (!latestBannedRows.length) {
+    setReplaceBannedStatus("Scan banned rows first.", []);
+    return;
+  }
+  const replaceButton = document.getElementById("replaceBannedButton");
+  if (replaceButton) {
+    replaceButton.disabled = true;
+  }
+  setReplaceBannedStatus(`Replacing ${latestBannedRows.length} banned row(s)...`, latestBannedRows);
+  chrome.runtime.sendMessage({ type: "NYXIFY_REPLACE_BANNED_ROWS", rows: latestBannedRows }, (response) => {
+    if (!response || !response.ok) {
+      setReplaceBannedStatus((response && response.error) || "Replace banned failed.", latestBannedRows);
+      return;
+    }
+    const payload = response.payload || {};
+    setReplaceBannedStatus(
+      payload.message || `Replace banned finished for ${Number(payload.count || 0)} row(s).`,
+      []
+    );
+    refreshPopupStatus("Replace banned finished.", true);
+  });
+}
+
 function scheduleLiveStatusReconnect() {
   if (popupLiveReconnectTimer) {
     window.clearTimeout(popupLiveReconnectTimer);
@@ -682,6 +736,8 @@ document.getElementById("deleteOrphanProfilesButton").addEventListener("click", 
 document.getElementById("clearQueueButton").addEventListener("click", () => {
   runBotAction("clear_queue", "Clearing Nyxify queue...", "Nyxify queue cleared.");
 });
+document.getElementById("scanBannedButton").addEventListener("click", scanBannedRows);
+document.getElementById("replaceBannedButton").addEventListener("click", replaceBannedRows);
 document.getElementById("savePopupSettingsButton").addEventListener("click", savePopupSettings);
 
 document.getElementById("savePopupBlockedProxiesButton").addEventListener("click", () => {

@@ -59,6 +59,55 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
             row = store.list_tasks()[0]
             self.assertEqual(row["password"], "NewPassword2!")
 
+    def test_replace_banned_reset_clears_old_adspower_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = NyxifyTaskStore(Path(tmp) / "tasks.db")
+
+            task_id, _action = store.upsert_task(
+                row_key="snapboard:505811",
+                model="Clea",
+                ip_address="198.51.100.10",
+                proxy_address="198.51.100.10:9000:user:pass",
+                username="olduser",
+                email="old@example.com",
+                password="KyotoRiver%12",
+                adspower_id="k1old",
+            )
+            store.update_task_state(
+                task_id,
+                status="DONE",
+                last_step="completed",
+                error="old error",
+                adspower_profile_id="k1old",
+                adspower_name="Snapchat: olduser",
+                adspower_group="Snapchat",
+                tags=["Snapchat"],
+            )
+
+            updated = store.replace_for_banned_account(
+                row_key="snapboard:505811",
+                model="Clea",
+                ip_address="198.51.100.10",
+                proxy_address="203.0.113.44:9100:user:pass",
+                username="freshuser",
+                email="fresh@example.com",
+                password="KyotoRiver%12",
+            )
+
+            self.assertTrue(updated)
+            row = store.list_tasks()[0]
+            self.assertEqual(row["status"], "PENDING")
+            self.assertEqual(row["last_step"], "replace_banned_pending")
+            self.assertEqual(row["error"], "")
+            self.assertEqual(row["username"], "freshuser")
+            self.assertEqual(row["email"], "fresh@example.com")
+            self.assertEqual(row["proxy_address"], "203.0.113.44:9100:user:pass")
+            self.assertEqual(row["adspower_id"], "")
+            self.assertEqual(row["adspower_profile_id"], "")
+            self.assertEqual(row["adspower_name"], "")
+            self.assertEqual(row["adspower_group"], "")
+            self.assertEqual(row["tags"], [])
+
     def test_extension_extracts_and_flushes_snapboard_row_password(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
         background = (ROOT / "nyxify_extension" / "background.js").read_text(encoding="utf-8")
@@ -67,6 +116,57 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn("password: password", content)
         self.assertIn("const password = String(row.password || \"\").trim();", background)
         self.assertIn("password: entry.password", background)
+
+    def test_replace_banned_local_api_endpoints_are_wired(self):
+        api = (ROOT / "core" / "nyxify_local_api.py").read_text(encoding="utf-8")
+        controller = (ROOT / "core" / "nyxify_controller.py").read_text(encoding="utf-8")
+
+        self.assertIn("class _ReplaceBannedScanStore", api)
+        self.assertIn('"/replace_banned/snapshot"', api)
+        self.assertIn('"/replace_banned/scan"', api)
+        self.assertIn('"/replace_banned/replace"', api)
+        self.assertIn("replace_for_banned_account", api)
+        self.assertIn('"delete_adspower_profile"', controller)
+
+    def test_nyxify_extension_scans_and_replaces_banned_rows(self):
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+        background = (ROOT / "nyxify_extension" / "background.js").read_text(encoding="utf-8")
+        popup_html = (ROOT / "nyxify_extension" / "popup.html").read_text(encoding="utf-8")
+        popup_js = (ROOT / "nyxify_extension" / "popup.js").read_text(encoding="utf-8")
+
+        self.assertIn("function extractSnapboardStatusRows", content)
+        self.assertIn("NYXIFY_SCAN_BANNED_ROWS", content)
+        self.assertIn("NYXIFY_SNAPBOARD_STATUS_ROWS", background)
+        self.assertIn("NYXIFY_SCAN_BANNED_ROWS", background)
+        self.assertIn("NYXIFY_REPLACE_BANNED_ROWS", background)
+        self.assertIn('id="scanBannedButton"', popup_html)
+        self.assertIn('id="replaceBannedButton"', popup_html)
+        self.assertIn("scanBannedRows", popup_js)
+        self.assertIn("replaceBannedRows", popup_js)
+
+    def test_nyx_snapboard_menu_replace_and_add_to_nyx_pending(self):
+        content = (ROOT / "nyx_extension" / "content.js").read_text(encoding="utf-8")
+        background = (ROOT / "nyx_extension" / "background.js").read_text(encoding="utf-8")
+
+        self.assertIn("Add to Nyx pending", content)
+        self.assertIn("NYX_REPLACE_SNAPBOARD_ROW", content)
+        self.assertIn("NYX_ADD_TO_NYX_PENDING", content)
+        self.assertNotIn("window.confirm(", content)
+        self.assertIn("NYX_REPLACE_SNAPBOARD_ROW", background)
+        self.assertIn("NYX_ADD_TO_NYX_PENDING", background)
+
+    def test_dashboard_replace_banned_controls_and_no_nyx_clear_queue(self):
+        html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
+        dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")
+        css = (ROOT / "webui" / "dashboard.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="scan-banned-nyxify"', html)
+        self.assertIn('id="replace-banned-nyxify"', html)
+        self.assertIn("scanBannedFromDashboard", dashboard)
+        self.assertIn("replaceBannedFromDashboard", dashboard)
+        self.assertIn("command-grid", css)
+        nyx_config = dashboard.split("nyxify: {", 1)[0]
+        self.assertNotIn('["Clear Queue", "/queue/clear", "bad"]', nyx_config)
 
     def test_content_script_locks_tv_phone_provider(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")

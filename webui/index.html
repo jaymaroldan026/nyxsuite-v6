@@ -25,54 +25,70 @@
 
   <main>
     <section class="panel" id="panel-nyx" data-product="nyx">
-      <div class="panel-head">
-        <div class="statusrow">
-          <span class="state" id="state-nyx">…</span>
-          <span class="detail" id="detail-nyx"></span>
+      <div class="command-grid">
+        <div class="command-status">
+          <div class="statusrow">
+            <span class="state" id="state-nyx">…</span>
+            <span class="detail" id="detail-nyx"></span>
+          </div>
+          <div class="tiles" id="tiles-nyx"></div>
         </div>
-        <button id="nyx-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
-          <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
-        </button>
+        <div class="command-actions">
+          <button id="nyx-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
+            <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
+          </button>
+          <div class="toolbar" id="runner-nyx"></div>
+          <div class="toolbar sub" id="queue-nyx"></div>
+          <div class="toolbar sub" id="row-nyx"></div>
+          <div class="toolbar group" id="group-nyx"></div>
+          <div class="searchbar"><input class="input search-input" id="search-nyx" type="text" placeholder="Search AdsPower ID or username…"></div>
+        </div>
       </div>
       <div id="nyx-advanced" class="advanced-panel" hidden>
         <div id="nyx-advanced-body"></div>
         <span id="config-feedback" class="feedback"></span>
       </div>
-      <div class="tiles" id="tiles-nyx"></div>
-      <div class="toolbar" id="runner-nyx"></div>
-      <div class="toolbar sub" id="queue-nyx"></div>
-      <div class="toolbar sub" id="row-nyx"></div>
-      <div class="toolbar group" id="group-nyx"></div>
-      <div class="searchbar"><input class="input search-input" id="search-nyx" type="text" placeholder="Search AdsPower ID or username…"></div>
       <div class="tablewrap">
         <table class="queue"><thead id="thead-nyx"></thead><tbody id="tbody-nyx"></tbody></table>
       </div>
     </section>
 
     <section class="panel hidden" id="panel-nyxify" data-product="nyxify">
-      <div class="panel-head">
-        <div class="statusrow">
-          <span class="state" id="state-nyxify">…</span>
-          <span class="detail" id="detail-nyxify"></span>
-          <span class="detail" id="usage-nyxify"></span>
+      <div class="command-grid">
+        <div class="command-status">
+          <div class="statusrow">
+            <span class="state" id="state-nyxify">…</span>
+            <span class="detail" id="detail-nyxify"></span>
+            <span class="detail" id="usage-nyxify"></span>
+          </div>
+          <div class="tiles" id="tiles-nyxify"></div>
         </div>
-        <div class="panel-head-btns">
-          <button id="proxyrank-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Proxy Ranking</button>
-          <button id="fullauto-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Full Auto Editor</button>
-          <button id="nyxify-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
-            <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
-          </button>
+        <div class="command-actions">
+          <div class="panel-head-btns">
+            <button id="proxyrank-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Proxy Ranking</button>
+            <button id="fullauto-toggle-btn" class="btn btn-ghost adv-toggle" type="button">Full Auto Editor</button>
+            <button id="nyxify-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
+              <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
+            </button>
+          </div>
+          <div class="replace-banned-dashboard">
+            <span id="replace-banned-summary-nyxify" class="detail">Scan SnapBoard for banned rows.</span>
+            <div class="toolbar compact-toolbar">
+              <button id="scan-banned-nyxify" class="btn" type="button">Scan banned</button>
+              <button id="replace-banned-nyxify" class="btn bad" type="button" disabled>Replace all banned</button>
+            </div>
+          </div>
+          <div class="toolbar" id="runner-nyxify"></div>
+          <div class="toolbar sub" id="queue-nyxify"></div>
+          <div class="toolbar sub" id="row-nyxify"></div>
+          <div class="toolbar group" id="group-nyxify"></div>
+          <div class="searchbar"><input class="input search-input" id="search-nyxify" type="text" placeholder="Search AdsPower ID or username…"></div>
         </div>
       </div>
       <div id="nyxify-advanced" class="advanced-panel" hidden>
         <div id="nyxify-advanced-body"></div>
         <span id="nyxify-config-feedback" class="feedback"></span>
       </div>
-      <div class="tiles" id="tiles-nyxify"></div>
-      <div class="toolbar" id="runner-nyxify"></div>
-      <div class="toolbar sub" id="queue-nyxify"></div>
-      <div class="toolbar sub" id="row-nyxify"></div>
-      <div class="toolbar group" id="group-nyxify"></div>
       <div id="fullauto-section" class="fullauto-section" style="display:none">
         <div class="toolbar sub" style="margin-top:8px">
           <label class="label-inline">Model: <select id="fullauto-model-select" class="input-inline"></select></label>
@@ -106,7 +122,6 @@
           </table>
         </div>
       </div>
-      <div class="searchbar"><input class="input search-input" id="search-nyxify" type="text" placeholder="Search AdsPower ID or username…"></div>
       <div class="tablewrap">
         <table class="queue"><thead id="thead-nyxify"></thead><tbody id="tbody-nyxify"></tbody></table>
       </div>

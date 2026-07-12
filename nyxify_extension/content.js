@@ -272,6 +272,62 @@
     }).filter(Boolean);
   }
 
+  function readStatusFromRow(row, headerMap) {
+    var status = readValueFromAliases(row, headerMap, ["status", "state"]);
+    if (status) {
+      return status;
+    }
+    var select = row.querySelector("select.cell-select.status-select")
+      || row.querySelector("select.status-select");
+    if (!select) {
+      return "";
+    }
+    var selectedOption = select.options[select.selectedIndex];
+    return normalizeText((selectedOption && (selectedOption.value || selectedOption.textContent)) || select.value || "");
+  }
+
+  function extractSnapboardStatusRows(rowLimit) {
+    var root = getRowRoot();
+    var headerMap = getTableHeaderMap(root);
+    var rows = getCandidateRows(root)
+      .sort(function (a, b) {
+        return a.getBoundingClientRect().top - b.getBoundingClientRect().top;
+      })
+      .filter(function (row) {
+        return row && row.matches && row.matches("tr[data-id]");
+      });
+    var limit = Math.max(1, parseInt(rowLimit, 10) || 100000);
+
+    return rows.slice(0, limit).map(function (row, index) {
+      var model = readValueFromAliases(row, headerMap, ["model", "face model"]);
+      var ipAddress = readValueFromAliases(row, headerMap, ["ip", "ip address", "proxy", "proxy ip", "proxy address"]);
+      var proxyAddress = readValueFromAliases(row, headerMap, ["proxy", "proxy address", "ip", "ip address"]) || ipAddress;
+      var adspowerId = readValueFromAliases(row, headerMap, ["adspower", "adspower id", "profile id"]);
+      var username = readValueFromAliases(row, headerMap, ["username", "snap username", "snapchat username", "user", "snap user"]);
+      var email = extractEmailFromText(readValueFromAliases(row, headerMap, ["email", "gmail", "google", "mail", "google mail"]));
+      var password = readValueFromAliases(row, headerMap, ["password", "pass", "snap password", "snapchat password", "account password"]);
+      var status = readStatusFromRow(row, headerMap);
+
+      if (!model || !ipAddress) {
+        return null;
+      }
+
+      return {
+        row_key: getStableRowKey(row, ipAddress, model),
+        row_id: normalizeText(row.getAttribute("data-id") || ""),
+        model: model,
+        ip_address: ipAddress,
+        proxy_address: proxyAddress,
+        username: username,
+        email: email,
+        password: password,
+        adspower_id: adspowerId,
+        status: status,
+        source_rank: index,
+      };
+    }).filter(Boolean);
+  }
+
   function getRowLimit(callback) {
     chrome.storage.sync.get(CONFIG_KEY, function (result) {
       var config = result && result[CONFIG_KEY] ? result[CONFIG_KEY] : {};
@@ -283,6 +339,13 @@
   function sendRows() {
     getRowLimit(function (rowLimit) {
       var rows = extractRows(rowLimit);
+      var statusRows = extractSnapboardStatusRows(100000);
+      if (statusRows.length) {
+        chrome.runtime.sendMessage({
+          type: "NYXIFY_SNAPBOARD_STATUS_ROWS",
+          rows: statusRows,
+        });
+      }
       if (!rows.length) {
         return;
       }
@@ -2000,6 +2063,21 @@
   }
 
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+    if (message && message.type === "NYXIFY_SCAN_BANNED_ROWS") {
+      getRowLimit(function (rowLimit) {
+        var requestedCount = parseInt(message.count, 10);
+        var safeLimit = Number.isFinite(requestedCount) && requestedCount > 0
+          ? Math.max(rowLimit, requestedCount)
+          : 100000;
+        var rows = extractSnapboardStatusRows(safeLimit);
+        var banned = rows.filter(function (row) {
+          return normalizeText(row.status).toLowerCase() === "banned";
+        });
+        sendResponse({ ok: true, rows: rows, banned: banned, count: banned.length });
+      });
+      return true;
+    }
+
     if (!message || message.type !== "NYXIFY_SNAPBOARD_ACTION") {
       return undefined;
     }

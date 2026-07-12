@@ -1,5 +1,29 @@
 # Changelog
 
+## 6.1.7 — Replace banned, faster dashboard command layout
+
+### Nyxify: Replace banned accounts from popup or dashboard
+- Added **Replace banned** to the Nyxify popup and web dashboard. Scan SnapBoard
+  banned rows, review the count, then replace them row by row.
+- Replacement now immediately reserves a fresh Full Auto username, updates the
+  SnapBoard username, requests a fresh email, rotates the proxy, deletes the old
+  AdsPower profile through the current API/GUI control mode, clears the
+  SnapBoard AdsPower ID, sets the row back to **Warm Up**, and resets the row in
+  Nyxify as **PENDING**.
+- The existing Nyx SnapBoard **Replace profile** action now uses the same
+  replacement flow for one row and no longer asks for a confirmation popup.
+
+### Nyx: quicker manual queue handoff
+- The SnapBoard status-dot menu now includes **Add to Nyx pending**, which sends
+  that row/profile directly to Nyx pending without a confirmation popup.
+- The Nyx dashboard no longer shows **Clear Queue**, reducing the chance of
+  wiping active queue data from the dashboard.
+
+### Dashboard: compact command header
+- Nyx and Nyxify controls were reorganized into a compact command header with
+  status/count tiles on the left and action/search controls on the right, so the
+  queue table starts higher and gets more usable space.
+
 ## 6.1.6 — Nyxmoji editor overhaul: every outfit colour, working Shuffle, preset gallery
 
 ### Nyxmoji: full outfit colour palette (all colours)

@@ -387,6 +387,77 @@ class _SmsFetchStore:
             return dict(self._results[row_key]) if row_key in self._results else None
 
 
+class _ReplaceBannedScanStore:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._rows = []
+        self._updated_at = 0.0
+
+    @staticmethod
+    def _normalize_row(row, index=0):
+        safe = row or {}
+        row_key = str(safe.get("row_key") or "").strip().lower()
+        if not row_key:
+            row_id = str(safe.get("row_id") or safe.get("id") or "").strip().lower()
+            if row_id:
+                row_key = f"snapboard:{row_id}"
+        if not row_key:
+            return None
+        model = str(safe.get("model") or "").strip()
+        ip_address = str(safe.get("ip_address") or safe.get("ip") or "").strip()
+        proxy_address = str(safe.get("proxy_address") or safe.get("proxy") or ip_address).strip()
+        status = str(safe.get("status") or "").strip()
+        try:
+            source_rank = int(safe.get("source_rank") or index or 0)
+        except (TypeError, ValueError):
+            source_rank = int(index or 0)
+        return {
+            "row_key": row_key,
+            "row_id": str(safe.get("row_id") or "").strip(),
+            "model": model,
+            "ip_address": ip_address,
+            "proxy_address": proxy_address,
+            "username": str(safe.get("username") or "").strip(),
+            "email": str(safe.get("email") or "").strip(),
+            "password": str(safe.get("password") or "").strip(),
+            "adspower_id": str(
+                safe.get("adspower_id")
+                or safe.get("adspower_profile_id")
+                or safe.get("profile_id")
+                or ""
+            ).strip(),
+            "status": status,
+            "source_rank": source_rank,
+        }
+
+    def update(self, rows):
+        normalized = []
+        seen = set()
+        for index, row in enumerate(rows or []):
+            item = self._normalize_row(row, index=index)
+            if not item or item["row_key"] in seen:
+                continue
+            seen.add(item["row_key"])
+            normalized.append(item)
+        normalized.sort(key=lambda item: int(item.get("source_rank") or 0))
+        with self._lock:
+            self._rows = normalized
+            self._updated_at = time.time()
+        return normalized
+
+    def rows(self):
+        with self._lock:
+            return [dict(row) for row in self._rows], self._updated_at
+
+    def banned_rows(self):
+        rows, updated_at = self.rows()
+        banned = [
+            row for row in rows
+            if str(row.get("status") or "").strip().lower() == "banned"
+        ]
+        return banned, updated_at
+
+
 class NyxifyLocalApiServer:
 
     def __init__(self, store, host="127.0.0.1", port=8866, token="", status_provider=None, action_handlers=None):
@@ -404,6 +475,7 @@ class NyxifyLocalApiServer:
         self.email_fetch_store = _EmailFetchStore()
         self.phone_fetch_store = _PhoneFetchStore()
         self.sms_fetch_store = _SmsFetchStore()
+        self.replace_banned_scan_store = _ReplaceBannedScanStore()
         self.full_auto_username_store = FullAutoUsernameStore()
         try:
             from core.proxy_ranking_store import ProxyRankingStore
@@ -413,6 +485,231 @@ class NyxifyLocalApiServer:
             self.proxy_ranking_store = None
         self._server = None
         self._thread = None
+
+    def _wait_for_update_success(self, store, row_key, timeout_seconds=30):
+        deadline = time.monotonic() + max(1, float(timeout_seconds or 30))
+        while time.monotonic() < deadline:
+            result = store.get_result(row_key)
+            if result is not None:
+                return bool(result.get("success")), str(result.get("error") or "").strip()
+            time.sleep(0.35)
+        return False, "Timed out waiting for SnapBoard update."
+
+    def _wait_for_value_result(self, store, row_key, value_key, timeout_seconds=75):
+        deadline = time.monotonic() + max(1, float(timeout_seconds or 75))
+        last_error = ""
+        while time.monotonic() < deadline:
+            result = store.get_result(row_key)
+            if result is not None:
+                value = str(result.get(value_key) or "").strip()
+                if value:
+                    return value, ""
+                last_error = str(result.get("error") or "").strip()
+            time.sleep(0.35)
+        return "", last_error or f"Timed out waiting for SnapBoard {value_key}."
+
+    def _replace_one_banned_row(self, row):
+        item = _ReplaceBannedScanStore._normalize_row(row)
+        if not item:
+            return {"ok": False, "status": "failed", "error": "Row key is required.", "row": row or {}}
+
+        row_key = item["row_key"]
+        model = item["model"]
+        ip_address = item["ip_address"]
+        if not model or not ip_address:
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": "Model and IP/proxy are required.",
+                "row": item,
+            }
+
+        warnings = []
+        reservation = None
+        username = ""
+        try:
+            reservation = self.full_auto_username_store.reserve(
+                row_key=row_key,
+                model=model,
+                current_username=item.get("username", ""),
+                reason="replace_banned",
+            )
+            username = str(reservation.get("username") or "").strip()
+        except Exception as exc:
+            return {"ok": False, "status": "failed", "row_key": row_key, "error": str(exc), "row": item}
+        if not username:
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": f"No Full Auto username available for {model}.",
+                "row": item,
+            }
+
+        self.username_update_store.request(row_key, username)
+        username_ok, username_error = self._wait_for_update_success(
+            self.username_update_store,
+            row_key,
+            timeout_seconds=30,
+        )
+        if not username_ok:
+            try:
+                self.full_auto_username_store.commit(
+                    row_key=row_key,
+                    reservation_id=reservation.get("reservation_id", ""),
+                    username=username,
+                    model=model,
+                    success=False,
+                    error=username_error,
+                )
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": username_error or "SnapBoard username update failed.",
+                "row": item,
+            }
+        try:
+            self.full_auto_username_store.commit(
+                row_key=row_key,
+                reservation_id=reservation.get("reservation_id", ""),
+                username=username,
+                model=model,
+                success=True,
+            )
+        except Exception as exc:
+            warnings.append(f"Username committed on SnapBoard but pool cleanup failed: {exc}")
+
+        self.email_fetch_store.request(row_key, force_new=True)
+        email, email_error = self._wait_for_value_result(
+            self.email_fetch_store,
+            row_key,
+            "email",
+            timeout_seconds=100,
+        )
+        if not email:
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": email_error or "Fresh email did not appear.",
+                "row": item,
+            }
+
+        self.proxy_rotate_store.request(row_key, max_clicks=3)
+        proxy, proxy_error = self._wait_for_value_result(
+            self.proxy_rotate_store,
+            row_key,
+            "proxy",
+            timeout_seconds=80,
+        )
+        if not proxy:
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": proxy_error or "Proxy did not change.",
+                "row": item,
+            }
+
+        adspower_id = str(item.get("adspower_id") or "").strip()
+        if adspower_id:
+            delete_action = self.action_handlers.get("delete_adspower_profile")
+            if delete_action is None:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "row_key": row_key,
+                    "error": "AdsPower delete handler is unavailable.",
+                    "row": item,
+                }
+            delete_result = delete_action({"profile_id": adspower_id, "row_key": row_key})
+            if not isinstance(delete_result, dict):
+                delete_result = {"ok": True}
+            if delete_result.get("ok") is False:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "row_key": row_key,
+                    "error": delete_result.get("error") or "AdsPower delete failed.",
+                    "row": item,
+                }
+
+        self.adspower_update_store.request(row_key, "")
+        adspower_clear_ok, adspower_clear_error = self._wait_for_update_success(
+            self.adspower_update_store,
+            row_key,
+            timeout_seconds=30,
+        )
+        if not adspower_clear_ok:
+            warnings.append(adspower_clear_error or "SnapBoard AdsPower ID clear was not confirmed.")
+
+        self.status_update_store.request(row_key, "Warm Up")
+        status_ok, status_error = self._wait_for_update_success(
+            self.status_update_store,
+            row_key,
+            timeout_seconds=30,
+        )
+        if not status_ok:
+            warnings.append(status_error or "SnapBoard Warm Up status was not confirmed.")
+
+        updated = self.store.replace_for_banned_account(
+            row_key=row_key,
+            model=model,
+            ip_address=ip_address,
+            proxy_address=proxy,
+            username=username,
+            email=email,
+            password=item.get("password", ""),
+        )
+        if not updated:
+            return {
+                "ok": False,
+                "status": "failed",
+                "row_key": row_key,
+                "error": "Could not reset local Nyxify row.",
+                "row": item,
+            }
+
+        return {
+            "ok": not warnings,
+            "status": "partial" if warnings else "replaced",
+            "row_key": row_key,
+            "username": username,
+            "email": email,
+            "proxy": proxy,
+            "warnings": warnings,
+            "row": item,
+        }
+
+    def replace_banned_rows(self, rows=None):
+        candidates = []
+        if rows:
+            candidates = [
+                _ReplaceBannedScanStore._normalize_row(row, index=index)
+                for index, row in enumerate(rows or [])
+            ]
+            candidates = [row for row in candidates if row]
+        else:
+            candidates, _updated_at = self.replace_banned_scan_store.banned_rows()
+
+        results = [self._replace_one_banned_row(row) for row in candidates]
+        replaced = sum(1 for item in results if item.get("status") == "replaced")
+        partial = sum(1 for item in results if item.get("status") == "partial")
+        failed = sum(1 for item in results if item.get("status") == "failed")
+        return {
+            "ok": failed == 0,
+            "count": len(results),
+            "replaced": replaced,
+            "partial": partial,
+            "failed": failed,
+            "results": results,
+            "rows": self.store.list_tasks(limit=500),
+            "message": f"Replace banned finished: {replaced} replaced, {partial} partial, {failed} failed.",
+        }
 
     def start(self):
         if self._server is not None:
@@ -460,6 +757,21 @@ class NyxifyLocalApiServer:
                         self._write_json(200, {"ok": True, "status": outer.status_provider()})
                     return
 
+                parsed_path = urlparse(self.path)
+                if parsed_path.path == "/replace_banned/scan":
+                    rows, updated_at = outer.replace_banned_scan_store.banned_rows()
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "rows": rows,
+                            "count": len(rows),
+                            "updated_at": updated_at,
+                            "message": f"Found {len(rows)} banned SnapBoard row(s).",
+                        },
+                    )
+                    return
+
                 if self.path == "/otp/pending":
                     self._write_json(200, {"ok": True, "request": outer.store.get_pending_otp_request()})
                     return
@@ -484,7 +796,6 @@ class NyxifyLocalApiServer:
                     self._write_json(200, {"ok": True, "request": outer.username_update_store.pop_pending()})
                     return
 
-                parsed_path = urlparse(self.path)
                 if parsed_path.path == "/username_update/status":
                     params = parse_qs(parsed_path.query)
                     row_key = str((params.get("row_key") or [""])[0]).strip()
@@ -774,6 +1085,29 @@ class NyxifyLocalApiServer:
                             "message": "Row removed from Nyxify queue.",
                         },
                     )
+                    return
+
+                if self.path == "/replace_banned/snapshot":
+                    rows = outer.replace_banned_scan_store.update(payload.get("rows") or [])
+                    banned = [
+                        row for row in rows
+                        if str(row.get("status") or "").strip().lower() == "banned"
+                    ]
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "rows": banned,
+                            "count": len(banned),
+                            "message": f"Stored {len(rows)} SnapBoard row(s); {len(banned)} banned.",
+                        },
+                    )
+                    return
+
+                if self.path == "/replace_banned/replace":
+                    rows = payload.get("rows")
+                    result = outer.replace_banned_rows(rows=rows if isinstance(rows, list) else None)
+                    self._write_json(200 if result.get("ok") else 207, result)
                     return
 
                 if self.path == "/usernames":

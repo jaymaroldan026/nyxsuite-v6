@@ -191,6 +191,28 @@ class NyxifyController:
             "status": self.status_snapshot(),
         }
 
+    def delete_adspower_profile(self, payload=None) -> dict:
+        from core.nyxify_cleanup import close_and_delete_profile
+
+        profile_id = str((payload or {}).get("profile_id", "")).strip()
+        row_key = str((payload or {}).get("row_key", "")).strip()
+        if not profile_id:
+            return {"ok": False, "error": "AdsPower profile id is required."}
+        result = close_and_delete_profile(
+            self.adspower,
+            profile_id,
+            log=None,
+            row_key=row_key,
+            reason="replace_banned",
+        )
+        if not result.get("deleted"):
+            return {
+                "ok": False,
+                "error": result.get("delete_error") or "AdsPower profile deletion was not confirmed.",
+                "result": result,
+            }
+        return {"ok": True, "message": f"AdsPower profile {profile_id} deleted.", "result": result}
+
     def action_handlers(self) -> dict:
         """The /bot/<action> handlers consumed by NyxifyLocalApiServer.
 
@@ -205,4 +227,5 @@ class NyxifyController:
             "stop": self.stop,
             "reset_failed": self.reset_failed,
             "clear_queue": self.clear_queue,
+            "delete_adspower_profile": self.delete_adspower_profile,
         }

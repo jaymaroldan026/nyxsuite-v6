@@ -27,7 +27,7 @@ const PRODUCTS = {
     runner: [],
     queue: [["Rerun Failed", "/queue/rerun_failed", ""], ["Reset Stuck", "/queue/reset_stuck", ""],
             ["Flush", "/bot/finish_remaining", ""], ["Clear Completed", "/queue/prune_completed", ""],
-            ["Remove Missing", "/queue/remove_missing_profile", ""], ["Clear Queue", "/queue/clear", "bad"]],
+            ["Remove Missing", "/queue/remove_missing_profile", ""]],
     row: [["Mark Done", "/queue/mark_done", ""], ["Relaunch", "/queue/relaunch", ""], ["Remove", "/queue/remove", "bad"]],
     group: [["Mark Done", "/queue/mark_done", ""], ["Relaunch", "/queue/relaunch", ""], ["Remove", "/queue/remove", "bad"]],
   },
@@ -55,7 +55,7 @@ const PRODUCTS = {
 
 const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
-  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false },
+  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false, bannedRows: [] },
   version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [], availableVersions: [] },
 };
@@ -136,6 +136,55 @@ async function callAction(p, path, payload) {
     toast(d.message || (d.ok !== false ? "Done." : (d.error || ("HTTP " + r.status))), d.ok !== false);
     return d;
   } catch (e) { toast("Request failed: " + e, false); return { ok: false, error: String(e) }; }
+}
+
+function updateReplaceBannedDashboardSummary(message, rows) {
+  const summary = el("replace-banned-summary-nyxify");
+  const replaceBtn = el("replace-banned-nyxify");
+  if (Array.isArray(rows)) {
+    state.nyxify.bannedRows = rows;
+  }
+  if (summary) summary.textContent = message || "";
+  if (replaceBtn) replaceBtn.disabled = !state.nyxify.bannedRows.length;
+}
+
+async function scanBannedFromDashboard() {
+  updateReplaceBannedDashboardSummary("Scanning latest SnapBoard snapshot...", []);
+  try {
+    const r = await fetch(PRODUCTS.nyxify.base + "/replace_banned/scan", { headers: tokenHeaders() });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) {
+      updateReplaceBannedDashboardSummary(d.error || "Could not scan banned rows.", []);
+      toast(d.error || "Could not scan banned rows.", false);
+      return;
+    }
+    const rows = d.rows || [];
+    updateReplaceBannedDashboardSummary(
+      rows.length ? `Found ${rows.length} banned row(s).` : "No banned rows found.",
+      rows
+    );
+    toast(d.message || "Banned scan complete.", true);
+  } catch (e) {
+    updateReplaceBannedDashboardSummary("Could not reach Nyxify local API.", []);
+    toast("Banned scan failed: " + e, false);
+  }
+}
+
+async function replaceBannedFromDashboard() {
+  const rows = state.nyxify.bannedRows || [];
+  if (!rows.length) {
+    updateReplaceBannedDashboardSummary("Scan banned rows first.", []);
+    return;
+  }
+  const replaceBtn = el("replace-banned-nyxify");
+  if (replaceBtn) replaceBtn.disabled = true;
+  updateReplaceBannedDashboardSummary(`Replacing ${rows.length} banned row(s)...`, rows);
+  const result = await callAction("nyxify", "/replace_banned/replace", { rows });
+  if (result && result.ok !== false) {
+    updateReplaceBannedDashboardSummary(result.message || "Replace banned finished.", []);
+  } else {
+    updateReplaceBannedDashboardSummary((result && (result.error || result.message)) || "Replace banned failed.", rows);
+  }
 }
 
 // Pull the live config straight from the product API so the Advanced form always
@@ -925,6 +974,8 @@ el("fullauto-save-signup").addEventListener("click", async () => {
 });
 
 el("tabs").addEventListener("click", e => { const b = e.target.closest(".tab"); if (b) setActive(b.dataset.tab); });
+el("scan-banned-nyxify").addEventListener("click", scanBannedFromDashboard);
+el("replace-banned-nyxify").addEventListener("click", replaceBannedFromDashboard);
 
 // Sort on column header click
 document.addEventListener("click", e => {

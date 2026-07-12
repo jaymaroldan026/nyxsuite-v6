@@ -1223,6 +1223,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message && message.type === "NYXIFY_SNAPBOARD_STATUS_ROWS") {
+    callLocalNyxify("POST", "/replace_banned/snapshot", {
+      rows: message.rows || [],
+    })
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message && message.type === "NYXIFY_SCAN_BANNED_ROWS") {
+    sendMessageToSnapboardTab({
+      type: "NYXIFY_SCAN_BANNED_ROWS",
+      count: message.count || 100000,
+    })
+      .then(async (scan) => {
+        if (!scan || !scan.ok) {
+          sendResponse({ ok: false, error: (scan && scan.error) || "Could not scan SnapBoard rows." });
+          return;
+        }
+        const payload = await callLocalNyxify("POST", "/replace_banned/snapshot", {
+          rows: scan.rows || [],
+        });
+        sendResponse({
+          ok: true,
+          rows: payload.rows || scan.banned || [],
+          count: Number(payload.count || (scan.banned || []).length || 0),
+          message: payload.message || `Found ${Number(payload.count || 0)} banned row(s).`,
+        });
+      })
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message && message.type === "NYXIFY_REPLACE_BANNED_ROWS") {
+    callLocalNyxify("POST", "/replace_banned/replace", {
+      rows: Array.isArray(message.rows) ? message.rows : undefined,
+    })
+      .then(async (payload) => {
+        await appendEventLog(payload.message || "Replace banned finished.");
+        invalidatePopupStatusCache();
+        sendResponse({ ok: payload.ok !== false, payload });
+      })
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message && message.type === "NYXIFY_GET_STATUS") {
     getStatusSnapshotCached(Boolean(message.force))
       .then((status) => sendResponse({ ok: true, status }))

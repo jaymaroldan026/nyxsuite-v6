@@ -482,6 +482,95 @@ class NyxifyTaskStore:
             )
             return cursor.rowcount
 
+    def replace_for_banned_account(
+        self,
+        row_key,
+        model,
+        ip_address,
+        proxy_address="",
+        username="",
+        email="",
+        password="",
+    ):
+        normalized_row_key = _normalize_text(row_key)
+        normalized_model = _normalize_text(model)
+        normalized_ip = _normalize_text(ip_address)
+        normalized_proxy = _normalize_text(proxy_address)
+        normalized_username = _normalize_text(username)
+        normalized_email = _normalize_email(email)
+        normalized_password = _normalize_text(password)
+
+        if not normalized_row_key or not normalized_model or not normalized_ip:
+            return 0
+
+        now = utc_now_iso()
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM tasks WHERE row_key = ?",
+                (normalized_row_key,),
+            ).fetchone()
+            if existing:
+                cursor = conn.execute(
+                    """
+                    UPDATE tasks
+                    SET model = ?,
+                        ip_address = ?,
+                        proxy_address = ?,
+                        username = ?,
+                        email = ?,
+                        password = ?,
+                        adspower_id = '',
+                        adspower_profile_id = '',
+                        adspower_name = '',
+                        adspower_group = '',
+                        tags_json = '[]',
+                        status = 'PENDING',
+                        last_step = 'replace_banned_pending',
+                        error = '',
+                        otp_request_status = '',
+                        otp_code = '',
+                        source = 'replace-banned',
+                        updated_at = ?
+                    WHERE row_key = ?
+                    """,
+                    (
+                        normalized_model,
+                        normalized_ip,
+                        normalized_proxy,
+                        normalized_username,
+                        normalized_email,
+                        normalized_password,
+                        now,
+                        normalized_row_key,
+                    ),
+                )
+                return cursor.rowcount
+
+            cursor = conn.execute(
+                """
+                INSERT INTO tasks (
+                    row_key, model, ip_address, proxy_address, username, email, password,
+                    adspower_id, adspower_profile_id, adspower_name, adspower_group,
+                    tags_json, status, last_step, error, otp_request_status, otp_code,
+                    source, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, '', '', '', '', '[]', 'PENDING',
+                        'replace_banned_pending', '', '', '', 'replace-banned', ?, ?)
+                """,
+                (
+                    normalized_row_key,
+                    normalized_model,
+                    normalized_ip,
+                    normalized_proxy,
+                    normalized_username,
+                    normalized_email,
+                    normalized_password,
+                    now,
+                    now,
+                ),
+            )
+            return cursor.rowcount
+
     def clear_all_tasks(self):
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM tasks")
