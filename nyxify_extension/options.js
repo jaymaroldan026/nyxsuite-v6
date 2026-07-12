@@ -124,6 +124,7 @@ function saveOptions() {
   chrome.runtime.sendMessage({
     type: "NYXIFY_SAVE_CONFIG",
     ...config,
+    blockedProxiesReplace: true,
   }, (response) => {
     const feedback = document.getElementById("feedback");
     if (!response || !response.ok) {

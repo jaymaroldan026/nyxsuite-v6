@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.1.5 — Banned proxies persist (no more clearing on save/restart)
+
+### Nyxify: banning a proxy now sticks
+- Banning a subnet from **Proxy Ranking** (or a proxy from the popup) is saved
+  immediately and **survives restarts and updates**. Previously an unrelated
+  config save — even just flipping a toggle — could push a stale/empty banned
+  list that overwrote the stored one, so bans quietly disappeared.
+- The banned list is now owned by the runner: the "Ban" buttons **add** to it,
+  and only a deliberate edit of the **Banned proxies** text box replaces it.
+  Ordinary config saves no longer touch it, so nothing can wipe your bans by
+  accident. (The banned list was already kept across updates; this closes the
+  path that cleared it on the next save/restart.)
+
 ## 6.1.4 — Tray sync fix, OTP/phone retry hardening, SnapBoard re-login
 
 ### Tray: Start/Stop now tracks the real state (macOS + Windows)

@@ -123,9 +123,9 @@ function extensionConfigFromRunnerConfig(runnerConfig, baseConfig = {}) {
   });
 }
 
-function runnerConfigPayloadFromExtensionConfig(config) {
+function runnerConfigPayloadFromExtensionConfig(config, replaceBlocked = false) {
   const safe = normalizeConfig(config || {});
-  return {
+  const payload = {
     max_parallel_profiles: safe.maxParallelProfiles,
     temporary_profile_name: safe.temporaryProfileName,
     adspower_group: safe.adspowerGroup,
@@ -140,6 +140,14 @@ function runnerConfigPayloadFromExtensionConfig(config) {
     full_auto_mode_enabled: safe.fullAutoModeEnabled,
     continuous_mode_enabled: safe.continuousModeEnabled,
   };
+  // The runner ignores blocked_proxies unless this flag says the caller is a
+  // deliberate banned-list editor — so an incidental save can't wipe bans added
+  // from the Proxy Ranking "Ban" button. Only set it when the user actually
+  // edited the banned-proxies field.
+  if (replaceBlocked) {
+    payload.blocked_proxies_replace = true;
+  }
+  return payload;
 }
 
 function normalizeAutoFillProgress(progress, target) {
@@ -1358,6 +1366,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function saveConfigAndRunner(patch) {
   const existingData = await chrome.storage.sync.get(STORAGE_KEYS.config);
   const normalizedPatch = { ...(patch || {}) };
+  // A control flag (not a config field): true only when the caller edited the
+  // banned-proxies field, so the runner is allowed to replace its stored list.
+  const replaceBlocked = normalizedPatch.blockedProxiesReplace === true;
+  delete normalizedPatch.blockedProxiesReplace;
+  delete normalizedPatch.type;
   if (Object.prototype.hasOwnProperty.call(normalizedPatch, "bannedProxies") && !Object.prototype.hasOwnProperty.call(normalizedPatch, "blockedProxies")) {
     normalizedPatch.blockedProxies = normalizedPatch.bannedProxies;
   }
@@ -1381,7 +1394,7 @@ async function saveConfigAndRunner(patch) {
   }
 
   await updateBadge();
-  await syncConfigToRunner(nextConfig);
+  await syncConfigToRunner(nextConfig, replaceBlocked);
   return nextConfig;
 }
 
@@ -2267,7 +2280,9 @@ async function banProxy(proxyValue) {
     [STORAGE_KEYS.config]: nextConfig,
   });
   try {
-    await callLocalNyxify("POST", "/config", runnerConfigPayloadFromExtensionConfig(nextConfig));
+    // Append via the additive ban endpoint (not a full-config replace) so this
+    // never drops bans added from the Proxy Ranking table or another surface.
+    await callLocalNyxify("POST", "/proxy_ranking/ban", { value: normalizedProxy });
   } catch (error) {
     await appendEventLog(`Proxy was banned locally. Runner sync pending: ${error.message}`);
   }
@@ -2275,9 +2290,9 @@ async function banProxy(proxyValue) {
   return nextConfig;
 }
 
-async function syncConfigToRunner(nextConfig) {
+async function syncConfigToRunner(nextConfig, replaceBlocked = false) {
   try {
-    await callLocalNyxify("POST", "/config", runnerConfigPayloadFromExtensionConfig(nextConfig));
+    await callLocalNyxify("POST", "/config", runnerConfigPayloadFromExtensionConfig(nextConfig, replaceBlocked));
     await flushPendingEntries();
   } catch (error) {
     await appendEventLog(`Saved Nyxify extension settings locally. Runner sync pending: ${error.message}`);

@@ -852,6 +852,10 @@ document.addEventListener("click", async (e) => {
       whox_min_trust_score: parseInt(el("ncfg-whox_min_trust_score").value) || 70,
       whox_url: el("ncfg-whox_url").value.trim(),
       banned_proxies: el("ncfg-banned_proxies").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
+      // This textarea is a deliberate full edit of the banned list, so allow it
+      // to REPLACE the stored list (incidental config saves do not set this and
+      // therefore can't wipe bans added from the Proxy Ranking "Ban" button).
+      blocked_proxies_replace: true,
     };
     const res = await callAction("nyxify", "/config", cfg);
     // Keep local state in sync with what was persisted, so re-opening the panel

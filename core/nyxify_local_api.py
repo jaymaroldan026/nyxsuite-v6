@@ -1060,8 +1060,6 @@ class NyxifyLocalApiServer:
                         "tag_one",
                         "tag_two",
                         "adspower_tags_enabled",
-                        "blocked_proxies",
-                        "banned_proxies",
                         "proxy_blocker_enabled",
                         "proxy_checker_enabled",
                         "push_adspower_id_enabled",
@@ -1078,26 +1076,48 @@ class NyxifyLocalApiServer:
                     ):
                         if key in payload:
                             updates[key] = payload.get(key)
+                    # The banned-proxy list is edited from several places (this
+                    # config save, the Proxy Ranking "Ban" button, the popup ban).
+                    # An ordinary config push carries a possibly-stale copy from
+                    # the extension, so only REPLACE the stored list when the
+                    # caller is a deliberate banned-proxies editor and sets
+                    # ``blocked_proxies_replace``. Otherwise leave it untouched so
+                    # an incidental save (e.g. flipping a toggle) can't wipe bans
+                    # added elsewhere — the "banned proxy cleared on restart" bug.
+                    if payload.get("blocked_proxies_replace"):
+                        if "blocked_proxies" in payload:
+                            updates["blocked_proxies"] = payload.get("blocked_proxies")
+                        elif "banned_proxies" in payload:
+                            updates["blocked_proxies"] = payload.get("banned_proxies")
                     config = save_nyxify_config(updates)
                     self._write_json(200, {"ok": True, "config": config, "message": "Nyxify config saved locally."})
                     return
 
                 if self.path == "/proxy_ranking/ban":
-                    subnet = str(payload.get("subnet") or "").strip()
-                    if not subnet:
-                        self._write_json(400, {"ok": False, "error": "Missing subnet to ban."})
+                    # Accepts a subnet (Proxy Ranking "Ban") or a full proxy value
+                    # (popup ban) — either way it's appended verbatim to the
+                    # blocked list. This is an ADDITIVE path: it never drops an
+                    # existing ban, so bans from any surface accumulate durably.
+                    value = str(
+                        payload.get("subnet")
+                        or payload.get("value")
+                        or payload.get("proxy")
+                        or ""
+                    ).strip()
+                    if not value:
+                        self._write_json(400, {"ok": False, "error": "Missing subnet/proxy to ban."})
                         return
                     current = load_nyxify_config()
                     blocked = list(current.get("blocked_proxies") or [])
-                    if subnet not in blocked:
-                        blocked.append(subnet)
+                    if value not in blocked:
+                        blocked.append(value)
                     config = save_nyxify_config({"blocked_proxies": blocked})
                     self._write_json(
                         200,
                         {
                             "ok": True,
                             "config": config,
-                            "message": f"Subnet {subnet} added to the Proxy Blocker.",
+                            "message": f"{value} added to the Proxy Blocker.",
                         },
                     )
                     return

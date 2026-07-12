@@ -690,6 +690,7 @@ document.getElementById("savePopupBlockedProxiesButton").addEventListener("click
   chrome.runtime.sendMessage({
     type: "NYXIFY_SAVE_CONFIG",
     bannedProxies,
+    blockedProxiesReplace: true,
   }, (response) => {
     if (!response || !response.ok) {
       setPrimaryStatus((response && response.error) || "Could not save banned proxies.", 2500);
@@ -709,6 +710,7 @@ document.getElementById("clearPopupBlockedProxiesButton").addEventListener("clic
   chrome.runtime.sendMessage({
     type: "NYXIFY_SAVE_CONFIG",
     bannedProxies: [],
+    blockedProxiesReplace: true,
   }, (response) => {
     if (!response || !response.ok) {
       setPrimaryStatus((response && response.error) || "Could not clear banned proxies.", 2500);
