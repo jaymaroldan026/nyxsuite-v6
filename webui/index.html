@@ -27,9 +27,14 @@
     <section class="panel" id="panel-nyx" data-product="nyx">
       <div class="command-grid">
         <div class="command-status">
-          <div class="statusrow">
-            <span class="state" id="state-nyx">…</span>
-            <span class="detail" id="detail-nyx"></span>
+          <div class="runner-status-strip">
+            <div class="runner-dock">
+              <div class="toolbar runner-controls" id="runner-nyx" aria-label="Nyx runner controls"></div>
+            </div>
+            <div class="statusrow">
+              <span class="state" id="state-nyx">…</span>
+              <span class="detail" id="detail-nyx"></span>
+            </div>
           </div>
           <div class="tiles" id="tiles-nyx"></div>
         </div>
@@ -37,7 +42,6 @@
           <button id="nyx-advanced-toggle" class="btn btn-ghost adv-toggle" type="button">
             <img src="settings-icon.png" class="btn-icon" alt=""> Advanced Config
           </button>
-          <div class="toolbar" id="runner-nyx"></div>
           <div class="toolbar sub" id="queue-nyx"></div>
           <div class="toolbar sub" id="row-nyx"></div>
           <div class="toolbar group" id="group-nyx"></div>
@@ -56,10 +60,15 @@
     <section class="panel hidden" id="panel-nyxify" data-product="nyxify">
       <div class="command-grid">
         <div class="command-status">
-          <div class="statusrow">
-            <span class="state" id="state-nyxify">…</span>
-            <span class="detail" id="detail-nyxify"></span>
-            <span class="detail" id="usage-nyxify"></span>
+          <div class="runner-status-strip">
+            <div class="runner-dock">
+              <div class="toolbar runner-controls" id="runner-nyxify" aria-label="Nyxify runner controls"></div>
+            </div>
+            <div class="statusrow">
+              <span class="state" id="state-nyxify">…</span>
+              <span class="detail" id="detail-nyxify"></span>
+              <span class="detail" id="usage-nyxify"></span>
+            </div>
           </div>
           <div class="tiles" id="tiles-nyxify"></div>
         </div>
@@ -78,7 +87,6 @@
               <button id="replace-banned-nyxify" class="btn bad" type="button" disabled>Replace all banned</button>
             </div>
           </div>
-          <div class="toolbar" id="runner-nyxify"></div>
           <div class="toolbar sub" id="queue-nyxify"></div>
           <div class="toolbar sub" id="row-nyxify"></div>
           <div class="toolbar group" id="group-nyxify"></div>

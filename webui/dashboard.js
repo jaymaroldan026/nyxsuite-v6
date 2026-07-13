@@ -392,12 +392,18 @@ function renderRunnerButtons(p) {
   const g = document.createElement("div"); g.className = "btn-group"; bar.appendChild(g);
   const ss = document.createElement("button");
   ss.className = "btn" + (isActive ? " bad" : " primary");
+  ss.classList.add("runner-start-stop");
+  ss.type = "button";
   ss.textContent = isActive ? "Stop" : "Start";
+  ss.title = isActive ? "Stop runner" : "Start runner";
   ss.onclick = () => callAction(p, isActive ? "/bot/stop" : "/bot/start", {});
   g.appendChild(ss);
   const pr = document.createElement("button");
   pr.className = "btn" + (isPaused ? "" : " warn");
+  pr.classList.add("runner-pause-resume");
+  pr.type = "button";
   pr.textContent = isPaused ? "Resume" : "Pause";
+  pr.title = isPaused ? "Resume runner" : "Pause runner";
   pr.onclick = () => callAction(p, isPaused ? "/bot/resume" : "/bot/pause", {});
   pr.disabled = !isActive;
   g.appendChild(pr);

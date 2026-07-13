@@ -49,7 +49,7 @@ body{
 main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .panel.hidden{display:none}
 .command-grid{display:grid;grid-template-columns:minmax(360px,auto) minmax(520px,1fr);gap:16px;align-items:start;margin-bottom:8px}
-.command-status{min-width:0}
+.command-status{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
 .command-actions{display:flex;align-items:flex-start;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
 .command-actions>.toolbar{justify-content:flex-end;margin-bottom:0}
 .command-actions>.searchbar{margin:0;flex:1 1 320px;display:flex;justify-content:flex-end}
@@ -59,6 +59,13 @@ main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .replace-banned-dashboard .detail{font-size:12px}
 .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
 .panel-head-btns{display:flex;gap:6px;flex-shrink:0}
+.runner-status-strip{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px;min-height:34px}
+.runner-dock{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin:0}
+.runner-controls{display:flex;justify-content:flex-start;align-items:center;margin:0}
+.runner-controls .btn-group{gap:8px}
+.runner-controls button.btn{min-width:76px;padding:8px 15px}
+.runner-controls .runner-start-stop{font-weight:700}
+.runner-controls .runner-pause-resume{min-width:78px}
 .statusrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .state{font-weight:600;padding:6px 15px;border-radius:9px;background:#16223a;text-transform:capitalize;font-size:13px;font-family:"Fira Code",monospace;border:1px solid var(--line-soft);transition:background 300ms ease,color 300ms ease,box-shadow 300ms ease}
 .state.running,.state.RUNNING{background:rgba(59,130,246,.16);color:var(--run);border-color:rgba(59,130,246,.3);box-shadow:0 0 14px rgba(59,130,246,.16)}

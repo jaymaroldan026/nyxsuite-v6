@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.1.8 — Dashboard runner controls pinned upper-left
+
+### Dashboard: Start/Stop and Pause/Resume stay put
+- Moved the Nyx and Nyxify runner controls into the left status block so
+  **Start/Stop** and **Pause/Resume** always appear in the upper-left of the
+  dashboard instead of drifting into the right-side toolbar.
+- Kept the compact command layout by sharing the runner controls and live status
+  on one row, with queue/action tools still organized on the right.
+
 ## 6.1.7 — Replace banned, faster dashboard command layout
 
 ### Nyxify: Replace banned accounts from popup or dashboard

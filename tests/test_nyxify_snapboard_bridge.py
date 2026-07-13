@@ -168,6 +168,20 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         nyx_config = dashboard.split("nyxify: {", 1)[0]
         self.assertNotIn('["Clear Queue", "/queue/clear", "bad"]', nyx_config)
 
+    def test_dashboard_runner_controls_are_anchored_upper_left(self):
+        html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
+        dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")
+        css = (ROOT / "webui" / "dashboard.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="runner-dock"', html)
+        self.assertIn('class="toolbar runner-controls"', html)
+        self.assertLess(html.index('id="runner-nyx"'), html.index('id="tiles-nyx"'))
+        self.assertLess(html.index('id="runner-nyxify"'), html.index('id="tiles-nyxify"'))
+        self.assertIn(".runner-dock", css)
+        self.assertIn(".runner-controls", css)
+        self.assertIn("runner-start-stop", dashboard)
+        self.assertIn("runner-pause-resume", dashboard)
+
     def test_content_script_locks_tv_phone_provider(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
 
