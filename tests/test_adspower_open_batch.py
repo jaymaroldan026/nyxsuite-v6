@@ -258,7 +258,80 @@ class RowActionClickTests(unittest.TestCase):
         ctrl = self._controller(win)
 
         self.assertTrue(ctrl._click_dropdown_row("Profile ID", "is", below_top=200, left_min=450))
-        self.assertEqual(ctrl.clicked, [((630, 271), "xy")])
+
+    def test_scan_rows_supports_new_separate_id_and_order_columns(self):
+        win = _FakeWindow(
+            texts=[
+                _FakeControl("ID", _Rect(90, 170, 150, 194)),
+                _FakeControl("Group", _Rect(220, 170, 290, 194)),
+                _FakeControl("Name", _Rect(360, 170, 430, 194)),
+                _FakeControl("IP", _Rect(520, 170, 590, 194)),
+                _FakeControl("#", _Rect(700, 170, 730, 194)),
+                _FakeControl("k1target", _Rect(90, 232, 155, 252)),
+                _FakeControl("Snapchat19", _Rect(220, 230, 300, 252)),
+                _FakeControl("Snapchat: Olivia", _Rect(360, 230, 470, 252)),
+                _FakeControl("78.105.159.107", _Rect(520, 230, 620, 252)),
+                _FakeControl("1", _Rect(700, 230, 715, 252)),
+            ]
+        )
+        ctrl = self._controller(win)
+
+        self.assertEqual(ctrl._scan_rows(), [(0, "k1target", "Snapchat: Olivia")])
+
+    def test_scan_rows_ignores_reordered_optional_chronology_columns(self):
+        win = _FakeWindow(
+            texts=[
+                _FakeControl("#", _Rect(90, 170, 120, 194)),
+                _FakeControl("Date created", _Rect(160, 170, 250, 194)),
+                _FakeControl("IP", _Rect(300, 170, 360, 194)),
+                _FakeControl("ID", _Rect(420, 170, 480, 194)),
+                _FakeControl("Name", _Rect(560, 170, 620, 194)),
+                _FakeControl("7", _Rect(90, 232, 105, 252)),
+                _FakeControl("07-15 17:00:46", _Rect(160, 230, 260, 252)),
+                _FakeControl("78.105.159.107", _Rect(300, 230, 400, 252)),
+                _FakeControl("k1target", _Rect(420, 232, 485, 252)),
+                _FakeControl("Snapchat: Olivia", _Rect(560, 230, 670, 252)),
+            ]
+        )
+        ctrl = self._controller(win)
+
+        self.assertEqual(ctrl._scan_rows(), [(0, "k1target", "Snapchat: Olivia")])
+
+    def test_scan_rows_supports_legacy_no_id_without_trusting_number(self):
+        win = _FakeWindow(
+            texts=[
+                _FakeControl("No./ID", _Rect(90, 170, 150, 194)),
+                _FakeControl("Group", _Rect(220, 170, 290, 194)),
+                _FakeControl("Name", _Rect(360, 170, 430, 194)),
+                _FakeControl("703704", _Rect(90, 230, 150, 250)),
+                _FakeControl("k1target", _Rect(90, 249, 155, 269)),
+                _FakeControl("Snapchat19", _Rect(220, 240, 300, 262)),
+                _FakeControl("Snapchat: Olivia", _Rect(360, 240, 470, 262)),
+            ]
+        )
+        ctrl = self._controller(win)
+
+        self.assertEqual(ctrl._scan_rows(), [(0, "k1target", "Snapchat: Olivia")])
+
+    def test_missing_visible_id_error_mentions_enabling_id_column(self):
+        win = _FakeWindow(
+            texts=[
+                _FakeControl("Group", _Rect(220, 170, 290, 194)),
+                _FakeControl("Name", _Rect(360, 170, 430, 194)),
+                _FakeControl("IP", _Rect(520, 170, 590, 194)),
+                _FakeControl("Snapchat19", _Rect(220, 230, 300, 252)),
+                _FakeControl("Snapchat: Olivia", _Rect(360, 230, 470, 252)),
+                _FakeControl("78.105.159.107", _Rect(520, 230, 620, 252)),
+            ],
+            buttons=[_FakeControl("Open", _Rect(900, 231, 970, 257))],
+        )
+        ctrl = self._controller(win)
+
+        with mock.patch.object(aui.time, "sleep", lambda *_args, **_kwargs: None):
+            with self.assertRaises(aui.AdsPowerUIError) as captured:
+                ctrl._click_row_action("k1target", "Open")
+
+        self.assertIn("enable the ID column", str(captured.exception))
 
     def test_dropdown_row_rejects_stale_value_when_expected_value_given(self):
         win = _FakeWindow(

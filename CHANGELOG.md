@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.1.9 — AdsPower new ID-column UI compatibility
+
+### AdsPower GUI control: new table layout support
+- Updated the no-API AdsPower GUI automation on macOS and Windows for the new
+  Profiles table that separates profile `ID` from optional order columns.
+- Row actions now anchor on the visible AdsPower `ID` plus the needed action
+  controls (`Open`, `Close`, rename/menu, delete/select), while ignoring
+  optional/reordered columns such as `#`, dates, platform, and tags.
+- If the AdsPower `ID` column is hidden, NyxSuite now fails clearly and asks the
+  operator to enable the `ID` column instead of guessing from row order.
+- Verified live against AdsPower with `Snapchat: xyz`: create, open, close,
+  rename, and delete all complete through the desktop GUI.
+
 ## 6.1.8 — Dashboard runner controls pinned upper-left
 
 ### Dashboard: Start/Stop and Pause/Resume stay put

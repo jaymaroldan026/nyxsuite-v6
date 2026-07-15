@@ -7,6 +7,17 @@ The dashboard updater reads `update_config.json`, calls GitHub Releases for that
 repo, and downloads the newest non-draft release asset matching
 `NyxSuite-v*.zip`.
 
+## Latest Release Notes
+
+### NyxSuite v6.1.9
+
+- AdsPower GUI control now supports the updated Profiles table where `ID` is
+  separate from optional order columns.
+- Optional/reordered columns such as `#`, date fields, platform, and tags are
+  ignored for row identity; actions anchor on the visible AdsPower `ID`.
+- If the `ID` column is hidden, NyxSuite reports that the operator must enable
+  the `ID` column instead of acting from unsafe row order.
+
 ## Create a New Release
 
 1. Update the version in `core/version.py`.

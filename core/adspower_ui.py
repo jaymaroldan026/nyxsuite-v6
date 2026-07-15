@@ -1324,12 +1324,85 @@ class AdsPowerUIController:
     # PROFILE DISCOVERY (Profiles list)
     # ------------------------------------------------------------------
 
+    _ROW_ID_HEADERS = {"id", "no./id"}
+    _ROW_DATA_HEADERS = {"id", "no./id", "group", "name", "ip", "action"}
+    _IGNORED_ROW_HEADERS = {
+        "#", "no.", "last opened", "last\xa0opened", "date created",
+        "platform", "tags", "custom no.",
+    }
     _HEADER_LABELS = {
-        "no./id", "group", "name", "ip", "last opened", "last\xa0opened",
+        "id", "no./id", "no.", "group", "name", "ip", "last opened", "last\xa0opened",
         "platform", "tags", "date created", "custom no.", "#", "action",
         "profiles", "proxies", "trash", "cloud phone", "reset", "and",
         "referral bonus", "active", "employee", "overview",
     }
+
+    @staticmethod
+    def _norm_text(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "").replace("\xa0", " ")).strip().lower()
+
+    @classmethod
+    def _is_row_data_header(cls, text: str) -> bool:
+        return cls._norm_text(text) in cls._ROW_DATA_HEADERS
+
+    @classmethod
+    def _is_ignored_row_header(cls, text: str) -> bool:
+        return cls._norm_text(text) in {cls._norm_text(v) for v in cls._IGNORED_ROW_HEADERS}
+
+    @staticmethod
+    def _is_profile_id_text(text: str) -> bool:
+        return bool(_PROFILE_ID_RE.match(str(text or "").strip().lower()))
+
+    @staticmethod
+    def _rect_center_y(rect) -> int:
+        return (rect.top + rect.bottom) // 2
+
+    def _visible_text_items(self, fast: bool = False):
+        """Visible text controls as ``(text, rect)`` pairs.
+
+        ``fast=True`` avoids an explicit ``is_visible`` call and uses the cached
+        element_info shape, matching the old hot-path behavior in ``_scan_rows``.
+        Row-action helpers use the stricter default.
+        """
+        for t in self._win.descendants(control_type="Text"):
+            try:
+                if fast:
+                    try:
+                        info = t.element_info
+                        text = (info.name or "").strip()
+                        rect = info.rectangle
+                    except Exception:
+                        text = (t.window_text() or "").strip()
+                        rect = t.rectangle()
+                else:
+                    if not t.is_visible():
+                        continue
+                    text = (t.window_text() or "").strip()
+                    rect = t.rectangle()
+                if not text:
+                    continue
+                if rect.width() <= 0 or rect.height() <= 0:
+                    continue
+                yield text, rect
+            except Exception:
+                continue
+
+    def _id_column_visible(self) -> bool:
+        """True when AdsPower exposes an `ID` or legacy `No./ID` table header."""
+        try:
+            for text, _rect in self._visible_text_items():
+                if self._norm_text(text) in self._ROW_ID_HEADERS:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _id_column_required_message(profile_id: str) -> str:
+        return (
+            f"Could not locate profile {profile_id} because the AdsPower ID column "
+            "is not visible. Open AdsPower List Settings and enable the ID column."
+        )
 
     @staticmethod
     def _search_fragment(name: str) -> str:
@@ -1622,65 +1695,48 @@ class AdsPowerUIController:
         """Parse the visible Profiles list into ``(serial:int, profile_id:str,
         name:str)`` tuples.
 
-        Position-independent: cells are classified by *content* (a digits-only
-        No., an alphanumeric ID, a "Snapchat:" name) and a serial is paired with
-        the ID directly beneath it in the *same column* (relative x), so it works
-        regardless of window size, position, DPI or column layout.
+        Position-independent: rows are anchored by the visible AdsPower profile
+        ID itself. Optional chronology/order columns (``#``, old numeric No.,
+        dates, platform, tags, etc.) are ignored so user column order and sorting
+        never decide which profile row is acted on.
         """
-        win = self._win
-        serials = []   # (top, left, intval)
-        ids = []       # (top, left, str)
-        names = []     # (top, left, str)
-        for t in win.descendants(control_type="Text"):
-            try:
-                # Read the *name* first (a single, relatively cheap property) and
-                # classify on it; only fetch the rectangle for the handful of
-                # elements that are actually a serial / id / name cell. Every UIA
-                # property read is a slow cross-process round-trip on AdsPower's
-                # huge CEF tree, so skipping rectangle() (and is_visible()) for the
-                # ~80% of Text nodes that aren't rows is a big speedup. Using
-                # ``element_info`` reads instead of the wrapper methods is ~2x
-                # faster again.
-                info = t.element_info
-                s = (info.name or "").strip()
-                if not s:
-                    continue
-                low = s.lower()
-                if low in self._HEADER_LABELS:
-                    continue
-                if low.startswith("profile id is") or "filter" in low:
-                    continue
-                is_serial = s.isdigit() and len(s) >= 5
-                is_id = (not is_serial) and bool(_PROFILE_ID_RE.match(s))
-                is_name = (not is_serial and not is_id) and low.startswith("snapchat:")
-                if not (is_serial or is_id or is_name):
-                    continue
-                r = info.rectangle
-                if r.width() <= 0:
-                    continue
-                if is_serial:
-                    serials.append((r.top, r.left, int(s)))
-                elif is_id:
-                    ids.append((r.top, r.left, s))
-                else:
-                    names.append((r.top, r.left, s))
-            except Exception:
+        header_bottoms = []
+        ids = []       # (center_y, top, left, height, str)
+        names = []     # (center_y, top, left, str)
+        for s, r in self._visible_text_items(fast=True):
+            low = self._norm_text(s)
+            if low in self._HEADER_LABELS:
+                if low in self._ROW_DATA_HEADERS:
+                    header_bottoms.append(r.bottom)
                 continue
+            if low.startswith("profile id is") or low.startswith("profile no./id is") or "filter" in low:
+                continue
+            if self._is_profile_id_text(s):
+                ids.append((self._rect_center_y(r), r.top, r.left, max(1, r.height()), s))
+            elif low.startswith("snapchat:"):
+                names.append((self._rect_center_y(r), r.top, r.left, s))
 
+        header_bottom = max(header_bottoms) if header_bottoms else None
         rows = []
-        for (s_top, s_left, serial) in serials:
-            pid = ""
-            best = 999
-            for (i_top, i_left, ival) in ids:           # ID is just below the No.,
-                d = i_top - s_top                        # in the same column
-                if 6 <= d <= 32 and abs(i_left - s_left) <= 30 and d < best:
-                    best, pid = d, ival
+        seen = set()
+        for cy, top, left, height, pid in sorted(ids, key=lambda item: (item[1], item[2])):
+            if header_bottom is not None and cy <= header_bottom:
+                continue
+            pid_key = pid.strip().lower()
+            if pid_key in seen:
+                continue
+            seen.add(pid_key)
+            tol = max(18, int(round(1.8 * height)))
+            same_band_names = [
+                (abs(ncy - cy), nleft, name)
+                for (ncy, _ntop, nleft, name) in names
+                if abs(ncy - cy) <= tol
+            ]
             rname = ""
-            for (n_top, _nl, nval) in names:             # name shares the row band
-                if abs(n_top - (s_top + 9)) <= 24:
-                    rname = nval
-                    break
-            rows.append((serial, pid, rname))
+            if same_band_names:
+                same_band_names.sort(key=lambda item: (item[0], item[1]))
+                rname = same_band_names[0][2]
+            rows.append((0, pid, rname))
         return rows
 
     # ------------------------------------------------------------------
@@ -2426,7 +2482,7 @@ class AdsPowerUIController:
                 r = t.rectangle()
                 if r.width() <= 0:
                     continue
-                if s in ("No./ID", "Name", "Action", "Group", "Platform"):
+                if self._is_row_data_header(s):
                     header_bottoms.append(r.bottom)
                 elif s in id_set:
                     row_y[s] = (r.top + r.bottom) // 2
@@ -2579,26 +2635,18 @@ class AdsPowerUIController:
     # ------------------------------------------------------------------
 
     def _row_center_y(self, profile_id: str) -> Optional[int]:
-        """Vertical centre of the row whose No./ID cell == profile_id."""
-        for t in self._win.descendants(control_type="Text"):
-            try:
-                if (t.window_text() or "").strip() == profile_id and t.is_visible():
-                    r = t.rectangle()
-                    if r.width() > 0:
-                        return (r.top + r.bottom) // 2
-            except Exception:
-                continue
+        """Vertical centre of the row whose visible ID cell == profile_id."""
+        header_bottom = self._list_header_bottom()
+        for text, r in self._visible_text_items():
+            if text.strip() == profile_id and self._rect_center_y(r) > header_bottom:
+                return self._rect_center_y(r)
         return None
 
     def _row_id_rect(self, profile_id: str):
-        for t in self._win.descendants(control_type="Text"):
-            try:
-                if (t.window_text() or "").strip() == profile_id and t.is_visible():
-                    r = t.rectangle()
-                    if r.width() > 0:
-                        return r
-            except Exception:
-                continue
+        header_bottom = self._list_header_bottom()
+        for text, r in self._visible_text_items():
+            if text.strip() == profile_id and self._rect_center_y(r) > header_bottom:
+                return r
         return None
 
     def _row_alignment_tolerance(self, id_rect=None) -> int:
@@ -2637,18 +2685,14 @@ class AdsPowerUIController:
         return best
 
     def _list_header_bottom(self) -> int:
-        """Bottom Y of the column-header row ('No./ID', 'Name', 'Action', ...).
+        """Bottom Y of the column-header row ('ID', 'Name', 'Action', ...).
         Per-row controls live below it; the window titlebar and the batch
         toolbar live above it. Used to keep row scans off the titlebar Close /
         toolbar buttons (position-independent — derived from the headers)."""
         bottoms = []
-        for t in self._win.descendants(control_type="Text"):
-            try:
-                if t.is_visible() and (t.window_text() or "").strip() in (
-                    "No./ID", "Name", "Action", "Group", "Platform"):
-                    bottoms.append(t.rectangle().bottom)
-            except Exception:
-                continue
+        for text, r in self._visible_text_items():
+            if self._is_row_data_header(text):
+                bottoms.append(r.bottom)
         return max(bottoms) if bottoms else 460
 
     def _row_action_snapshot(self, profile_id: str, label: str):
@@ -2671,7 +2715,7 @@ class AdsPowerUIController:
                 r = t.rectangle()
                 if r.width() <= 0:
                     continue
-                if s in ("No./ID", "Name", "Action", "Group", "Platform"):
+                if self._is_row_data_header(s):
                     header_bottoms.append(r.bottom)
                 if s == profile_id:
                     row_y = (r.top + r.bottom) // 2
@@ -2724,6 +2768,8 @@ class AdsPowerUIController:
             time.sleep(0.3)
         if not row_btns:
             if id_top is None:
+                if not self._id_column_visible():
+                    raise AdsPowerUIError(self._id_column_required_message(profile_id))
                 self._fire_profile_missing(profile_id)
                 raise AdsPowerProfileNotFoundError(profile_id)
             raise AdsPowerUIError(
@@ -2754,6 +2800,8 @@ class AdsPowerUIController:
                 target = min(aligned, key=lambda b: abs(b[0] - id_top))[2]
         if target is None:
             if require_aligned:
+                if not self._id_column_visible():
+                    raise AdsPowerUIError(self._id_column_required_message(profile_id))
                 self._fire_profile_missing(profile_id)
                 raise AdsPowerProfileNotFoundError(profile_id)
             row_btns.sort()
@@ -3329,7 +3377,11 @@ class AdsPowerUIController:
         view first (no search), only searching when the row is not found."""
         self._connect()
         if self.config.assume_presearch:
-            return self._row_center_y(profile_id) is not None
+            if self._row_center_y(profile_id) is not None:
+                return True
+            if not self._id_column_visible():
+                raise AdsPowerUIError(self._id_column_required_message(profile_id))
+            return False
         chip = self._profile_id_chip()
         if chip is not None:
             active_ids = {pid.lower() for pid in self._parse_chip_ids(chip[1])}
@@ -3337,7 +3389,11 @@ class AdsPowerUIController:
                 return True
         self._search_by_ids([profile_id], append=False)
         self._connect()
-        return self._row_center_y(profile_id) is not None
+        if self._row_center_y(profile_id) is not None:
+            return True
+        if not self._id_column_visible():
+            raise AdsPowerUIError(self._id_column_required_message(profile_id))
+        return False
 
     @_serialized
     def delete_profile_by_id(self, profile_id: str) -> dict:
