@@ -35,10 +35,13 @@ First run creates the virtualenv, installs dependencies, and downloads the
 Playwright Chromium runtime automatically. All launchers default to starting
 `bridge_app.py`; the dashboard opens in your browser.
 
-**Windows** — double-click `run_nyx_suite.bat`, or:
+**Windows** — double-click `run_nyx_suite.bat`, or run it from PowerShell.
+For a repair/reinstall, pass `-ForceSetup` to the batch launcher; do not run the
+`.ps1` directly on locked-down Windows devices.
 
 ```
-powershell -ExecutionPolicy Bypass -File .\portable_launch_nyx.ps1
+.\run_nyx_suite.bat
+.\run_nyx_suite.bat -ForceSetup
 ```
 
 **macOS** — double-click `run_nyx_suite.command` (first time: right-click → **Open**
