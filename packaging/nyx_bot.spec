@@ -18,21 +18,9 @@ block_cipher = None
 hiddenimports = (
     collect_submodules("core")
     + collect_submodules("playwright")
-    + collect_submodules("pywinauto")
-    + collect_submodules("comtypes")
     + [
         "dotenv",
         "requests",
-        "cv2",
-        "numpy",
-        "pyautogui",
-        "pyperclip",
-        "win32api",
-        "win32clipboard",
-        "win32con",
-        "win32event",
-        "win32gui",
-        "win32process",
     ]
 )
 

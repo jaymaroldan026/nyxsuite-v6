@@ -22,26 +22,7 @@ hiddenimports = (
     + collect_submodules("pystray")
     + collect_submodules("playwright")
     + collect_submodules("PIL")
-    + collect_submodules("pywinauto")
-    + collect_submodules("comtypes")
-    + [
-        "dotenv",
-        "pystray",
-        "pystray._win32",
-        "PIL",
-        "requests",
-        "certifi",
-        "cv2",
-        "numpy",
-        "pyautogui",
-        "pyperclip",
-        "win32api",
-        "win32clipboard",
-        "win32con",
-        "win32event",
-        "win32gui",
-        "win32process",
-    ]
+    + ["dotenv", "pystray", "pystray._win32", "PIL", "requests", "certifi"]
 )
 
 a = Analysis(

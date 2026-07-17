@@ -216,12 +216,114 @@ function Test-VenvDependenciesAvailable {
     }
 
     try {
-        & $venvPython -c "import certifi, greenlet, playwright.async_api, requests; import sys; exec('import cv2, numpy, pyautogui, pywinauto, win32clipboard, win32event, win32gui' if sys.platform == 'win32' else '')" 2>$null | Out-Null
+        & $venvPython -c "import certifi, greenlet, playwright.async_api, requests; import sys; exec('import pywinauto, win32ui' if sys.platform == 'win32' else '')" 2>$null | Out-Null
         return $LASTEXITCODE -eq 0
     }
     catch {
         return $false
     }
+}
+
+function Test-WindowsWin32UiAvailable {
+    if (-not (Test-VenvPythonAvailable)) {
+        return $false
+    }
+
+    if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
+        return $true
+    }
+
+    try {
+        & $venvPython -c "import win32ui" 2>$null | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-PythonArchitectureBits {
+    try {
+        $bits = & $venvPython -c "import struct; print(struct.calcsize('P') * 8)" 2>$null
+        return [int]($bits | Select-Object -First 1)
+    }
+    catch {
+        return 64
+    }
+}
+
+function Get-MfcRuntimeCandidates {
+    $dllName = "mfc140u.dll"
+    $candidates = @()
+    $bits = Get-PythonArchitectureBits
+
+    if ($env:WINDIR) {
+        if ($bits -eq 32) {
+            $candidates += Join-Path $env:WINDIR "SysWOW64\$dllName"
+        }
+        $candidates += Join-Path $env:WINDIR "System32\$dllName"
+    }
+
+    $roots = @()
+    if ($env:ProgramFiles) {
+        $roots += Join-Path $env:ProgramFiles "Microsoft Office\root\vfs"
+    }
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if ($programFilesX86) {
+        $roots += Join-Path $programFilesX86 "Microsoft Office\root\vfs"
+    }
+
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) {
+            continue
+        }
+        try {
+            $candidates += Get-ChildItem -LiteralPath $root -Recurse -Filter $dllName -File -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty FullName
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+}
+
+function Repair-WindowsMfcRuntime {
+    if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
+        return $true
+    }
+
+    if (Test-WindowsWin32UiAvailable) {
+        return $true
+    }
+
+    $pythonwinDir = Join-Path $venvDir "Lib\site-packages\pythonwin"
+    if (-not (Test-Path -LiteralPath $pythonwinDir)) {
+        New-Item -ItemType Directory -Force -Path $pythonwinDir | Out-Null
+    }
+
+    $target = Join-Path $pythonwinDir "mfc140u.dll"
+    foreach ($candidate in Get-MfcRuntimeCandidates) {
+        Write-Status "Repairing pywin32 MFC runtime from $candidate."
+        try {
+            Copy-Item -Force -LiteralPath $candidate -Destination $target
+        }
+        catch {
+            Write-LogMessage -Level "WARN" -Message ("Could not copy {0}: {1}" -f $candidate, $_.Exception.Message)
+            continue
+        }
+
+        if (Test-WindowsWin32UiAvailable) {
+            Write-Status "pywin32 MFC runtime repaired." -Color "Green"
+            return $true
+        }
+
+        Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue
+        Write-LogMessage -Level "WARN" -Message "Copied MFC runtime did not satisfy win32ui import; trying next candidate."
+    }
+
+    return $false
 }
 
 function Test-PlaywrightChromiumAvailable {
@@ -510,6 +612,19 @@ function Ensure-Requirements {
         throw "Failed to install Python packages."
     }
 
+    if (-not (Repair-WindowsMfcRuntime)) {
+        throw (
+            "pywin32 could not import win32ui because the Microsoft MFC runtime " +
+            "mfc140u.dll is unavailable for this Python environment. Install the " +
+            "Microsoft Visual C++ Redistributable, or copy mfc140u.dll into " +
+            "$venvDir\Lib\site-packages\pythonwin, then run the launcher again."
+        )
+    }
+
+    if (-not (Test-VenvDependenciesAvailable)) {
+        throw "Python package verification failed after installing requirements."
+    }
+
     $state.requirements_hash = $requirementsHash
     $state.venv_python_hash = $venvExeHash
     Save-SetupState -State $state
@@ -576,12 +691,6 @@ function Start-EntryScript {
         [bool]$RunInConsole
     )
 
-    # The bridge supervises Nyx/Nyxify in child processes. Pin those children to
-    # the exact virtual environment this launcher just verified, instead of
-    # letting runner code pick a stale machine-local or copied venv.
-    $env:NYX_PYTHON_EXECUTABLE = $venvPython
-    $env:NYX_PYTHONW_EXECUTABLE = if (Test-Path -LiteralPath $venvPythonw) { $venvPythonw } else { $venvPython }
-
     if ($RunInConsole) {
         Write-Status "Running $([System.IO.Path]::GetFileName($Path))."
         & $venvPython $Path
@@ -593,7 +702,7 @@ function Start-EntryScript {
         return 0
     }
 
-    $pythonExecutable = $env:NYX_PYTHONW_EXECUTABLE
+    $pythonExecutable = if (Test-Path -LiteralPath $venvPythonw) { $venvPythonw } else { $venvPython }
     Write-Status "Launching $([System.IO.Path]::GetFileName($Path))."
     Start-Process -FilePath $pythonExecutable -ArgumentList @($Path) -WorkingDirectory $PSScriptRoot | Out-Null
     return 0

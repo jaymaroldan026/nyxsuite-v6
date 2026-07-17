@@ -141,7 +141,6 @@ $rootFiles = @(
     "run_nyx_suite.bat",
     "run_nyx_suite.sh",
     "run_nyx_suite.command",
-    "portable_launch_nyx.bat",
     "portable_launch_nyx.ps1",
     "portable_launch_nyx.sh",
     ".env.example",

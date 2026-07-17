@@ -56,9 +56,9 @@ Prerequisites
   Windows
 ────────────────────────────────────────────────────
 
-  1. Open PowerShell in this folder
-  2. .\run_nyx_suite.bat
-  3. For repair/reinstall: .\run_nyx_suite.bat -ForceSetup
+  1. Open PowerShell as Admin in this folder
+  2. Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  3. .\portable_launch_nyx.ps1
 
   What happens:
     • Creates .venv/ with Python virtual environment
