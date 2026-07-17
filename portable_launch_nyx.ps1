@@ -576,6 +576,12 @@ function Start-EntryScript {
         [bool]$RunInConsole
     )
 
+    # The bridge supervises Nyx/Nyxify in child processes. Pin those children to
+    # the exact virtual environment this launcher just verified, instead of
+    # letting runner code pick a stale machine-local or copied venv.
+    $env:NYX_PYTHON_EXECUTABLE = $venvPython
+    $env:NYX_PYTHONW_EXECUTABLE = if (Test-Path -LiteralPath $venvPythonw) { $venvPythonw } else { $venvPython }
+
     if ($RunInConsole) {
         Write-Status "Running $([System.IO.Path]::GetFileName($Path))."
         & $venvPython $Path
@@ -587,7 +593,7 @@ function Start-EntryScript {
         return 0
     }
 
-    $pythonExecutable = if (Test-Path -LiteralPath $venvPythonw) { $venvPythonw } else { $venvPython }
+    $pythonExecutable = $env:NYX_PYTHONW_EXECUTABLE
     Write-Status "Launching $([System.IO.Path]::GetFileName($Path))."
     Start-Process -FilePath $pythonExecutable -ArgumentList @($Path) -WorkingDirectory $PSScriptRoot | Out-Null
     return 0
