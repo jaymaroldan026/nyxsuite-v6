@@ -216,7 +216,7 @@ function Test-VenvDependenciesAvailable {
     }
 
     try {
-        & $venvPython -c "import certifi, greenlet, playwright.async_api, requests" 2>$null | Out-Null
+        & $venvPython -c "import certifi, greenlet, playwright.async_api, requests; import sys; exec('import cv2, numpy, pyautogui, pywinauto, win32clipboard, win32event, win32gui' if sys.platform == 'win32' else '')" 2>$null | Out-Null
         return $LASTEXITCODE -eq 0
     }
     catch {

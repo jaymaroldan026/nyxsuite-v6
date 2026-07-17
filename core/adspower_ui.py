@@ -293,8 +293,10 @@ _CLOSE_BATCHER = _GuiBatcher("_bulk_close_locked", "close")
 try:
     from pywinauto import Application
     _PYWINAUTO = True
-except Exception:  # pragma: no cover
+    _PYWINAUTO_IMPORT_ERROR = None
+except Exception as exc:  # pragma: no cover
     _PYWINAUTO = False
+    _PYWINAUTO_IMPORT_ERROR = exc
 
 from core import win_focus
 from core import ui_vision
@@ -485,8 +487,9 @@ class AdsPowerUIController:
             from core.adspower_ui_backend_macos import MacOSAdsPowerBackend
             self._backend = MacOSAdsPowerBackend()
         elif not _PYWINAUTO:
+            detail = f" Original import error: {_PYWINAUTO_IMPORT_ERROR}" if _PYWINAUTO_IMPORT_ERROR else ""
             raise ImportError("pywinauto is required for AdsPower UI automation "
-                              "(pip install pywinauto).")
+                              "(pip install pywinauto)." + detail)
         self.config = config or AdsPowerUIConfig()
         self._app = None
         self._win = None
