@@ -182,6 +182,78 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn("runner-start-stop", dashboard)
         self.assertIn("runner-pause-resume", dashboard)
 
+    def test_dashboard_actions_have_consistent_zones_per_product(self):
+        html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "webui" / "dashboard.css").read_text(encoding="utf-8")
+
+        for product in ("nyx", "nyxify"):
+            section_start = html.index(f'id="panel-{product}"')
+            section_end = html.find('<section class="panel', section_start + 1)
+            section = html[section_start:section_end if section_end != -1 else len(html)]
+
+            self.assertIn(f'id="actions-top-{product}"', section)
+            self.assertIn(f'id="actions-queue-{product}"', section)
+            self.assertIn(f'id="actions-row-{product}"', section)
+            self.assertIn(f'id="actions-search-{product}"', section)
+            self.assertLess(section.index(f'id="actions-top-{product}"'), section.index(f'id="actions-queue-{product}"'))
+            self.assertLess(section.index(f'id="actions-queue-{product}"'), section.index(f'id="actions-row-{product}"'))
+            self.assertLess(section.index(f'id="actions-row-{product}"'), section.index(f'id="actions-search-{product}"'))
+
+        self.assertIn(".action-stack", css)
+        self.assertIn(".action-row", css)
+        self.assertIn(".action-top", css)
+
+    def test_nyxify_popup_runner_buttons_are_above_settings_panel(self):
+        popup_html = (ROOT / "nyxify_extension" / "popup.html").read_text(encoding="utf-8")
+        popup_css = (ROOT / "nyxify_extension" / "styles.css").read_text(encoding="utf-8")
+        popup_js = (ROOT / "nyxify_extension" / "popup.js").read_text(encoding="utf-8")
+
+        self.assertLess(popup_html.index('class="runner-action-strip"'), popup_html.index('class="status-tiles"'))
+        self.assertLess(popup_html.index('class="runner-action-strip"'), popup_html.index('class="control-panel"'))
+        self.assertIn('id="pauseResumeRunnerButton" class="button runner-action-button" type="button" data-action="pause" disabled', popup_html)
+        self.assertIn(".runner-action-strip", popup_css)
+        self.assertIn(".runner-state-pill", popup_css)
+        self.assertIn("pauseResumeButton.disabled = isOffline || !isActive", popup_js)
+
+    def test_extension_popups_are_compact_and_auto_save_dashboard_settings(self):
+        nyx_html = (ROOT / "nyx_extension" / "popup.html").read_text(encoding="utf-8")
+        nyx_css = (ROOT / "nyx_extension" / "styles.css").read_text(encoding="utf-8")
+        nyx_js = (ROOT / "nyx_extension" / "popup.js").read_text(encoding="utf-8")
+        nyxify_html = (ROOT / "nyxify_extension" / "popup.html").read_text(encoding="utf-8")
+        nyxify_css = (ROOT / "nyxify_extension" / "styles.css").read_text(encoding="utf-8")
+        nyxify_js = (ROOT / "nyxify_extension" / "popup.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("Push AdsPower ID to SnapBoard", nyxify_html)
+        self.assertNotIn("Apply AdsPower tags", nyxify_html)
+        self.assertLess(nyxify_html.index('id="popupAutoFillRowToggle"'), nyxify_html.index('id="popupProxyBlockerToggle"'))
+        self.assertLess(nyxify_html.index('id="popupAutoFillAccountTarget"'), nyxify_html.index('id="popupProxyBlockerToggle"'))
+        self.assertIn('class="toggle-switch toggle-switch-warning" for="popupAutoFillRowToggle"', nyxify_html)
+        self.assertIn(".toggle-switch-warning input:checked + .toggle-slider", nyxify_css)
+        self.assertIn("background: #d49121", nyxify_css)
+
+        for popup_html in (nyx_html, nyxify_html):
+            self.assertNotIn('id="savePopupSettingsButton"', popup_html)
+            self.assertNotIn("Save Dashboard Settings", popup_html)
+
+        for popup_css in (nyx_css, nyxify_css):
+            self.assertIn("width: 22px", popup_css)
+            self.assertIn("height: 22px", popup_css)
+            self.assertIn("font-size: 18px", popup_css)
+
+        for popup_js in (nyx_js, nyxify_js):
+            self.assertNotIn("savePopupSettingsButton", popup_js)
+            self.assertIn("function schedulePopupSettingsSave()", popup_js)
+            self.assertIn("function flushPopupSettingsSave()", popup_js)
+            self.assertIn('element.addEventListener("input", schedulePopupSettingsSave);', popup_js)
+            self.assertIn('element.addEventListener("blur", flushPopupSettingsSave);', popup_js)
+            self.assertIn('element.addEventListener("change", flushPopupSettingsSave);', popup_js)
+            self.assertIn("flushPopupSettingsSave();", popup_js)
+
+        self.assertIn('const pushAdspowerIdEnabled = getCheckedSetting("popupPushAdspowerIdToggle", "pushAdspowerIdEnabled", undefined);', nyxify_js)
+        self.assertIn('const adspowerTagsEnabled = getCheckedSetting("popupAdspowerTagsToggle", "adspowerTagsEnabled", undefined);', nyxify_js)
+        self.assertIn("if (pushAdspowerIdEnabled !== undefined)", nyxify_js)
+        self.assertIn("if (adspowerTagsEnabled !== undefined)", nyxify_js)
+
     def test_content_script_locks_tv_phone_provider(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
 

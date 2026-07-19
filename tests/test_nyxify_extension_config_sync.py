@@ -183,7 +183,8 @@ def test_nyxify_popup_and_options_expose_synced_runner_controls():
     assert 'id="popupProxyBlockerToggle"' in popup_html
     assert 'id="popupProxyCheckerToggle"' in popup_html
     assert 'id="popupContinuousModeToggle"' in popup_html
-    assert 'id="popupAdspowerTagsToggle" type="checkbox" checked' not in popup_html
+    assert 'id="popupPushAdspowerIdToggle"' not in popup_html
+    assert 'id="popupAdspowerTagsToggle"' not in popup_html
     assert 'id="popupTagOne" class="input" type="text" placeholder="Optional tag"' in popup_html
 
     assert 'id="continuousModeToggle"' in options_html

@@ -43,6 +43,16 @@
             <p id="runnerLine" class="muted">Checking Nyxify runner...</p>
             <p id="capacityLine" class="muted">Checking AdsPower profile usage...</p>
           </div>
+          <div class="runner-action-strip">
+            <div class="runner-state-pill" title="Nyxify runner state">
+              <span class="runner-state-dot" aria-hidden="true"></span>
+              <span id="runnerStateText">Stopped</span>
+            </div>
+            <div class="button-row button-row-compact button-row-two runner-action-row">
+              <button id="startStopRunnerButton" class="button runner-action-button" type="button" data-action="start">Start</button>
+              <button id="pauseResumeRunnerButton" class="button runner-action-button" type="button" data-action="pause" disabled>Pause</button>
+            </div>
+          </div>
           <div class="status-tiles">
             <div class="status-tile"><span class="status-tile-label">Ready</span><strong id="countReady">0</strong></div>
             <div class="status-tile"><span class="status-tile-label">Waiting</span><strong id="countWaiting">0</strong></div>
@@ -52,11 +62,16 @@
           </div>
           <div class="control-panel">
             <div class="toggle-row">
-              <span class="toggle-text">Push AdsPower ID to SnapBoard</span>
-              <label class="toggle-switch" for="popupPushAdspowerIdToggle">
-                <input id="popupPushAdspowerIdToggle" type="checkbox" checked>
+              <span class="toggle-text">Auto-Fill Row <span class="muted">(auto-clicks Get Proxy when all rows have AdsPower ID &amp; username filled)</span></span>
+              <label class="toggle-switch toggle-switch-warning" for="popupAutoFillRowToggle">
+                <input id="popupAutoFillRowToggle" type="checkbox">
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
+            </div>
+            <div class="auto-fill-target-row">
+              <label class="label" for="popupAutoFillAccountTarget">Auto-fill target</label>
+              <input id="popupAutoFillAccountTarget" class="input" type="number" min="0" max="9999" step="1" placeholder="Unlimited">
+              <span id="popupAutoFillTargetStatus" class="muted">Unlimited</span>
             </div>
             <div class="toggle-row">
               <span class="toggle-text">Proxy Blocker</span>
@@ -69,13 +84,6 @@
               <span class="toggle-text">Proxy Checker <span class="muted">(uses AdsPower check)</span></span>
               <label class="toggle-switch" for="popupProxyCheckerToggle">
                 <input id="popupProxyCheckerToggle" type="checkbox" checked>
-                <span class="toggle-slider" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-text">Apply AdsPower tags <span class="muted">(off = create profiles with no tags)</span></span>
-              <label class="toggle-switch" for="popupAdspowerTagsToggle">
-                <input id="popupAdspowerTagsToggle" type="checkbox">
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
             </div>
@@ -94,18 +102,6 @@
               </label>
             </div>
             <div class="toggle-row">
-              <span class="toggle-text">Auto-Fill Row <span class="muted">(auto-clicks Get Proxy when all rows have AdsPower ID &amp; username filled)</span></span>
-              <label class="toggle-switch" for="popupAutoFillRowToggle">
-                <input id="popupAutoFillRowToggle" type="checkbox">
-                <span class="toggle-slider" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="auto-fill-target-row">
-              <label class="label" for="popupAutoFillAccountTarget">Auto-fill target</label>
-              <input id="popupAutoFillAccountTarget" class="input" type="number" min="0" max="9999" step="1" placeholder="Unlimited">
-              <span id="popupAutoFillTargetStatus" class="muted">Unlimited</span>
-            </div>
-            <div class="toggle-row">
               <span class="toggle-text">Lock in G5</span>
               <label class="toggle-switch" for="popupLockG5Toggle">
                 <input id="popupLockG5Toggle" type="checkbox">
@@ -118,10 +114,6 @@
                 <input id="popupLockTVToggle" type="checkbox">
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
-            </div>
-            <div class="button-row button-row-compact button-row-two runner-action-row">
-              <button id="startStopRunnerButton" class="button runner-action-button" type="button" data-action="start">Start</button>
-              <button id="pauseResumeRunnerButton" class="button runner-action-button" type="button" data-action="pause">Pause</button>
             </div>
             <div class="button-row button-row-compact button-row-two">
               <button id="refreshButton" class="button button-secondary" type="button">Refresh</button>
@@ -168,7 +160,6 @@
                   <input id="popupRowLimit" class="input" type="number" min="1" max="200" step="1" placeholder="20">
                 </div>
               </div>
-              <button id="savePopupSettingsButton" class="button" type="button">Save Dashboard Settings</button>
             </div>
           </div>
         </section>

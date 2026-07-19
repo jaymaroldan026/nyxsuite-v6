@@ -97,26 +97,30 @@ h1 {
 .popup-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .popup-logo {
-  width: 36px;
-  height: 36px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   flex: 0 0 auto;
   align-self: center;
 }
 
+.popup-title-row h1 {
+  font-size: 18px;
+}
+
 .settings-gear {
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
   color: #1e88e5;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
+  min-width: 24px;
 }
 
 .settings-gear:active {

@@ -97,12 +97,20 @@ body.nyxify-body.nyxify-settings-body {
 .popup-header {
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .popup-title-row {
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+
+.popup-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  align-self: center;
 }
 
 h1 {
@@ -111,6 +119,10 @@ h1 {
   color: #f7fbff;
   letter-spacing: 0;
   line-height: 1;
+}
+
+.popup-title-row h1 {
+  font-size: 18px;
 }
 
 h2 {
@@ -122,7 +134,7 @@ h2 {
 .settings-link {
   color: #8fcaff;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   transition: color 0.18s ease;
 }
@@ -396,6 +408,16 @@ pre {
   border-color: #cc2f3f;
 }
 
+.toggle-switch-warning .toggle-slider {
+  background: #241b09;
+  border-color: #76551a;
+}
+
+.toggle-switch-warning input:checked + .toggle-slider {
+  background: #d49121;
+  border-color: #d49121;
+}
+
 .auto-fill-target-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 96px;
@@ -468,6 +490,62 @@ pre {
 
 .status-cluster p {
   margin: 0;
+}
+
+.runner-action-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 1.1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.runner-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #28486c;
+  border-radius: 16px;
+  background: rgba(8, 17, 29, 0.72);
+  color: #cfe6ff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.runner-state-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #8395aa;
+  box-shadow: 0 0 0 3px rgba(131, 149, 170, 0.18);
+}
+
+.runner-state-running .runner-state-dot {
+  background: #27b36a;
+  box-shadow: 0 0 0 3px rgba(39, 179, 106, 0.18);
+}
+
+.runner-state-paused .runner-state-dot,
+.runner-state-waiting .runner-state-dot {
+  background: #d49121;
+  box-shadow: 0 0 0 3px rgba(212, 145, 33, 0.2);
+}
+
+.runner-state-stopped .runner-state-dot {
+  background: #8395aa;
+}
+
+.runner-state-offline .runner-state-dot {
+  background: #d94a4a;
+  box-shadow: 0 0 0 3px rgba(217, 74, 74, 0.18);
+}
+
+.runner-action-strip .runner-action-row {
+  margin-top: 0;
 }
 
 .status-tiles,

@@ -48,12 +48,21 @@ body{
 /* ---------------- Layout ---------------- */
 main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .panel.hidden{display:none}
-.command-grid{display:grid;grid-template-columns:minmax(360px,auto) minmax(520px,1fr);gap:16px;align-items:start;margin-bottom:8px}
+.command-grid{display:grid;grid-template-columns:minmax(360px,auto) minmax(560px,1fr);gap:18px;align-items:start;margin-bottom:8px}
 .command-status{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
-.command-actions{display:flex;align-items:flex-start;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
-.command-actions>.toolbar{justify-content:flex-end;margin-bottom:0}
-.command-actions>.searchbar{margin:0;flex:1 1 320px;display:flex;justify-content:flex-end}
-.command-actions .search-input{max-width:360px}
+.command-actions{min-width:0}
+.action-stack{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,380px);gap:8px}
+.action-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0}
+.action-row>.toolbar{justify-content:flex-end;margin-bottom:0}
+.action-top{grid-column:1 / -1;min-height:36px}
+.action-queue{grid-column:1 / 2}
+.action-row-controls{grid-column:2 / 3;align-items:flex-start}
+.action-search{grid-column:2 / 3}
+.action-utility{grid-column:1 / 2;grid-row:3}
+.action-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
+.action-row-controls .toolbar.group{order:-1}
+.action-search .searchbar{margin:0;width:min(100%,380px)}
+.action-search .search-input{max-width:none}
 .compact-toolbar{margin:0}
 .replace-banned-dashboard{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:rgba(12,20,36,.72);padding:6px 8px}
 .replace-banned-dashboard .detail{font-size:12px}
@@ -208,9 +217,13 @@ button.btn:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.5)}
 
 @media(max-width:1050px){
   .command-grid{grid-template-columns:1fr}
-  .command-actions{justify-content:flex-start}
-  .command-actions>.toolbar{justify-content:flex-start}
-  .command-actions>.searchbar{justify-content:flex-start}
+  .action-stack{display:flex;flex-direction:column;align-items:stretch}
+  .action-row{justify-content:flex-start}
+  .action-row>.toolbar{justify-content:flex-start}
+  .action-tools{justify-content:flex-start}
+  .action-search .searchbar{width:min(100%,420px)}
+  .replace-banned-dashboard{justify-content:flex-start}
+  .replace-banned-dashboard .detail{flex:1 1 100%}
 }
 
 /* ---------------- Table ---------------- */

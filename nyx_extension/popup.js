@@ -17,6 +17,7 @@ let dailyRowsRefreshInFlight = false;
 let lastDailyRowsRefreshAt = 0;
 let lastDailyRowsDataSignature = "";
 let popupSettingsSaveTimer = null;
+let popupSettingsDirty = false;
 let bitmojiIndicatorsVisible = false;
 const DAILY_ROWS_AUTO_REFRESH_MS = 15000;
 
@@ -1141,16 +1142,33 @@ function savePopupSettings(options = {}) {
 }
 
 function schedulePopupSettingsSave() {
+  popupSettingsDirty = true;
   if (popupSettingsSaveTimer) {
     window.clearTimeout(popupSettingsSaveTimer);
   }
   popupSettingsSaveTimer = window.setTimeout(() => {
     popupSettingsSaveTimer = null;
+    popupSettingsDirty = false;
     savePopupSettings({
       statusMessage: "Applying dashboard setting...",
       successMessage: "Dashboard setting applied.",
     });
   }, 250);
+}
+
+function flushPopupSettingsSave() {
+  if (!popupSettingsDirty && !popupSettingsSaveTimer) {
+    return;
+  }
+  if (popupSettingsSaveTimer) {
+    window.clearTimeout(popupSettingsSaveTimer);
+    popupSettingsSaveTimer = null;
+  }
+  popupSettingsDirty = false;
+  savePopupSettings({
+    statusMessage: "",
+    successMessage: "",
+  });
 }
 
 function runBotAction(action, statusMessage, successFormatter) {
@@ -1437,11 +1455,12 @@ document.getElementById("finishRemainingButton").addEventListener("click", () =>
 });
 document.getElementById("warmupAllButton").addEventListener("click", warmupAllInaccessibleFromSnapboard);
 
-document.getElementById("savePopupSettingsButton").addEventListener("click", savePopupSettings);
 document.getElementById("popupAutomationSpeed").addEventListener("input", (event) => {
   setAutomationSpeedDisplay(event.target.value);
   schedulePopupSettingsSave();
 });
+document.getElementById("popupAutomationSpeed").addEventListener("change", flushPopupSettingsSave);
+document.getElementById("popupAutomationSpeed").addEventListener("blur", flushPopupSettingsSave);
 [
   "popupOutfitStyle",
   "popupRowLimit",
@@ -1451,7 +1470,14 @@ document.getElementById("popupAutomationSpeed").addEventListener("input", (event
 ].forEach((id) => {
   const element = document.getElementById(id);
   if (element) {
-    element.addEventListener("change", schedulePopupSettingsSave);
+    if (element.matches('input[type="number"], input[type="text"]')) {
+      element.addEventListener("input", schedulePopupSettingsSave);
+    }
+    element.addEventListener("change", () => {
+      popupSettingsDirty = true;
+    });
+    element.addEventListener("change", flushPopupSettingsSave);
+    element.addEventListener("blur", flushPopupSettingsSave);
   }
 });
 document.getElementById("headerRefreshButton").addEventListener("click", handleHeaderRefreshClick);
@@ -1608,6 +1634,10 @@ document.getElementById("jumpDailyUpdateButton").addEventListener("click", () =>
 });
 
 document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    flushPopupSettingsSave();
+    return;
+  }
   if (!document.hidden) {
     connectLiveStatus();
     refreshPopupStatus("Refreshing Nyx queue...", { force: true });
@@ -1617,6 +1647,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  flushPopupSettingsSave();
   if (popupLiveReconnectTimer) {
     window.clearTimeout(popupLiveReconnectTimer);
     popupLiveReconnectTimer = null;

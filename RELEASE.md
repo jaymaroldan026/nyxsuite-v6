@@ -9,17 +9,23 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
-### NyxSuite v6.1.14
+### NyxSuite v6.2.0
 
-- Nyx whole-profile retries now also catch transient AdsPower/CDP open
-  exceptions, including delayed DevTools endpoints, target-closed races, and
-  Bitmoji editor load exceptions.
-- Permanent profile/config errors still fail immediately instead of burning
-  retries.
-- Nyxify account creation now sends OTP, SnapBoard handoff, and submitted-signup
-  stalls through the existing cleanup/retry path: close/delete the created
-  AdsPower profile, clear the SnapBoard AdsPower ID, optionally rotate proxy,
-  and requeue the row as pending.
+- Dashboard command areas now use consistent zones for Nyx and Nyxify: runner
+  controls, product tools, queue actions, selected-row actions, search, and
+  Nyxify-only banned-row utilities.
+- Queue buttons and row buttons keep the same placement across both dashboard
+  tabs, with responsive wrapping that avoids horizontal overflow.
+- Nyxify extension popup now places Start/Stop and Pause/Resume at the top of
+  the runner card, above the counters, with a compact runner-state pill.
+- Pause starts disabled and only becomes available when the Nyxify runner is
+  active.
+- Nyx and Nyxify popup headers are smaller to free up control space.
+- Nyxify popup hides Push AdsPower ID and Apply AdsPower tags, moves Auto-Fill
+  Row/target to the top of the toggle panel, and keeps the hidden settings wired
+  through backend/options config.
+- Both extension popups now auto-save dashboard settings as fields are typed or
+  changed, so the manual Save Dashboard Settings button is gone.
 
 ## Create a New Release
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 6.2.0 - Dashboard and extension popup control cleanup
+
+### Dashboard: consistent Nyx/Nyxify control placement
+- Reorganized the Nyx and Nyxify dashboard command areas into matching zones:
+  runner controls, product tools, queue actions, selected-row actions, search,
+  and Nyxify-only banned-row utilities.
+- Queue and selected-row buttons now keep the same placement across Nyx and
+  Nyxify, reducing the drift that made the right-side toolbar hard to scan.
+- Responsive wrapping now keeps the control rows inside the viewport without
+  horizontal overflow.
+
+### Nyxify extension popup: runner controls promoted to the top
+- Moved Nyxify Start/Stop and Pause/Resume into the top runner card above the
+  queue counters, matching the Nyx popup workflow.
+- Added a compact runner-state pill and disabled Pause by default until the
+  runner is active.
+- Shrank the Nyx/Nyxify popup brand headers so controls have more room in the
+  extension popup viewport.
+- Removed the Nyxify popup rows for Push AdsPower ID to SnapBoard and Apply
+  AdsPower tags while keeping those backend/options settings intact.
+- Moved Auto-Fill Row and Auto-fill target to the top of the Nyxify toggle
+  panel.
+- Removed the manual Save Dashboard Settings button from both extension popups;
+  editable dashboard settings now auto-save as values are changed or typed.
+
 ## 6.1.14 - Retry hardening for AdsPower open failures and account creation
 
 ### Nyx: whole-profile retries now catch transient open exceptions

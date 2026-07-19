@@ -6,7 +6,10 @@ let renderedScrapeSignature = "";
 let popupLivePort = null;
 let popupLiveReconnectTimer = null;
 let scrapeInputSaveTimer = null;
+let popupSettingsSaveTimer = null;
+let popupSettingsDirty = false;
 let latestBannedRows = [];
+let latestPopupConfig = {};
 
 const POPUP_VIEW_STORAGE_KEY = "nyxifyPopupView";
 const POPUP_CONFIG_STORAGE_KEY = "nyxifyConfig";
@@ -103,6 +106,36 @@ function setInputValue(id, value) {
   }
 }
 
+function setCheckboxValue(id, checked) {
+  const element = document.getElementById(id);
+  if (!element) {
+    return;
+  }
+  element.checked = checked === true;
+}
+
+function getInputSetting(id, configKey, fallback = "") {
+  const element = document.getElementById(id);
+  if (element) {
+    return element.value;
+  }
+  if (Object.prototype.hasOwnProperty.call(latestPopupConfig, configKey)) {
+    return latestPopupConfig[configKey];
+  }
+  return fallback;
+}
+
+function getCheckedSetting(id, configKey, fallback = false) {
+  const element = document.getElementById(id);
+  if (element) {
+    return element.checked;
+  }
+  if (Object.prototype.hasOwnProperty.call(latestPopupConfig, configKey)) {
+    return latestPopupConfig[configKey] === true;
+  }
+  return fallback;
+}
+
 function setTextAreaValue(id, value) {
   setInputValue(id, value);
 }
@@ -130,6 +163,8 @@ function getRunnerStateKey(runnerStatus) {
 function updateRunnerActionButtons(runnerStatus) {
   const startStopButton = document.getElementById("startStopRunnerButton");
   const pauseResumeButton = document.getElementById("pauseResumeRunnerButton");
+  const statePill = document.querySelector(".runner-state-pill");
+  const stateText = document.getElementById("runnerStateText");
   if (!startStopButton || !pauseResumeButton) {
     return;
   }
@@ -140,6 +175,28 @@ function updateRunnerActionButtons(runnerStatus) {
   const isPaused = stateKey === "paused";
   const startStopAction = isActive ? "stop" : "start";
   const pauseResumeAction = isPaused ? "resume" : "pause";
+  const labels = {
+    offline: "Offline",
+    running: "Running",
+    waiting: "Waiting",
+    paused: "Paused",
+    stopped: "Stopped",
+  };
+
+  if (statePill) {
+    statePill.classList.remove(
+      "runner-state-running",
+      "runner-state-paused",
+      "runner-state-waiting",
+      "runner-state-stopped",
+      "runner-state-offline"
+    );
+    statePill.classList.add(`runner-state-${stateKey}`);
+    statePill.title = `Nyxify runner is ${labels[stateKey] || "Stopped"}`;
+  }
+  if (stateText) {
+    stateText.textContent = labels[stateKey] || "Stopped";
+  }
 
   startStopButton.dataset.action = startStopAction;
   startStopButton.textContent = startStopAction === "stop" ? "Stop" : "Start";
@@ -150,7 +207,7 @@ function updateRunnerActionButtons(runnerStatus) {
   pauseResumeButton.dataset.action = pauseResumeAction;
   pauseResumeButton.textContent = pauseResumeAction === "resume" ? "Resume" : "Pause";
   pauseResumeButton.title = pauseResumeAction === "resume" ? "Resume Nyxify runner" : "Pause Nyxify runner";
-  pauseResumeButton.disabled = isOffline;
+  pauseResumeButton.disabled = isOffline || !isActive;
   pauseResumeButton.classList.toggle("runner-action-resume-active", pauseResumeAction === "resume");
 }
 
@@ -293,7 +350,7 @@ function renderScrapeSnapshot(scrapeStatus) {
 
 function applyPopupStatusSnapshot(status) {
   const safeStatus = status || {};
-  const config = safeStatus.config || {};
+  const config = normalizePopupConfig(safeStatus.config || {});
   const runnerStatus = safeStatus.runnerStatus || {};
   const runnerLoading = runnerStatus.loading === true;
   const counts = runnerStatus.counts || {};
@@ -303,17 +360,18 @@ function applyPopupStatusSnapshot(status) {
   const autoFillProgress = safeStatus.autoFillProgress || {};
   const autoFillTarget = Number(config.autoFillAccountTarget || 0);
   const autoFillCount = Number(autoFillProgress.count || 0);
+  latestPopupConfig = config;
   updateRunnerActionButtons(runnerStatus);
 
-  document.getElementById("popupPushAdspowerIdToggle").checked = config.pushAdspowerIdEnabled !== false;
-  document.getElementById("popupProxyBlockerToggle").checked = config.proxyBlockerEnabled !== false;
-  document.getElementById("popupProxyCheckerToggle").checked = config.proxyCheckerEnabled !== false;
-  document.getElementById("popupAdspowerTagsToggle").checked = config.adspowerTagsEnabled === true;
-  document.getElementById("popupFullAutoModeToggle").checked = config.fullAutoModeEnabled === true;
-  document.getElementById("popupContinuousModeToggle").checked = config.continuousModeEnabled === true;
-  document.getElementById("popupAutoFillRowToggle").checked = config.autoFillRow === true;
-  document.getElementById("popupLockG5Toggle").checked = config.lockG5 === true;
-  document.getElementById("popupLockTVToggle").checked = config.lockTV === true;
+  setCheckboxValue("popupPushAdspowerIdToggle", config.pushAdspowerIdEnabled !== false);
+  setCheckboxValue("popupProxyBlockerToggle", config.proxyBlockerEnabled !== false);
+  setCheckboxValue("popupProxyCheckerToggle", config.proxyCheckerEnabled !== false);
+  setCheckboxValue("popupAdspowerTagsToggle", config.adspowerTagsEnabled === true);
+  setCheckboxValue("popupFullAutoModeToggle", config.fullAutoModeEnabled === true);
+  setCheckboxValue("popupContinuousModeToggle", config.continuousModeEnabled === true);
+  setCheckboxValue("popupAutoFillRowToggle", config.autoFillRow === true);
+  setCheckboxValue("popupLockG5Toggle", config.lockG5 === true);
+  setCheckboxValue("popupLockTVToggle", config.lockTV === true);
   document.getElementById("countReady").textContent = String(counts.ready || 0);
   document.getElementById("countWaiting").textContent = String(counts.waiting || 0);
   document.getElementById("countRunning").textContent = String(counts.running || 0);
@@ -410,32 +468,81 @@ function refreshPopupStatus(statusMessage, force = false) {
   });
 }
 
-function savePopupSettings() {
-  chrome.runtime.sendMessage({
+function savePopupSettings(options = {}) {
+  const statusMessage = Object.prototype.hasOwnProperty.call(options, "statusMessage")
+    ? options.statusMessage
+    : "Saving Nyxify settings...";
+  const successMessage = Object.prototype.hasOwnProperty.call(options, "successMessage")
+    ? options.successMessage
+    : "Nyxify settings saved.";
+  const pushAdspowerIdEnabled = getCheckedSetting("popupPushAdspowerIdToggle", "pushAdspowerIdEnabled", undefined);
+  const adspowerTagsEnabled = getCheckedSetting("popupAdspowerTagsToggle", "adspowerTagsEnabled", undefined);
+  const payload = {
     type: "NYXIFY_SAVE_CONFIG",
     enabled: true,
-    pushAdspowerIdEnabled: document.getElementById("popupPushAdspowerIdToggle").checked,
-    proxyBlockerEnabled: document.getElementById("popupProxyBlockerToggle").checked,
-    proxyCheckerEnabled: document.getElementById("popupProxyCheckerToggle").checked,
-    adspowerTagsEnabled: document.getElementById("popupAdspowerTagsToggle").checked,
-    fullAutoModeEnabled: document.getElementById("popupFullAutoModeToggle").checked,
-    continuousModeEnabled: document.getElementById("popupContinuousModeToggle").checked,
-    autoFillRow: document.getElementById("popupAutoFillRowToggle").checked,
-    lockG5: document.getElementById("popupLockG5Toggle").checked,
-    lockTV: document.getElementById("popupLockTVToggle").checked,
-    temporaryProfileName: document.getElementById("popupTemporaryName").value,
-    adspowerGroup: document.getElementById("popupGroup").value,
-    extensionCategory: document.getElementById("popupExtensionCategory").value,
-    tagOne: document.getElementById("popupTagOne").value,
-    tagTwo: document.getElementById("popupTagTwo").value,
-    rowLimit: document.getElementById("popupRowLimit").value,
-    autoFillAccountTarget: document.getElementById("popupAutoFillAccountTarget").value,
-  }, (response) => {
+    proxyBlockerEnabled: getCheckedSetting("popupProxyBlockerToggle", "proxyBlockerEnabled", true),
+    proxyCheckerEnabled: getCheckedSetting("popupProxyCheckerToggle", "proxyCheckerEnabled", true),
+    fullAutoModeEnabled: getCheckedSetting("popupFullAutoModeToggle", "fullAutoModeEnabled", false),
+    continuousModeEnabled: getCheckedSetting("popupContinuousModeToggle", "continuousModeEnabled", false),
+    autoFillRow: getCheckedSetting("popupAutoFillRowToggle", "autoFillRow", false),
+    lockG5: getCheckedSetting("popupLockG5Toggle", "lockG5", false),
+    lockTV: getCheckedSetting("popupLockTVToggle", "lockTV", false),
+    temporaryProfileName: getInputSetting("popupTemporaryName", "temporaryProfileName", DEFAULT_TEMPORARY_PROFILE_NAME),
+    adspowerGroup: getInputSetting("popupGroup", "adspowerGroup", DEFAULT_ADSPOWER_GROUP),
+    extensionCategory: getInputSetting("popupExtensionCategory", "extensionCategory", DEFAULT_EXTENSION_CATEGORY),
+    tagOne: getInputSetting("popupTagOne", "tagOne", DEFAULT_TAG_ONE),
+    tagTwo: getInputSetting("popupTagTwo", "tagTwo", ""),
+    rowLimit: getInputSetting("popupRowLimit", "rowLimit", 20),
+    autoFillAccountTarget: getInputSetting("popupAutoFillAccountTarget", "autoFillAccountTarget", 0),
+  };
+  if (pushAdspowerIdEnabled !== undefined) {
+    payload.pushAdspowerIdEnabled = pushAdspowerIdEnabled;
+  }
+  if (adspowerTagsEnabled !== undefined) {
+    payload.adspowerTagsEnabled = adspowerTagsEnabled;
+  }
+
+  latestPopupConfig = normalizePopupConfig({ ...latestPopupConfig, ...payload });
+  if (statusMessage) {
+    setPrimaryStatus(statusMessage, 1500);
+  }
+
+  chrome.runtime.sendMessage(payload, (response) => {
     if (!response || !response.ok) {
       setPrimaryStatus((response && response.error) || "Could not save Nyxify settings.", 2500);
       return;
     }
-    refreshPopupStatus("Nyxify settings saved.");
+    refreshPopupStatus(successMessage, true);
+  });
+}
+
+function schedulePopupSettingsSave() {
+  popupSettingsDirty = true;
+  if (popupSettingsSaveTimer) {
+    window.clearTimeout(popupSettingsSaveTimer);
+  }
+  popupSettingsSaveTimer = window.setTimeout(() => {
+    popupSettingsSaveTimer = null;
+    popupSettingsDirty = false;
+    savePopupSettings({
+      statusMessage: "",
+      successMessage: "",
+    });
+  }, 300);
+}
+
+function flushPopupSettingsSave() {
+  if (!popupSettingsDirty && !popupSettingsSaveTimer) {
+    return;
+  }
+  if (popupSettingsSaveTimer) {
+    window.clearTimeout(popupSettingsSaveTimer);
+    popupSettingsSaveTimer = null;
+  }
+  popupSettingsDirty = false;
+  savePopupSettings({
+    statusMessage: "",
+    successMessage: "",
   });
 }
 
@@ -679,10 +786,8 @@ async function copyScrapeResults(statuses, emptyMessage, successMessage) {
 chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => {});
 
 [
-  ["popupPushAdspowerIdToggle", "pushAdspowerIdEnabled", "Push AdsPower ID enabled.", "Push AdsPower ID disabled."],
   ["popupProxyBlockerToggle", "proxyBlockerEnabled", "Proxy Blocker enabled.", "Proxy Blocker disabled."],
   ["popupProxyCheckerToggle", "proxyCheckerEnabled", "Proxy Checker enabled.", "Proxy Checker disabled."],
-  ["popupAdspowerTagsToggle", "adspowerTagsEnabled", "AdsPower tags enabled.", "AdsPower tags disabled."],
   ["popupFullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
   ["popupContinuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["popupAutoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
@@ -738,7 +843,26 @@ document.getElementById("clearQueueButton").addEventListener("click", () => {
 });
 document.getElementById("scanBannedButton").addEventListener("click", scanBannedRows);
 document.getElementById("replaceBannedButton").addEventListener("click", replaceBannedRows);
-document.getElementById("savePopupSettingsButton").addEventListener("click", savePopupSettings);
+
+[
+  "popupTemporaryName",
+  "popupGroup",
+  "popupExtensionCategory",
+  "popupTagOne",
+  "popupTagTwo",
+  "popupRowLimit",
+  "popupAutoFillAccountTarget",
+].forEach((id) => {
+  const element = document.getElementById(id);
+  if (element) {
+    element.addEventListener("input", schedulePopupSettingsSave);
+    element.addEventListener("change", () => {
+      popupSettingsDirty = true;
+    });
+    element.addEventListener("change", flushPopupSettingsSave);
+    element.addEventListener("blur", flushPopupSettingsSave);
+  }
+});
 
 document.getElementById("savePopupBlockedProxiesButton").addEventListener("click", () => {
   const raw = document.getElementById("popupBlockedProxies").value || "";
@@ -849,6 +973,10 @@ document.getElementById("scrapeOpenPageButton").addEventListener("click", () => 
 });
 
 document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    flushPopupSettingsSave();
+    return;
+  }
   if (!document.hidden) {
     connectLiveStatus();
     refreshPopupStatus("Refreshing Nyxify queue...", true);
@@ -856,6 +984,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  flushPopupSettingsSave();
   if (popupLiveReconnectTimer) {
     window.clearTimeout(popupLiveReconnectTimer);
     popupLiveReconnectTimer = null;
