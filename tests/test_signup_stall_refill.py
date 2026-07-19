@@ -5,7 +5,9 @@
       - re-enters the saved credentials when the form is detected blank
         (e.g. after a manual page refresh), and
       - hard-refreshes when stuck on the page for a very long time and
-        "Agree and Continue" never becomes clickable (even with a captcha).
+        "Agree and Continue" never becomes clickable (even with a captcha),
+      - refreshes when neither the signup form nor a verification handoff is
+        detected for the stall window.
 """
 import time
 import unittest
@@ -63,6 +65,10 @@ class FakeProgressPage:
 
 
 class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_refresh_windows_are_100_and_200_seconds(self):
+        self.assertEqual(signup_flow.SIGNUP_STALL_SECONDS, 100)
+        self.assertEqual(signup_flow.SIGNUP_HARD_STALL_SECONDS, 200)
+
     def _common_patches(self):
         # Neutralize every branch that precedes the A2 stall block so the loop
         # falls straight through to it.
@@ -179,6 +185,64 @@ class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(signup_flow, "_signup_form_is_blank", mock.AsyncMock(return_value=False)),
             mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=True)),
             mock.patch.object(signup_flow, "_submit_is_clickable", mock.AsyncMock(return_value=True)),
+        ]
+        for p in patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+
+        stage = await signup_flow._wait_for_signup_progress(
+            page, logger=None, profile_id="777", timeout_ms=1000,
+            resubmit_callback=resubmit, stall_state=stall_state,
+        )
+
+        self.assertEqual(stage, "")
+        resubmit.assert_not_awaited()
+
+    async def test_unexpected_page_refreshes_when_signup_form_missing(self):
+        page = FakeProgressPage()
+        resubmit = mock.AsyncMock(return_value=True)
+        old = time.monotonic() - (signup_flow.SIGNUP_STALL_SECONDS + 5)
+        stall_state = {"refresh_attempts": 0, "form_since": None,
+                       "blank_refill_attempts": 0, "page_issue_since": old,
+                       "refill": mock.AsyncMock()}
+        steps = []
+
+        patches = self._common_patches()
+        patches[-1] = mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value=""))
+        patches += [
+            mock.patch.object(signup_flow, "_signup_form_is_blank", mock.AsyncMock(return_value=False)),
+            mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=True)),
+            mock.patch.object(signup_flow, "_submit_is_clickable", mock.AsyncMock(return_value=False)),
+        ]
+        for p in patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+
+        stage = await signup_flow._wait_for_signup_progress(
+            page, logger=None, profile_id="777", timeout_ms=1000,
+            progress_callback=lambda s: steps.append(s),
+            resubmit_callback=resubmit, stall_state=stall_state,
+        )
+
+        self.assertEqual(stage, "")
+        resubmit.assert_awaited_once()
+        self.assertIn("refreshing_signup_page_issue", steps)
+        self.assertEqual(stall_state["refresh_attempts"], 1)
+
+    async def test_unexpected_page_waits_until_stall_window_expires(self):
+        page = FakeProgressPage()
+        resubmit = mock.AsyncMock(return_value=True)
+        old = time.monotonic() - max(1, signup_flow.SIGNUP_STALL_SECONDS - 10)
+        stall_state = {"refresh_attempts": 0, "form_since": None,
+                       "blank_refill_attempts": 0, "page_issue_since": old,
+                       "refill": mock.AsyncMock()}
+
+        patches = self._common_patches()
+        patches[-1] = mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value=""))
+        patches += [
+            mock.patch.object(signup_flow, "_signup_form_is_blank", mock.AsyncMock(return_value=False)),
+            mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=True)),
+            mock.patch.object(signup_flow, "_submit_is_clickable", mock.AsyncMock(return_value=False)),
         ]
         for p in patches:
             p.start()

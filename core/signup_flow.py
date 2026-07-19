@@ -13,17 +13,18 @@ from core.signup_data import generate_birthday, get_random_name
 
 PASSWORD = "ABC123wgmi*"
 
-# Recovery tuning for a signup form that never advances — the reCAPTCHA service
-# is unreachable, or no captcha challenge ever renders (no badge in the corner).
+# Recovery tuning for a signup flow that never advances - the reCAPTCHA service
+# is unreachable, no captcha challenge ever renders (no badge in the corner), or
+# the expected signup/verification page disappears.
 # We reload the page and re-enter the details up to N times; if it still won't
 # progress we raise a classified error so the Nyxify runner runs its standard
 # cleanup/retry (delete profile, rotate proxy, requeue as PENDING).
-SIGNUP_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_STALL_SECONDS", "300"))  # ~5 minutes
+SIGNUP_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_STALL_SECONDS", "100"))
 # Backstop for the "stuck on the signup page for a very long time and can't even
 # click Agree and Continue" case: when the form has been sitting for this long
 # and the submit button never became clickable, reload + re-enter as a last
 # resort — even if a captcha is present (which suppresses the normal stall).
-SIGNUP_HARD_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_HARD_STALL_SECONDS", "600"))  # ~10 minutes
+SIGNUP_HARD_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_HARD_STALL_SECONDS", "200"))
 SIGNUP_MAX_REFRESH_ATTEMPTS = int(os.getenv("NYXIFY_SIGNUP_MAX_REFRESH_ATTEMPTS", "3"))
 # How many times to (re-)order a verification email from SnapBoard when it has
 # "no pending email order" before giving up and letting the runner retry.
@@ -1674,6 +1675,7 @@ async def _wait_for_signup_progress(
         await set_progress(progress_step)
         await resubmit_callback()
         stall_state["form_since"] = time.monotonic()
+        stall_state["page_issue_since"] = None
         return True
 
     while remaining_ms is None or remaining_ms > 0:
@@ -1758,6 +1760,7 @@ async def _wait_for_signup_progress(
         handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
         if handoff_stage and stall_state is not None:
             stall_state["form_since"] = None
+            stall_state["page_issue_since"] = None
         if handoff_stage == "welcome":
             await set_progress("signup_complete")
             return "welcome"
@@ -1839,6 +1842,7 @@ async def _wait_for_signup_progress(
         if stall_state is not None and resubmit_callback is not None:
             on_form = bool(await _visible_any(page, ["#firstname", "#username", *submit_selectors]))
             if on_form:
+                stall_state["page_issue_since"] = None
                 # The page was (re)loaded and Snapchat cleared every field —
                 # usually a manual operator refresh. Re-enter the saved
                 # credentials right away instead of waiting out the stall timer.
@@ -1898,6 +1902,19 @@ async def _wait_for_signup_progress(
             else:
                 stall_state["form_since"] = None
                 stall_state["blank_refill_attempts"] = 0
+                if stall_state.get("page_issue_since") is None:
+                    stall_state["page_issue_since"] = time.monotonic()
+                page_issue_elapsed = time.monotonic() - float(
+                    stall_state.get("page_issue_since") or time.monotonic()
+                )
+                if page_issue_elapsed >= SIGNUP_STALL_SECONDS:
+                    if await trigger_form_refresh(
+                        "signup page/form not detected", "refreshing_signup_page_issue"
+                    ):
+                        await page.wait_for_timeout(1500)
+                        if remaining_ms is not None:
+                            remaining_ms -= 1500
+                        continue
 
         await page.wait_for_timeout(1000)
         if remaining_ms is not None:
@@ -2683,10 +2700,14 @@ async def perform_snapchat_signup(
             "manual_override": False,
         }
 
-        # Shared across every verification pass so the refresh budget (A1/A2),
-        # the "time on form" stall timer, and the blank-form refill guard persist
-        # for the whole signup.
-        stall_state = {"refresh_attempts": 0, "form_since": None, "blank_refill_attempts": 0}
+        # Keep refresh counters/timers across every watcher pass so all recovery
+        # paths share one bounded budget for the whole signup.
+        stall_state = {
+            "refresh_attempts": 0,
+            "form_since": None,
+            "blank_refill_attempts": 0,
+            "page_issue_since": None,
+        }
 
         async def resubmit_callback():
             active = await _resolve_active_signup_page(signup_page, logger, profile_id)

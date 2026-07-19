@@ -9,6 +9,15 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.2
+
+- Nyxify signup recovery now refreshes faster: no-captcha/signup stalls after
+  100 seconds and hard stuck signup pages after 200 seconds.
+- Nyxify now refreshes and re-enters signup details when the expected signup
+  form or verification handoff page is not detected for the stall window.
+- Added regression coverage for the new signup refresh timings and missing-page
+  recovery path.
+
 ### NyxSuite v6.2.1
 
 - AdsPower GUI recovery now hard-refreshes the desktop app when the dashboard
