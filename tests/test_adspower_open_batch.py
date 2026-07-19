@@ -146,6 +146,47 @@ class SearchByIdsTests(unittest.TestCase):
         ctrl._search_by_ids(["new1"], append=False)
 
 
+class DashboardRefreshTests(unittest.TestCase):
+    def test_windows_refresh_falls_back_to_control_shift_r(self):
+        ctrl = AdsPowerUIController.__new__(AdsPowerUIController)
+        ctrl._backend = None
+        ctrl._hwnd = None
+        ctrl._app = None
+        ctrl._connect = mock.Mock()
+        ctrl._minimize_overlapping_browsers = mock.Mock()
+        events = []
+        fake_pg = SimpleNamespace(
+            hotkey=lambda *args: events.append(("hotkey", args)),
+        )
+
+        with mock.patch.object(aui.sys, "platform", "win32"), \
+             mock.patch.object(aui, "_pg", lambda: fake_pg), \
+             mock.patch.object(aui.win_focus, "ensure_foreground", side_effect=lambda *_args, **_kwargs: events.append("foreground") or 1234), \
+             mock.patch.object(aui.time, "sleep", lambda *_args, **_kwargs: None):
+            self.assertTrue(ctrl._refresh_dashboard())
+
+        self.assertIn("foreground", events)
+        self.assertIn(("hotkey", ("ctrl", "shift", "r")), events)
+        ctrl._connect.assert_called()
+
+    def test_macos_refresh_uses_command_shift_r_if_backend_menu_fails(self):
+        ctrl = AdsPowerUIController.__new__(AdsPowerUIController)
+        ctrl._backend = SimpleNamespace(
+            refresh_window=lambda: False,
+            foreground=lambda **_kwargs: None,
+        )
+        ctrl._connect = mock.Mock()
+        events = []
+
+        with mock.patch.object(aui.sys, "platform", "darwin"), \
+             mock.patch.object(aui, "_send_macos_system_events", side_effect=lambda action: events.append(action) or True), \
+             mock.patch.object(aui.time, "sleep", lambda *_args, **_kwargs: None):
+            self.assertTrue(ctrl._refresh_dashboard())
+
+        self.assertIn('keystroke "r" using {command down, shift down}', events)
+        ctrl._connect.assert_called()
+
+
 class _Rect:
     def __init__(self, left, top, right, bottom):
         self.left = left

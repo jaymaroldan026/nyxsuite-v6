@@ -43,6 +43,8 @@ class TaskStore:
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     profile_id TEXT NOT NULL UNIQUE,
+                    username TEXT NOT NULL DEFAULT '',
+                    password TEXT NOT NULL DEFAULT '',
                     model TEXT NOT NULL,
                     gender TEXT NOT NULL DEFAULT 'female',
                     outfit_seed TEXT DEFAULT '',
@@ -63,6 +65,10 @@ class TaskStore:
             }
             if "source" not in existing_columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN source TEXT DEFAULT 'ui'")
+            if "username" not in existing_columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+            if "password" not in existing_columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN password TEXT NOT NULL DEFAULT ''")
             if "run_token" not in existing_columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN run_token TEXT DEFAULT ''")
             conn.execute(
@@ -142,7 +148,7 @@ class TaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, profile_id, model, gender, outfit_seed, source, status, last_step, error, completed_at
+                SELECT id, profile_id, username, model, gender, outfit_seed, source, status, last_step, error, completed_at
                 FROM tasks
                 WHERE status = 'PENDING'
                 ORDER BY updated_at ASC, id ASC
@@ -156,7 +162,9 @@ class TaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, profile_id, model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
+                SELECT id, profile_id, username,
+                       CASE WHEN TRIM(COALESCE(password, '')) <> '' THEN 1 ELSE 0 END AS has_password,
+                       model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
                 FROM tasks
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ?
@@ -166,9 +174,22 @@ class TaskStore:
 
         return [dict(row) for row in rows]
 
-    def upsert_task(self, profile_id, model, gender="female", status="PENDING", outfit_seed="", ignore_done_override=None, source="ui"):
+    def upsert_task(
+        self,
+        profile_id,
+        model,
+        gender="female",
+        status="PENDING",
+        outfit_seed="",
+        ignore_done_override=None,
+        source="ui",
+        username="",
+        password="",
+    ):
 
         now = utc_now_iso()
+        normalized_username = str(username or "").strip()
+        normalized_password = str(password or "").strip()
 
         with self._connect() as conn:
             should_ignore_done = self._should_ignore_done_profiles() if ignore_done_override is None else bool(ignore_done_override)
@@ -179,7 +200,7 @@ class TaskStore:
 
             existing = conn.execute(
                 """
-                SELECT id, status, run_token, last_step, error, completed_at, model, gender, outfit_seed, source
+                SELECT id, status, run_token, last_step, error, completed_at, model, gender, outfit_seed, source, username, password
                 FROM tasks
                 WHERE profile_id = ?
                 """,
@@ -198,6 +219,8 @@ class TaskStore:
                 next_last_step = existing["last_step"] or ""
                 next_error = existing["error"] or ""
                 next_completed_at = existing["completed_at"] or ""
+                next_username = normalized_username or str(existing["username"] or "").strip()
+                next_password = normalized_password or str(existing["password"] or "").strip()
 
                 if should_requeue_done:
                     next_status = status
@@ -215,10 +238,12 @@ class TaskStore:
                 conn.execute(
                     """
                     UPDATE tasks
-                    SET model = ?, gender = ?, outfit_seed = ?, source = ?, status = ?, run_token = ?, last_step = ?, error = ?, completed_at = ?, updated_at = ?
+                    SET username = ?, password = ?, model = ?, gender = ?, outfit_seed = ?, source = ?, status = ?, run_token = ?, last_step = ?, error = ?, completed_at = ?, updated_at = ?
                     WHERE profile_id = ?
                     """,
                     (
+                        next_username,
+                        next_password,
                         model,
                         gender,
                         outfit_seed,
@@ -237,10 +262,21 @@ class TaskStore:
             cursor = conn.execute(
                 """
                 INSERT INTO tasks (
-                    profile_id, model, gender, outfit_seed, source, status, run_token, last_step, error, completed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?)
+                    profile_id, username, password, model, gender, outfit_seed, source, status, run_token, last_step, error, completed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?)
                 """,
-                (profile_id, model, gender, outfit_seed, source, status, now, now)
+                (
+                    profile_id,
+                    normalized_username,
+                    normalized_password,
+                    model,
+                    gender,
+                    outfit_seed,
+                    source,
+                    status,
+                    now,
+                    now,
+                )
             )
             return cursor.lastrowid, "created"
 
@@ -591,7 +627,7 @@ class TaskStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, profile_id, model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
+                SELECT id, profile_id, username, password, model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
                 FROM tasks
                 WHERE profile_id = ?
                 """,

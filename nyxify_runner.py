@@ -1586,6 +1586,8 @@ async def process_task(task, store, adspower):
                     profile_id_value,
                     handoff_model,
                     logger,
+                    username=final_username,
+                    password=signup_password,
                 )
                 if handoff_result.get("ok"):
                     last_step = "queued_for_nyx"

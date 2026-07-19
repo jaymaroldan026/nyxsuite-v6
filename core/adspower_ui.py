@@ -478,6 +478,16 @@ def _send_paste_hotkey(pg):
     pg.hotkey(_mod_key(), "v")
 
 
+def _send_refresh_hotkey(pg) -> bool:
+    if sys.platform == "darwin":
+        if _send_macos_system_events('keystroke "r" using {command down, shift down}'):
+            return True
+        pg.hotkey("command", "shift", "r")
+        return True
+    pg.hotkey("ctrl", "shift", "r")
+    return True
+
+
 class AdsPowerUIController:
     def __init__(self, config: Optional[AdsPowerUIConfig] = None):
         self._backend = None
@@ -532,27 +542,43 @@ class AdsPowerUIController:
 
     def _refresh_dashboard(self):
         """Recover an unresponsive AdsPower dashboard by triggering Window >
-        Refresh, then reconnecting. Returns True if a refresh was issued. No-op
-        (returns False) on backends that don't expose ``refresh_window`` (e.g.
-        the Windows UIA backend)."""
+        Refresh / the OS hard-refresh shortcut, then reconnecting. Returns True
+        if a refresh was issued."""
         backend = getattr(self, "_backend", None)
-        if backend is None or not hasattr(backend, "refresh_window"):
-            return False
+        issued = False
+        logger.warning(
+            "AdsPower dashboard appears unresponsive; auto-refreshing "
+            "(Window > Refresh / hard refresh hotkey)."
+        )
         try:
-            logger.warning(
-                "AdsPower dashboard appears unresponsive; auto-refreshing (Window > Refresh)."
-            )
-            issued = bool(backend.refresh_window())
+            if backend is not None and hasattr(backend, "refresh_window"):
+                issued = bool(backend.refresh_window())
         except Exception as exc:
             logger.debug(f"AdsPower auto-refresh failed: {exc}")
-            return False
-        if issued:
-            # Let the dashboard re-render, then rebuild our window handle.
-            time.sleep(1.5)
+
+        if not issued:
             try:
-                self._connect()
-            except Exception:
-                pass
+                if backend is not None and hasattr(backend, "foreground"):
+                    backend.foreground(force=True)
+                else:
+                    hwnd = win_focus.ensure_foreground(_WINDOW_TITLE_SUBSTR)
+                    if hwnd:
+                        self._hwnd = hwnd
+                        self._minimize_overlapping_browsers(hwnd)
+                issued = bool(_send_refresh_hotkey(_pg()))
+            except Exception as exc:
+                logger.debug(f"AdsPower hard-refresh hotkey failed: {exc}")
+                issued = False
+
+        if not issued:
+            return False
+
+        # Let the dashboard re-render, then rebuild our window handle.
+        time.sleep(1.5)
+        try:
+            self._connect()
+        except Exception:
+            pass
         return issued
 
     def _a11y_enter(self):

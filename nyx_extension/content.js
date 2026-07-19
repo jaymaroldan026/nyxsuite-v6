@@ -349,6 +349,7 @@
     var username;
     var model;
     var profileId;
+    var password;
 
     if (!tableBody) {
       return [];
@@ -369,6 +370,7 @@
       username = readUsername(row, headerMap);
       model = readSelectedModel(row, headerMap);
       profileId = readAdsPowerId(row, headerMap);
+      password = readValueFromAliases(row, headerMap, ["password", "pass", "snap password", "snapchat password", "account password"]);
 
       if (!username || !profileId || unique[profileId]) {
         continue;
@@ -379,6 +381,7 @@
         username: username,
         profile_id: profileId,
         model: model || "",
+        password: password,
         source_rank: i,
       });
     }
@@ -893,6 +896,8 @@
     var headerMap = getTableHeaderMap(getRowCollectionRoot());
     var adspowerId = readAdsPowerId(row, headerMap);
     var model = readSelectedModel(row, headerMap);
+    var username = readUsername(row, headerMap);
+    var password = readValueFromAliases(row, headerMap, ["password", "pass", "snap password", "snapchat password", "account password"]);
     if (!adspowerId || !model) {
       showRowOutcome(row, false, "missing ID/model");
       return;
@@ -902,6 +907,8 @@
       type: "NYX_ADD_TO_NYX_PENDING",
       profileId: adspowerId,
       model: model,
+      username: username,
+      password: password,
     }, function (response) {
       if (chrome.runtime.lastError || !response || !response.ok) {
         showRowOutcome(row, false, (response && response.error) || "add failed");

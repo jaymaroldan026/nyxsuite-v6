@@ -1150,6 +1150,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       entries: [{
         profile_id: message.profileId,
         model: message.model,
+        username: message.username,
+        password: message.password,
       }],
     })
       .then((payload) => sendResponse({ ok: true, payload }))
@@ -1732,8 +1734,9 @@ async function mergeDetectedEntries(rows, sourceUrl) {
     const runnerRow = runnerQueueMap ? runnerQueueMap.get(row.profile_id) : null;
     const existsInRunnerQueue = Boolean(runnerRow);
     const sameAsPreviousSeen = previousRow && previousRow.model === row.model;
+    const canBackfillPassword = Boolean(row.password && runnerRow && !Number(runnerRow.has_password || 0));
 
-    if (alreadyPending || (sameAsPreviousSeen && existsInRunnerQueue)) {
+    if (alreadyPending || (sameAsPreviousSeen && existsInRunnerQueue && !canBackfillPassword)) {
       continue;
     }
 
@@ -1804,6 +1807,8 @@ function sanitizeEntries(rows) {
     const safeRow = row || {};
     const profileId = normalizeText(safeRow.profile_id);
     const model = normalizeText(safeRow.model);
+    const username = normalizeText(safeRow.username);
+    const password = normalizeText(safeRow.password);
     if (!profileId || !model) {
       continue;
     }
@@ -1811,6 +1816,8 @@ function sanitizeEntries(rows) {
     unique.set(profileId, {
       profile_id: profileId,
       model,
+      username,
+      password,
       gender: "female",
       status: "PENDING",
     });
@@ -1848,6 +1855,8 @@ async function flushPendingEntriesInternal() {
       entries: pendingEntries.map((entry) => ({
         profile_id: entry.profile_id,
         model: entry.model,
+        username: entry.username,
+        password: entry.password,
       })),
     });
 

@@ -130,6 +130,8 @@ class NyxLocalApiServer:
                     for entry in entries:
                         profile_id = str((entry or {}).get("profile_id", "")).strip()
                         model = str((entry or {}).get("model", "")).strip()
+                        username = str((entry or {}).get("username", "")).strip()
+                        password = str((entry or {}).get("password", "")).strip()
                         if not profile_id or not model:
                             continue
 
@@ -140,6 +142,8 @@ class NyxLocalApiServer:
                             status="PENDING",
                             ignore_done_override=False if allow_done_requeue else None,
                             source="extension_popup",
+                            username=username,
+                            password=password,
                         )
                         if action == "ignored_done":
                             skipped_done += 1

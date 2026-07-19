@@ -9,6 +9,20 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.1
+
+- AdsPower GUI recovery now hard-refreshes the desktop app when the dashboard
+  becomes unresponsive: Shift-Command-R on macOS and Control-Shift-R on Windows,
+  after foregrounding AdsPower.
+- Nyxify signup refresh/retry coverage now explicitly protects the filled-form
+  no-captcha stall path, along with the existing reCAPTCHA unreachable and
+  blank-form refill recovery paths.
+- Nyx now keeps a private copy of the SnapBoard Snapchat username/password on
+  the Nyx queue row, so Bitmoji auto-login still uses the real account password
+  even after the Nyxify row is pruned, replaced, or no longer matches.
+- Nyx and Nyxify handoff paths now carry SnapBoard credentials through the
+  extension, local API, direct fallback queue write, and continuous-mode handoff.
+
 ### NyxSuite v6.2.0
 
 - Dashboard command areas now use consistent zones for Nyx and Nyxify: runner

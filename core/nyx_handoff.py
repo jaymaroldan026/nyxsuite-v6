@@ -49,7 +49,7 @@ def _ensure_nyx_local_api_token():
     return _NYX_LOCAL_API_TOKEN
 
 
-def _queue_direct(profile_id, model):
+def _queue_direct(profile_id, model, username="", password=""):
     from core.task_store import TaskStore
 
     store = TaskStore(db_path=str(NYX_TASK_DB_PATH))
@@ -59,6 +59,8 @@ def _queue_direct(profile_id, model):
         gender="female",
         status="PENDING",
         source="nyxify_continuous",
+        username=username,
+        password=password,
     )
     runner_flags.nyx_request_flush()
     return action
@@ -100,9 +102,11 @@ def purge_profile_from_nyx_queue(profile_id, model="", logger=None):
         return 0
 
 
-def enqueue_profile_for_nyx(profile_id, model, logger=None):
+def enqueue_profile_for_nyx(profile_id, model, logger=None, username="", password=""):
     normalized_profile_id = str(profile_id or "").strip()
     normalized_model = str(model or "").strip()
+    normalized_username = str(username or "").strip()
+    normalized_password = str(password or "").strip()
     if not normalized_profile_id:
         raise ValueError("AdsPower profile id is required for Nyx handoff.")
     if not normalized_model:
@@ -113,7 +117,14 @@ def enqueue_profile_for_nyx(profile_id, model, logger=None):
         token = _ensure_nyx_local_api_token()
         queue_result = _api_json(
             "/queue/upsert",
-            {"entries": [{"profile_id": normalized_profile_id, "model": normalized_model}]},
+            {
+                "entries": [{
+                    "profile_id": normalized_profile_id,
+                    "model": normalized_model,
+                    "username": normalized_username,
+                    "password": normalized_password,
+                }],
+            },
             token=token,
         )
         if not queue_result.get("ok"):
@@ -142,7 +153,12 @@ def enqueue_profile_for_nyx(profile_id, model, logger=None):
             )
 
     try:
-        action = _queue_direct(normalized_profile_id, normalized_model)
+        action = _queue_direct(
+            normalized_profile_id,
+            normalized_model,
+            username=normalized_username,
+            password=normalized_password,
+        )
         if logger:
             logger.warning(
                 f"Queued AdsPower profile {normalized_profile_id} for Nyx directly "

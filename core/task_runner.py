@@ -11,6 +11,7 @@ from core.adspower import (
 )
 from core.nyxify_runtime_config import load_nyxify_config
 from core.nyxify_task_store import NyxifyTaskStore
+from core.task_store import TaskStore
 
 
 # How many profile *starts* (GUI open + Playwright attach) may overlap, and how
@@ -232,12 +233,14 @@ def resolve_snapchat_credentials(profile_id, logger):
     The Nyxify row for this AdsPower profile is the authoritative source: its
     ``username`` is the real account name confirmed on the welcome page, and
     its ``password`` is the SnapBoard row's Password column — the password the
-    account was actually signed up with. Env/default passwords are only
-    fallbacks for rows SnapBoard left blank (signup used the default too), and
-    a missing username falls back to the browser-context extraction inside
-    ``try_auto_snapchat_login``."""
+    account was actually signed up with. Nyx also keeps a private copy on its
+    queue row so relaunches still work after Nyxify prunes or replaces its row.
+    Env/default passwords are only fallbacks for rows SnapBoard left blank
+    (signup used the default too), and a missing username falls back to the
+    browser-context extraction inside ``try_auto_snapchat_login``."""
     username = ""
     snapboard_password = ""
+    nyx_queue_password = ""
     try:
         nyxify_task = NyxifyTaskStore().get_task_by_adspower_profile_id(profile_id)
         if nyxify_task:
@@ -246,12 +249,23 @@ def resolve_snapchat_credentials(profile_id, logger):
     except Exception as exc:
         logger.warning(f"Could not read Nyxify credentials for {profile_id}: {exc}")
 
+    try:
+        nyx_task = TaskStore().get_task_by_profile_id(profile_id)
+        if nyx_task:
+            if not username:
+                username = str(nyx_task.get("username") or "").strip()
+            nyx_queue_password = str(nyx_task.get("password") or "").strip()
+    except Exception as exc:
+        logger.warning(f"Could not read Nyx queue credentials for {profile_id}: {exc}")
+
     env_password = (
         str(os.getenv("SNAPCHAT_LOGIN_PASSWORD", "") or "").strip()
         or str(os.getenv("SNAPCHAT_DEFAULT_PASSWORD", "") or "").strip()
     )
     if snapboard_password:
         password, source = snapboard_password, "snapboard.password"
+    elif nyx_queue_password:
+        password, source = nyx_queue_password, "nyx_queue.password"
     elif env_password:
         password, source = env_password, "env.password"
     else:

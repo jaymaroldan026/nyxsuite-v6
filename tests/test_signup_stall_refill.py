@@ -136,6 +136,36 @@ class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("refreshing_stuck_signup", steps)
         self.assertEqual(stall_state["refresh_attempts"], 1)
 
+    async def test_filled_signup_form_refreshes_when_captcha_icon_never_appears(self):
+        page = FakeProgressPage()
+        refill = mock.AsyncMock(return_value=True)
+        resubmit = mock.AsyncMock(return_value=True)
+        old = time.monotonic() - (signup_flow.SIGNUP_STALL_SECONDS + 5)
+        stall_state = {"refresh_attempts": 0, "form_since": old,
+                       "blank_refill_attempts": 0, "refill": refill}
+        steps = []
+
+        patches = self._common_patches() + [
+            mock.patch.object(signup_flow, "_signup_form_is_blank", mock.AsyncMock(return_value=False)),
+            mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=False)),
+            mock.patch.object(signup_flow, "_submit_is_clickable", mock.AsyncMock(return_value=False)),
+        ]
+        for p in patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+
+        stage = await signup_flow._wait_for_signup_progress(
+            page, logger=None, profile_id="777", timeout_ms=1000,
+            progress_callback=lambda s: steps.append(s),
+            resubmit_callback=resubmit, stall_state=stall_state,
+        )
+
+        self.assertEqual(stage, "")
+        resubmit.assert_awaited_once()
+        refill.assert_not_awaited()
+        self.assertIn("refreshing_stalled_signup", steps)
+        self.assertEqual(stall_state["refresh_attempts"], 1)
+
     async def test_no_hard_refresh_while_submit_is_clickable(self):
         # Long time on the form but the button IS clickable -> do NOT hard-refresh
         # (we're waiting on a legitimate handoff, not stuck).

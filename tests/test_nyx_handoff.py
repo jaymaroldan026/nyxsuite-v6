@@ -27,13 +27,20 @@ class NyxHandoffTests(unittest.TestCase):
             result = nyx_handoff.enqueue_profile_for_nyx(
                 "k1new",
                 "Willow",
+                username="freshuser",
+                password="FreshPw4!",
                 logger=None,
             )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["method"], "api")
         self.assertEqual(calls[1][0], "/queue/upsert")
-        self.assertEqual(calls[1][1]["entries"], [{"profile_id": "k1new", "model": "Willow"}])
+        self.assertEqual(calls[1][1]["entries"], [{
+            "profile_id": "k1new",
+            "model": "Willow",
+            "username": "freshuser",
+            "password": "FreshPw4!",
+        }])
         self.assertEqual(calls[2][0], "/bot/finish_remaining")
 
     def test_direct_fallback_queues_profile_and_requests_flush(self):
@@ -50,6 +57,8 @@ class NyxHandoffTests(unittest.TestCase):
                 result = nyx_handoff.enqueue_profile_for_nyx(
                     "k1fallback",
                     "Clea",
+                    username="fallbackuser",
+                    password="FallbackPw5!",
                     logger=None,
                 )
 
@@ -62,6 +71,34 @@ class NyxHandoffTests(unittest.TestCase):
             self.assertEqual(rows[0]["profile_id"], "k1fallback")
             self.assertEqual(rows[0]["model"], "Clea")
             self.assertEqual(rows[0]["source"], "nyxify_continuous")
+            self.assertNotIn("password", rows[0])
+            private_row = TaskStore(db_path=str(db_path)).get_task_by_profile_id("k1fallback")
+            self.assertEqual(private_row["username"], "fallbackuser")
+            self.assertEqual(private_row["password"], "FallbackPw5!")
+
+    def test_direct_fallback_preserves_credentials_on_blank_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "nyx_tasks.db"
+            store = TaskStore(db_path=str(db_path))
+            store.upsert_task(
+                profile_id="k1preserve",
+                model="Alicia",
+                username="saveduser",
+                password="SavedPw6!",
+                source="first",
+            )
+
+            store.upsert_task(
+                profile_id="k1preserve",
+                model="Alicia",
+                username="",
+                password="",
+                source="rescan",
+            )
+
+            private_row = store.get_task_by_profile_id("k1preserve")
+            self.assertEqual(private_row["username"], "saveduser")
+            self.assertEqual(private_row["password"], "SavedPw6!")
 
 
 if __name__ == "__main__":
