@@ -86,6 +86,7 @@ class _FakeStore:
 class _FakeAdsPower:
     def __init__(self, rename_error=None, rotate_during_create=False):
         self.closed = []
+        self.deleted = []
         self.renamed = []
         self.create_calls = []
         self.rotated_proxy = ""
@@ -104,6 +105,10 @@ class _FakeAdsPower:
 
     def close_profile(self, profile_id):
         self.closed.append(profile_id)
+        return {"code": 0}
+
+    def delete_profile(self, profile_id):
+        self.deleted.append(profile_id)
         return {"code": 0}
 
     def rename_profile(self, profile_id, new_name):
@@ -214,6 +219,9 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             handoffs.append((profile_id, model))
             return {"ok": True, "method": "api"}
 
+        async def fake_snapboard_rotation(*_args, **_kwargs):
+            return snapboard_rotation
+
         with mock.patch.object(nyxify_runner, "logger", _FakeLogger()), \
                 mock.patch.object(nyxify_runner, "load_nyxify_config", return_value=config), \
                 mock.patch.object(nyxify_runner, "_rotate_proxy_until_usable", side_effect=_fake_rotate_proxy), \
@@ -226,6 +234,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(nyxify_runner, "_request_snapboard_adspower_id_update", side_effect=adspower_id_update), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_adspower_name_update", return_value=True), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_rotation_sync", return_value=snapboard_rotation, create=True), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_rotation", side_effect=fake_snapboard_rotation), \
                 mock.patch.object(nyxify_runner, "_play_completion_sound"), \
                 mock.patch.object(nyxify_runner, "enqueue_profile_for_nyx", side_effect=fake_handoff):
             await nyxify_runner.process_task(task, store, adspower)
@@ -296,11 +305,16 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             signup_side_effect=_fake_signup_without_welcome_username,
         )
 
-        self.assertEqual(adspower.closed, [])
+        self.assertEqual(adspower.closed, ["k1new"])
+        self.assertEqual(adspower.deleted, ["k1new"])
         self.assertEqual(adspower.renamed, [])
         self.assertEqual(handoffs, [])
         self.assertFalse(any(update.get("status") == "DONE" for _task_id, update in store.updates))
-        self.assertTrue(any(update.get("last_step") == "awaiting_welcome_username" for _task_id, update in store.updates))
+        self.assertTrue(any(
+            update.get("status") == "PENDING"
+            and update.get("last_step") == "retry_pending_after_awaiting_welcome_username"
+            for _task_id, update in store.updates
+        ))
 
     async def test_incomplete_signup_does_not_push_adspower_id_to_snapboard(self):
         adspower_id_updates = []
@@ -317,8 +331,8 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             adspower_id_updates,
-            [("snapboard:123", "k1new")],
-            "AdsPower id is now pushed to SnapBoard immediately after profile creation",
+            [("snapboard:123", "k1new"), ("snapboard:123", "")],
+            "Incomplete signup cleanup should clear the deleted AdsPower id",
         )
 
     async def test_gui_proxy_check_failure_rotator_updates_task_proxy(self):

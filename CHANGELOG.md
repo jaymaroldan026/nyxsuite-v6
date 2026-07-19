@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.1.14 - Retry hardening for AdsPower open failures and account creation
+
+### Nyx: whole-profile retries now catch transient open exceptions
+- AdsPower/CDP launch failures such as delayed DevTools endpoints, target-closed
+  races, and Bitmoji editor load exceptions now flow through the same
+  whole-profile retry policy as normal failed task results.
+- Missing profile/config failures still stop immediately, so Nyx does not waste
+  retries on permanent setup problems.
+
+### Nyxify: account creation cleanup/retry covers OTP and SnapBoard stalls
+- Signup runs that reach OTP, SnapBoard handoff, or submitted signup states
+  without a final Snapchat username now use the existing cleanup path: close and
+  delete the created AdsPower profile, clear the SnapBoard AdsPower ID, rotate
+  the proxy when configured, and requeue the row as pending.
+- This prevents half-created accounts from being marked failed without the
+  retry/cleanup behavior already used for earlier signup blockers.
+
 ## 6.1.9 — AdsPower new ID-column UI compatibility
 
 ### AdsPower GUI control: new table layout support

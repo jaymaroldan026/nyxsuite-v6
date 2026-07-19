@@ -3,8 +3,8 @@
 # names, the GitHub-release updater check, and the extension/runner
 # version handshake once that is wired up.
 
-NYX_VERSION = "6.1.13"
-NYXIFY_VERSION = "6.1.13"
+NYX_VERSION = "6.1.14"
+NYXIFY_VERSION = "6.1.14"
 
 NYX_VERSION_LABEL = f"v{NYX_VERSION}"
 NYXIFY_VERSION_LABEL = f"v{NYXIFY_VERSION}"

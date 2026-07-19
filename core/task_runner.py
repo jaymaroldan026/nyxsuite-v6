@@ -3,7 +3,12 @@ import os
 import uuid
 
 from core.bitmoji_creator import BitmojiCreator
-from core.adspower import AdsPowerManager
+from core.adspower import (
+    AdsPowerManager,
+    AdsPowerPermissionError,
+    AdsPowerProfileNotOpenError,
+    AdsPowerUnreachableError,
+)
 from core.nyxify_runtime_config import load_nyxify_config
 from core.nyxify_task_store import NyxifyTaskStore
 
@@ -26,6 +31,15 @@ _TERMINAL_CLOSE_RESULTS = {"already_has_bitmoji", "banned_snap", "proxy_error"}
 # succeeds on a fresh re-run, which is exactly the manual "reset failed → rerun"
 # workaround, so we do it automatically.
 _TERMINAL_RUN_RESULTS = {"already_has_bitmoji", "banned_snap", "proxy_error", "manual_terminate"}
+_NON_RETRYABLE_PROFILE_OPEN_TOKENS = (
+    "profile does not exist",
+    "id column",
+    "no accessible adspower window",
+)
+_RETRYABLE_PROFILE_OPEN_TOKENS = (
+    "could not resolve its cdp endpoint",
+    "browser still launching",
+)
 # Extra whole-profile attempts after the first for a generic Bitmoji failure.
 NYX_BITMOJI_PROFILE_RETRIES = max(0, int(os.getenv("NYX_BITMOJI_PROFILE_RETRIES", "2")))
 NYX_BITMOJI_RETRY_BACKOFF_SECONDS = max(0.0, float(os.getenv("NYX_BITMOJI_RETRY_BACKOFF_SECONDS", "2.0")))
@@ -82,6 +96,20 @@ def _should_close_profile_after_bitmoji(success: bool, last_result: str) -> bool
     if str(last_result or "").strip() in _TERMINAL_CLOSE_RESULTS:
         return True
     return _env_bool("NYX_CLOSE_PROFILE_ON_FAILURE", False)
+
+
+def _should_retry_profile_attempt_exception(exc: Exception, last_result: str) -> bool:
+    """Whether an exception from one profile attempt should use profile retry."""
+    if str(last_result or "").strip() in _TERMINAL_RUN_RESULTS:
+        return False
+    if isinstance(exc, (AdsPowerPermissionError, AdsPowerUnreachableError)):
+        return False
+    if isinstance(exc, AdsPowerProfileNotOpenError):
+        message = str(exc or "").lower()
+        if any(token in message for token in _NON_RETRYABLE_PROFILE_OPEN_TOKENS):
+            return False
+        return any(token in message for token in _RETRYABLE_PROFILE_OPEN_TOKENS)
+    return True
 
 
 DEFAULT_SNAPCHAT_PASSWORD = "ABC123wgmi*"
@@ -284,10 +312,14 @@ async def run_profile_task(
         last_result = getattr(creator, "last_result", "normal")
         should_close_profile = _should_close_profile_after_bitmoji(success, last_result)
         return success, last_result
-    except Exception:
+    except Exception as exc:
         if creator is not None:
             last_result = getattr(creator, "last_result", last_result)
         should_close_profile = _should_close_profile_after_bitmoji(False, last_result)
+        try:
+            setattr(exc, "nyx_last_result", last_result)
+        except Exception:
+            pass
         raise
     finally:
         if profile_opened:
@@ -381,16 +413,36 @@ async def process_queued_task(task, store, adspower, logger):
             logger.info(f"Skipped stale/again-claimed task for profile {profile_id} before attempt {attempt}")
             return
 
-        success, last_result = await run_profile_task(
-            profile_id,
-            model,
-            logger,
-            adspower=adspower,
-            outfit_seed=outfit_seed,
-            progress_callback=progress_callback,
-            manual_queue_mode=manual_queue_mode,
-            owns_run=lambda: store.is_current_run(task_id, run_token),
-        )
+        try:
+            success, last_result = await run_profile_task(
+                profile_id,
+                model,
+                logger,
+                adspower=adspower,
+                outfit_seed=outfit_seed,
+                progress_callback=progress_callback,
+                manual_queue_mode=manual_queue_mode,
+                owns_run=lambda: store.is_current_run(task_id, run_token),
+            )
+        except Exception as attempt_error:
+            last_result = str(getattr(attempt_error, "nyx_last_result", "") or "normal").strip()
+            if last_result in _TERMINAL_RUN_RESULTS:
+                success = False
+                break
+            if (
+                attempt >= max_attempts
+                or not _should_retry_profile_attempt_exception(attempt_error, last_result)
+            ):
+                raise
+            logger.warning(
+                f"Bitmoji attempt {attempt}/{max_attempts} raised for profile {profile_id} "
+                f"at step '{last_step_seen['value']}' (last_result={last_result}): "
+                f"{attempt_error}; retrying the whole profile automatically."
+            )
+            store.update_last_step(task_id, "retrying_bitmoji_flow", run_token=run_token)
+            if NYX_BITMOJI_RETRY_BACKOFF_SECONDS > 0:
+                await asyncio.sleep(NYX_BITMOJI_RETRY_BACKOFF_SECONDS)
+            continue
 
         if success or last_result in _TERMINAL_RUN_RESULTS:
             break

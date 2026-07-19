@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from core import task_runner
+from core.adspower import AdsPowerProfileNotOpenError
 
 
 class _FakeStore:
@@ -81,6 +82,76 @@ class AuthPhaseRoutingTests(unittest.TestCase):
         call = store.status_calls[0]
         self.assertEqual(call["status"], "FAILED")
         self.assertEqual(call["step"], "manual_terminate")
+
+    def test_cdp_launch_timeout_exception_retries_whole_profile(self):
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
+        attempts = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            attempts.append(args)
+            if len(attempts) == 1:
+                raise AdsPowerProfileNotOpenError(
+                    "GUI control mode is selected, but profile k1abc could not "
+                    "be opened through the AdsPower desktop app. (UI error: "
+                    "Opened profile k1abc in the GUI but could not resolve its "
+                    "CDP endpoint. Is the browser still launching?)"
+                )
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_PROFILE_RETRIES", 1), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_RETRY_BACKOFF_SECONDS", 0):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(len(attempts), 2)
+        self.assertIn(
+            "retrying_bitmoji_flow",
+            [call["step"] for call in store.last_step_calls],
+        )
+        self.assertEqual(store.status_calls[-1]["status"], "DONE")
+
+    def test_missing_profile_exception_is_not_retried(self):
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1missing", "model": "willow"}
+        attempts = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            attempts.append(args)
+            raise AdsPowerProfileNotOpenError("profile does not exist: k1missing")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_PROFILE_RETRIES", 2), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_RETRY_BACKOFF_SECONDS", 0):
+            with self.assertRaises(AdsPowerProfileNotOpenError):
+                asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(len(attempts), 1)
+
+    def test_transient_bitmoji_exception_retries_whole_profile(self):
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
+        attempts = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            attempts.append(args)
+            if len(attempts) == 1:
+                raise RuntimeError("Editor failed to load")
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_PROFILE_RETRIES", 1), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_RETRY_BACKOFF_SECONDS", 0):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(store.status_calls[-1]["status"], "DONE")
 
     def test_nyx_holds_profile_when_nyxify_has_not_reached_success(self):
         store = _FakeStore()

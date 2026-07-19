@@ -245,6 +245,8 @@ def _classify_failure_last_step(created, last_step, error_message):
         "retrying_otp",
         "submitting_otp",
         "waiting_for_signup_handoff",
+        "signup_form_submitted",
+        "awaiting_welcome_username",
     }
     # Preserve the exact signup sub-step the row died on — both the known steps
     # above and any emitted email/otp/username step — so a failure reads e.g.
@@ -332,6 +334,10 @@ def _should_cleanup_failed_created_profile(failure_last_step, error_message):
         "retrying_otp",
         "submitting_otp",
         "waiting_for_signup_handoff",
+        "signup_handoff",
+        "signup_opened",
+        "signup_form_submitted",
+        "awaiting_welcome_username",
         "proxy_check_failed",
         "email_fetch_failed",
         "account_creation_blocked",
@@ -1600,6 +1606,12 @@ async def process_task(task, store, adspower):
         completion_status = "DONE" if last_step in {"signup_complete", "queued_for_nyx"} else "FAILED"
         if completion_status != "DONE" and not completion_error:
             completion_error = "Signup did not reach the Snapchat welcome page with a final username."
+        if (
+            completion_status != "DONE"
+            and created
+            and _should_cleanup_failed_created_profile(last_step, completion_error)
+        ):
+            raise RuntimeError(completion_error)
 
         close_profile_id = str(created.get("profile_id") or "").strip()
         close_profile_after_completion = bool(

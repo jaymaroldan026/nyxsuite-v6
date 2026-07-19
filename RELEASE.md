@@ -9,14 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
-### NyxSuite v6.1.9
+### NyxSuite v6.1.14
 
-- AdsPower GUI control now supports the updated Profiles table where `ID` is
-  separate from optional order columns.
-- Optional/reordered columns such as `#`, date fields, platform, and tags are
-  ignored for row identity; actions anchor on the visible AdsPower `ID`.
-- If the `ID` column is hidden, NyxSuite reports that the operator must enable
-  the `ID` column instead of acting from unsafe row order.
+- Nyx whole-profile retries now also catch transient AdsPower/CDP open
+  exceptions, including delayed DevTools endpoints, target-closed races, and
+  Bitmoji editor load exceptions.
+- Permanent profile/config errors still fail immediately instead of burning
+  retries.
+- Nyxify account creation now sends OTP, SnapBoard handoff, and submitted-signup
+  stalls through the existing cleanup/retry path: close/delete the created
+  AdsPower profile, clear the SnapBoard AdsPower ID, optionally rotate proxy,
+  and requeue the row as pending.
 
 ## Create a New Release
 
