@@ -291,6 +291,10 @@ pre {
   font-size: 11px;
 }
 
+.replace-banned-panel p:empty {
+  display: none;
+}
+
 .replace-banned-actions {
   margin-top: 2px;
 }

@@ -55,7 +55,7 @@ const PRODUCTS = {
 
 const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
-  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false, bannedRows: [] },
+  nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false, bannedRows: [], proxyRankingRows: [] },
   version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [], availableVersions: [] },
 };
@@ -1083,32 +1083,66 @@ function proxyScoreClass(score) {
   return "score-bad";
 }
 
-// Hand-rolled inline-SVG bar chart (no chart lib — the dashboard is an offline
-// SPA). One bar per subnet, length ∝ score, coloured by the good/mid/bad bucket.
+function proxyScoreNumber(row) {
+  return Number(row && row.score || 0);
+}
+
+function badProxyRows(rows) {
+  return (rows || []).filter(row => proxyScoreClass(proxyScoreNumber(row)) === "score-bad" && String(row.subnet || "").trim());
+}
+
+function updateProxyRankBulkButton(rows) {
+  const btn = el("proxyrank-ban-red");
+  if (!btn) return;
+  const badRows = badProxyRows(rows);
+  btn.disabled = !badRows.length;
+  btn.textContent = badRows.length ? `Ban all red proxies (${badRows.length})` : "Ban all red proxies";
+}
+
+function renderProxyRankSummary(rows) {
+  const host = el("proxyrank-summary");
+  if (!host) return;
+  const list = rows || [];
+  const counts = list.reduce((acc, row) => {
+    const cls = proxyScoreClass(proxyScoreNumber(row));
+    if (cls === "score-bad") acc.bad += 1;
+    else if (cls === "score-mid") acc.mid += 1;
+    else acc.good += 1;
+    return acc;
+  }, { good: 0, mid: 0, bad: 0 });
+  host.innerHTML = `
+    <span class="proxyrank-chip proxyrank-chip-good"><b>${counts.good}</b> Good</span>
+    <span class="proxyrank-chip proxyrank-chip-mid"><b>${counts.mid}</b> Watch</span>
+    <span class="proxyrank-chip proxyrank-chip-bad"><b>${counts.bad}</b> Red</span>
+  `;
+}
+
+// Hand-rolled inline-SVG bar chart (no chart lib - the dashboard is an offline
+// SPA). Worst subnets are shown first so problem ranges are visible immediately.
 // Snapshot only: the store keeps running counters, not history.
 function renderProxyRankChart(rows) {
   const host = el("proxyrank-chart");
   if (!host) return;
   if (!rows || !rows.length) { host.innerHTML = ""; return; }
-  const data = rows.slice(0, 14);   // table below carries the full list
-  const W = 640, rowH = 26, top = 10, padL = 104, padR = 60;
+  const data = rows.slice().sort((a, b) => proxyScoreNumber(b) - proxyScoreNumber(a)).slice(0, 14);
+  const W = 720, rowH = 30, top = 12, padL = 112, padR = 74;
   const H = top * 2 + data.length * rowH;
   const barMax = W - padL - padR;
-  const maxScore = Math.max(1, ...data.map(d => Number(d.score || 0)));
+  const maxScore = Math.max(1, ...data.map(d => proxyScoreNumber(d)));
   const bars = data.map((d, i) => {
-    const sc = Number(d.score || 0);
+    const sc = proxyScoreNumber(d);
     const y = top + i * rowH;
-    const bw = Math.max(2, (sc / maxScore) * barMax);
+    const bw = sc <= 0 ? 3 : Math.max(8, (sc / maxScore) * barMax);
     const cls = proxyScoreClass(sc).replace("score-", "prc-");
     const subnet = escapeHtml(String(d.subnet || ""));
     return `<text class="prc-label" x="0" y="${y + rowH / 2}" dominant-baseline="middle">${subnet}</text>`
-      + `<rect class="prc-track" x="${padL}" y="${y + 4}" width="${barMax}" height="${rowH - 12}" rx="3"></rect>`
-      + `<rect class="prc-bar ${cls}" x="${padL}" y="${y + 4}" width="${bw.toFixed(1)}" height="${rowH - 12}" rx="3"></rect>`
+      + `<rect class="prc-track" x="${padL}" y="${y + 5}" width="${barMax}" height="${rowH - 10}" rx="4"></rect>`
+      + `<rect class="prc-bar ${cls}" x="${padL}" y="${y + 5}" width="${bw.toFixed(1)}" height="${rowH - 10}" rx="4"></rect>`
       + `<text class="prc-val" x="${padL + barMax + 6}" y="${y + rowH / 2}" dominant-baseline="middle">${sc.toFixed(2)}</text>`;
   }).join("");
   const more = rows.length > data.length
     ? `<div class="prc-more">+${rows.length - data.length} more subnets in the table below</div>` : "";
-  host.innerHTML = `<div class="prc-cap">Score by subnet — lower is better</div>`
+  host.innerHTML = `<div class="prc-cap">Worst subnets by score - higher is worse</div>`
     + `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Proxy subnet score chart, lower is better">${bars}</svg>${more}`;
 }
 
@@ -1118,21 +1152,25 @@ async function renderProxyRanking() {
   const r = await fetch(`http://${HOST}:8866/proxy_ranking`, { headers: tokenHeaders() })
     .then(r => r.json()).catch(() => ({ rows: [] }));
   const rows = (r && r.rows) || [];
+  state.nyxify.proxyRankingRows = rows;
+  renderProxyRankSummary(rows);
   renderProxyRankChart(rows);
+  updateProxyRankBulkButton(rows);
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="hint" style="text-align:center;padding:14px">No proxy usage recorded yet.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(row => {
     const subnet = escapeHtml(String(row.subnet || ""));
-    const sc = Number(row.score || 0);
-    return `<tr>
+    const sc = proxyScoreNumber(row);
+    const cls = proxyScoreClass(sc);
+    return `<tr class="${cls}-row">
       <td>${subnet}</td>
       <td>${row.uses || 0}</td>
       <td>${row.retries || 0}</td>
       <td>${row.creation_fails || 0}</td>
       <td>${row.ban_hits || 0}</td>
-      <td class="${proxyScoreClass(sc)}">${sc}</td>
+      <td class="${cls}">${sc.toFixed(2)}</td>
       <td><button class="btn btn-sm proxyrank-ban" data-subnet="${escapeAttr(String(row.subnet || ""))}" type="button">Ban</button></td>
     </tr>`;
   }).join("");
@@ -1156,6 +1194,32 @@ async function renderProxyRanking() {
   });
 }
 
+async function banBadProxyRows() {
+  const btn = el("proxyrank-ban-red");
+  const rows = state.nyxify.proxyRankingRows || [];
+  const badRows = badProxyRows(rows);
+  const subnets = badRows.map(row => String(row.subnet || "").trim()).filter(Boolean);
+  if (!subnets.length) {
+    toast("No red proxy subnets to ban.", true);
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Banning red proxies...";
+  }
+  const res = await fetch(`http://${HOST}:8866/proxy_ranking/ban_many`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...tokenHeaders() },
+    body: JSON.stringify({ subnets, token: TOKEN }),
+  }).then(r => r.json()).catch(() => ({ ok: false }));
+  toast(res.ok ? (res.message || `Banned ${subnets.length} red proxy subnet(s).`) : (res.error || "Bulk ban failed."), res.ok);
+  if (res.ok && res.config) {
+    state.nyxify.config = res.config;
+    if (typeof renderNyxifyAdvanced === "function") renderNyxifyAdvanced();
+  }
+  renderProxyRanking();
+}
+
 el("proxyrank-toggle-btn").addEventListener("click", () => {
   const willShow = !state.nyxify.proxyrankVisible;
   state.nyxify.proxyrankVisible = willShow;
@@ -1164,6 +1228,7 @@ el("proxyrank-toggle-btn").addEventListener("click", () => {
 });
 
 el("proxyrank-refresh").addEventListener("click", () => renderProxyRanking());
+el("proxyrank-ban-red").addEventListener("click", banBadProxyRows);
 
   // ---------- Configure Nyxmoji (editor) ----------
 const bm = {

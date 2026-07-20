@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.3
+
+- Nyxify now detects Snapchat wrong-code verification errors and recovers by
+  going back, requesting a fresh SnapBoard email or phone number, and retrying
+  the new code on the same signup.
+- The SnapBoard banned-row scan controls no longer show the initial
+  "Scan SnapBoard for banned rows." helper text in the dashboard or popup.
+- Proxy Ranking now surfaces the worst subnets first, adds Good/Watch/Red
+  summary chips, highlights red rows, and adds a bulk "Ban all red proxies"
+  action.
+
 ### NyxSuite v6.2.2
 
 - Nyxify signup recovery now refreshes faster: no-captcha/signup stalls after

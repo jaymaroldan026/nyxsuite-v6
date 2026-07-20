@@ -1427,6 +1427,55 @@ class NyxifyLocalApiServer:
                     self._write_json(200, {"ok": True, "config": config, "message": "Nyxify config saved locally."})
                     return
 
+                if self.path == "/proxy_ranking/ban_many":
+                    raw_values = payload.get("subnets")
+                    if raw_values is None:
+                        raw_values = payload.get("values")
+                    if raw_values is None:
+                        raw_values = payload.get("proxies")
+                    if isinstance(raw_values, str):
+                        values = [
+                            item.strip()
+                            for chunk in raw_values.splitlines()
+                            for item in chunk.split(",")
+                            if item.strip()
+                        ]
+                    elif isinstance(raw_values, list):
+                        values = [str(item or "").strip() for item in raw_values if str(item or "").strip()]
+                    else:
+                        values = []
+
+                    deduped = []
+                    seen = set()
+                    for value in values:
+                        if value in seen:
+                            continue
+                        seen.add(value)
+                        deduped.append(value)
+                    if not deduped:
+                        self._write_json(400, {"ok": False, "error": "Missing subnets/proxies to ban."})
+                        return
+
+                    current = load_nyxify_config()
+                    blocked = list(current.get("blocked_proxies") or [])
+                    added = []
+                    for value in deduped:
+                        if value not in blocked:
+                            blocked.append(value)
+                            added.append(value)
+                    config = save_nyxify_config({"blocked_proxies": blocked})
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "config": config,
+                            "count": len(added),
+                            "subnets": added,
+                            "message": f"{len(added)} red proxy subnet(s) added to the Proxy Blocker.",
+                        },
+                    )
+                    return
+
                 if self.path == "/proxy_ranking/ban":
                     # Accepts a subnet (Proxy Ranking "Ban") or a full proxy value
                     # (popup ban) — either way it's appended verbatim to the

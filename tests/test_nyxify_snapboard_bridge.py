@@ -160,16 +160,30 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
 
     def test_dashboard_replace_banned_controls_and_no_nyx_clear_queue(self):
         html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
+        popup_html = (ROOT / "nyxify_extension" / "popup.html").read_text(encoding="utf-8")
         dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "webui" / "dashboard.css").read_text(encoding="utf-8")
 
         self.assertIn('id="scan-banned-nyxify"', html)
         self.assertIn('id="replace-banned-nyxify"', html)
+        self.assertNotIn("Scan SnapBoard for banned rows.", html)
+        self.assertNotIn("Scan SnapBoard for banned rows.", popup_html)
         self.assertIn("scanBannedFromDashboard", dashboard)
         self.assertIn("replaceBannedFromDashboard", dashboard)
         self.assertIn("command-grid", css)
         nyx_config = dashboard.split("nyxify: {", 1)[0]
         self.assertNotIn('["Clear Queue", "/queue/clear", "bad"]', nyx_config)
+
+    def test_proxy_ranking_has_bulk_red_ban_action(self):
+        html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
+        dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")
+        css = (ROOT / "webui" / "dashboard.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="proxyrank-ban-red"', html)
+        self.assertIn("Ban all red", html)
+        self.assertIn("banBadProxyRows", dashboard)
+        self.assertIn("/proxy_ranking/ban_many", dashboard)
+        self.assertIn("proxyrank-summary", css)
 
     def test_dashboard_runner_controls_are_anchored_upper_left(self):
         html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")

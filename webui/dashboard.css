@@ -66,6 +66,7 @@ main{padding:16px 20px;max-width:1760px;margin:0 auto}
 .compact-toolbar{margin:0}
 .replace-banned-dashboard{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:rgba(12,20,36,.72);padding:6px 8px}
 .replace-banned-dashboard .detail{font-size:12px}
+.replace-banned-dashboard .detail:empty{display:none}
 .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
 .panel-head-btns{display:flex;gap:6px;flex-shrink:0}
 .runner-status-strip{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px;min-height:34px}
@@ -297,20 +298,28 @@ tr.group-header td{background:rgba(99,102,241,.08);font-weight:600;font-size:13p
 .proxyrank-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 6px}
 .proxyrank-head h3{margin:0;font-size:14px;display:flex;align-items:baseline;gap:8px}
 .proxyrank-head h3 .hint{margin:0;font-weight:400}
+.proxyrank-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.proxyrank-summary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px}
+.proxyrank-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:5px 9px;font-size:11px;color:var(--muted);background:rgba(12,20,36,.72)}
+.proxyrank-chip b{font-size:13px;color:var(--text)}
+.proxyrank-chip-good{border-color:rgba(16,185,129,.28);background:rgba(16,185,129,.08)}
+.proxyrank-chip-mid{border-color:rgba(245,158,11,.32);background:rgba(245,158,11,.08)}
+.proxyrank-chip-bad{border-color:rgba(239,68,68,.34);background:rgba(239,68,68,.09)}
 /* Proxy ranking snapshot bar chart (inline SVG) */
-.proxyrank-chart{margin:2px 0 12px;overflow-x:auto}
+.proxyrank-chart{margin:2px 0 12px;overflow-x:auto;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:rgba(12,20,36,.46);padding:10px 12px}
 .proxyrank-chart:empty{display:none}
 .proxyrank-chart svg{min-width:420px;display:block}
 .prc-cap{font-size:11px;color:var(--muted);margin:0 0 6px;font-weight:600}
 .prc-label{fill:var(--muted);font:600 12px "Fira Code",monospace}
 .prc-val{fill:var(--text);font:600 12px "Fira Code",monospace}
-.prc-track{fill:var(--panel-hi)}
+.prc-track{fill:rgba(31,44,70,.78)}
 .prc-bar.prc-good{fill:var(--ok)}
 .prc-bar.prc-mid{fill:var(--warn)}
 .prc-bar.prc-bad{fill:var(--bad)}
 .prc-more{font-size:11px;color:var(--muted);margin-top:6px}
 table.proxyrank-table tbody td{white-space:nowrap;cursor:default}
 table.proxyrank-table tbody tr{cursor:default}
+.proxyrank-table tr.score-bad-row td{background:rgba(239,68,68,.045)}
 .proxyrank-table .score-good{color:var(--ok);font-weight:600}
 .proxyrank-table .score-mid{color:var(--warn);font-weight:600}
 .proxyrank-table .score-bad{color:var(--bad);font-weight:600}

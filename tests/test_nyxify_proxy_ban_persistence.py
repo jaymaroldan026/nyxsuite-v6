@@ -97,6 +97,12 @@ class ProxyBanPersistenceTests(unittest.TestCase):
         self._post("/proxy_ranking/ban", {"subnet": "9.9"})
         self.assertEqual(self._blocked(), ["9.9"])
 
+    def test_bulk_ranking_ban_appends_multiple_subnets_idempotently(self):
+        res = self._post("/proxy_ranking/ban_many", {"subnets": ["9.9", "10.10", "9.9", ""]})
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["count"], 2)
+        self.assertEqual(self._blocked(), ["9.9", "10.10"])
+
 
 if __name__ == "__main__":
     unittest.main()
