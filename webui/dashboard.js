@@ -1099,6 +1099,18 @@ function updateProxyRankBulkButton(rows) {
   btn.textContent = badRows.length ? `Ban all red proxies (${badRows.length})` : "Ban all red proxies";
 }
 
+async function loadProxyRankingRows() {
+  try {
+    const r = await fetch(`http://${HOST}:8866/proxy_ranking`, { headers: tokenHeaders() })
+      .then(r => r.json());
+    const rows = (r && r.rows) || [];
+    state.nyxify.proxyRankingRows = rows;
+    return rows;
+  } catch (e) {
+    return state.nyxify.proxyRankingRows || [];
+  }
+}
+
 function renderProxyRankSummary(rows) {
   const host = el("proxyrank-summary");
   if (!host) return;
@@ -1149,10 +1161,7 @@ function renderProxyRankChart(rows) {
 async function renderProxyRanking() {
   const tbody = el("proxyrank-tbody");
   if (!tbody) return;
-  const r = await fetch(`http://${HOST}:8866/proxy_ranking`, { headers: tokenHeaders() })
-    .then(r => r.json()).catch(() => ({ rows: [] }));
-  const rows = (r && r.rows) || [];
-  state.nyxify.proxyRankingRows = rows;
+  const rows = await loadProxyRankingRows();
   renderProxyRankSummary(rows);
   renderProxyRankChart(rows);
   updateProxyRankBulkButton(rows);
@@ -1196,7 +1205,7 @@ async function renderProxyRanking() {
 
 async function banBadProxyRows() {
   const btn = el("proxyrank-ban-red");
-  const rows = state.nyxify.proxyRankingRows || [];
+  const rows = await loadProxyRankingRows();
   const badRows = badProxyRows(rows);
   const subnets = badRows.map(row => String(row.subnet || "").trim()).filter(Boolean);
   if (!subnets.length) {

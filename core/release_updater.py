@@ -644,6 +644,9 @@ def _sync_dir(name: str, staging_root: Path, install_root: Path) -> bool:
         return False
     dest = install_root / name
     try:
+        if not any(child.is_file() for child in src.rglob("*")):
+            _log(f"skipping empty staged directory {name}", "warning")
+            return False
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(src, dest)

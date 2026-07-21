@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.4
+
+- Windows launcher now starts from its own install folder, preserves failures,
+  and pauses when setup fails so the operator can read the error.
+- Windows PowerShell launch now quotes the bridge entry-script path, fixing
+  installs whose folder path contains spaces.
+- The source updater now skips empty staged source directories, preventing an
+  empty release folder from wiping installed bridge/native-host files.
+- Proxy Ranking's "Ban all red proxies" now refreshes live ranking rows before
+  posting the ban, and explicit ban actions turn Proxy Blocker enforcement on.
+
 ### NyxSuite v6.2.3
 
 - Nyxify now detects Snapchat wrong-code verification errors and recovers by

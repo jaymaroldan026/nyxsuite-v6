@@ -196,6 +196,14 @@ function Get-ArgumentArray {
     return $result
 }
 
+function Quote-ProcessArgument {
+    param(
+        [string]$Value
+    )
+
+    return '"' + $Value.Replace('"', '\"') + '"'
+}
+
 function Test-VenvPythonAvailable {
     if (-not (Test-Path -LiteralPath $venvPython)) {
         return $false
@@ -704,7 +712,8 @@ function Start-EntryScript {
 
     $pythonExecutable = if (Test-Path -LiteralPath $venvPythonw) { $venvPythonw } else { $venvPython }
     Write-Status "Launching $([System.IO.Path]::GetFileName($Path))."
-    Start-Process -FilePath $pythonExecutable -ArgumentList @($Path) -WorkingDirectory $PSScriptRoot | Out-Null
+    $scriptArgument = Quote-ProcessArgument -Value $Path
+    Start-Process -FilePath $pythonExecutable -ArgumentList @($scriptArgument) -WorkingDirectory $PSScriptRoot | Out-Null
     return 0
 }
 

@@ -1463,7 +1463,10 @@ class NyxifyLocalApiServer:
                         if value not in blocked:
                             blocked.append(value)
                             added.append(value)
-                    config = save_nyxify_config({"blocked_proxies": blocked})
+                    config = save_nyxify_config({
+                        "blocked_proxies": blocked,
+                        "proxy_blocker_enabled": True,
+                    })
                     self._write_json(
                         200,
                         {
@@ -1494,7 +1497,10 @@ class NyxifyLocalApiServer:
                     blocked = list(current.get("blocked_proxies") or [])
                     if value not in blocked:
                         blocked.append(value)
-                    config = save_nyxify_config({"blocked_proxies": blocked})
+                    config = save_nyxify_config({
+                        "blocked_proxies": blocked,
+                        "proxy_blocker_enabled": True,
+                    })
                     self._write_json(
                         200,
                         {

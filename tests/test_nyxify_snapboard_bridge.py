@@ -185,6 +185,24 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn("/proxy_ranking/ban_many", dashboard)
         self.assertIn("proxyrank-summary", css)
 
+    def test_proxy_ranking_bulk_red_ban_refreshes_live_rows_before_posting(self):
+        dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")
+
+        self.assertNotEqual(
+            dashboard.find("async function loadProxyRankingRows()"),
+            -1,
+            "Dashboard should centralize live proxy-ranking row loading.",
+        )
+        fn_start = dashboard.index("async function banBadProxyRows()")
+        fn_end = dashboard.index('el("proxyrank-toggle-btn")', fn_start)
+        bulk_fn = dashboard[fn_start:fn_end]
+
+        self.assertLess(
+            bulk_fn.index("await loadProxyRankingRows"),
+            bulk_fn.index("badProxyRows"),
+            "Bulk red ban must compute red subnets from freshly loaded ranking rows.",
+        )
+
     def test_dashboard_runner_controls_are_anchored_upper_left(self):
         html = (ROOT / "webui" / "index.html").read_text(encoding="utf-8")
         dashboard = (ROOT / "webui" / "dashboard.js").read_text(encoding="utf-8")

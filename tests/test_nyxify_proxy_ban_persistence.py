@@ -92,6 +92,15 @@ class ProxyBanPersistenceTests(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(self._blocked(), ["9.9", "1.2.3.4:8080:u:p"])
 
+    def test_ranking_ban_enables_proxy_blocker(self):
+        self._post("/config", {"proxy_blocker_enabled": False})
+        res = self._post("/proxy_ranking/ban", {"subnet": "9.9"})
+
+        self.assertTrue(res["ok"])
+        config = rc.load_nyxify_config()
+        self.assertEqual(config["blocked_proxies"], ["9.9"])
+        self.assertTrue(config["proxy_blocker_enabled"])
+
     def test_ban_is_idempotent(self):
         self._post("/proxy_ranking/ban", {"subnet": "9.9"})
         self._post("/proxy_ranking/ban", {"subnet": "9.9"})
@@ -102,6 +111,15 @@ class ProxyBanPersistenceTests(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["count"], 2)
         self.assertEqual(self._blocked(), ["9.9", "10.10"])
+
+    def test_bulk_ranking_ban_enables_proxy_blocker(self):
+        self._post("/config", {"proxy_blocker_enabled": False})
+        res = self._post("/proxy_ranking/ban_many", {"subnets": ["9.9"]})
+
+        self.assertTrue(res["ok"])
+        config = rc.load_nyxify_config()
+        self.assertEqual(config["blocked_proxies"], ["9.9"])
+        self.assertTrue(config["proxy_blocker_enabled"])
 
 
 if __name__ == "__main__":
