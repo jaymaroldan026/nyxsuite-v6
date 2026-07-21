@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core.nyx_runtime_config import load_nyx_config, save_nyx_config
 from core.local_http import apply_cors
+from core.task_store import CONTINUOUS_TASK_PRIORITY
 
 QUEUE_LIST_LIMIT = 500
 
@@ -119,6 +120,56 @@ class NyxLocalApiServer:
 
                 if not self._is_authorized(payload):
                     self._write_json(401, {"ok": False, "error": "Unauthorized request."})
+                    return
+
+                if self.path == "/queue/run_now":
+                    profile_id = str(payload.get("profile_id", "")).strip()
+                    model = str(payload.get("model", "")).strip()
+                    username = str(payload.get("username", "")).strip()
+                    password = str(payload.get("password", "")).strip()
+                    if not profile_id or not model:
+                        self._write_json(400, {"ok": False, "error": "Profile ID and model are required."})
+                        return
+
+                    _task_id, action = outer.store.upsert_task(
+                        profile_id=profile_id,
+                        model=model,
+                        gender="female",
+                        status="PENDING",
+                        source="nyxify_continuous",
+                        username=username,
+                        password=password,
+                        priority=CONTINUOUS_TASK_PRIORITY,
+                    )
+                    count = 0 if action in {"ignored_done", "ignored_missing"} else 1
+                    start_result = None
+                    if count:
+                        finish_action = outer.action_handlers.get("finish_remaining")
+                        if finish_action is not None:
+                            try:
+                                start_result = finish_action({})
+                            except Exception as exc:
+                                self._write_json(
+                                    500,
+                                    {
+                                        "ok": False,
+                                        "count": count,
+                                        "action": action,
+                                        "error": str(exc) or "Could not start Nyx.",
+                                    },
+                                )
+                                return
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "count": count,
+                            "action": action,
+                            "priority": CONTINUOUS_TASK_PRIORITY,
+                            "start_result": start_result,
+                            "message": "Nyx run-now task queued.",
+                        },
+                    )
                     return
 
                 if self.path == "/queue/upsert":

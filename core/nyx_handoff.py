@@ -5,6 +5,7 @@ from pathlib import Path
 
 from core import runner_flags
 from core.process_utils import APP_DATA_DIR
+from core.task_store import CONTINUOUS_TASK_PRIORITY
 
 
 NYX_LOCAL_API_URL = os.getenv("NYX_LOCAL_API_URL", "http://127.0.0.1:8865").rstrip("/")
@@ -61,6 +62,7 @@ def _queue_direct(profile_id, model, username="", password=""):
         source="nyxify_continuous",
         username=username,
         password=password,
+        priority=CONTINUOUS_TASK_PRIORITY,
     )
     runner_flags.nyx_request_flush()
     return action
@@ -116,21 +118,18 @@ def enqueue_profile_for_nyx(profile_id, model, logger=None, username="", passwor
     try:
         token = _ensure_nyx_local_api_token()
         queue_result = _api_json(
-            "/queue/upsert",
+            "/queue/run_now",
             {
-                "entries": [{
-                    "profile_id": normalized_profile_id,
-                    "model": normalized_model,
-                    "username": normalized_username,
-                    "password": normalized_password,
-                }],
+                "profile_id": normalized_profile_id,
+                "model": normalized_model,
+                "username": normalized_username,
+                "password": normalized_password,
             },
             token=token,
         )
         if not queue_result.get("ok"):
             raise RuntimeError(queue_result.get("error") or "Nyx queue upsert failed.")
-
-        start_result = _api_json("/bot/finish_remaining", {}, token=token)
+        start_result = queue_result.get("start_result") or {}
         if not start_result.get("ok"):
             raise RuntimeError(start_result.get("error") or "Nyx start/flush request failed.")
 

@@ -1,7 +1,9 @@
 import asyncio
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 class _RequestsResponse:
@@ -45,6 +47,8 @@ sys.modules.setdefault("playwright", _playwright_pkg)
 sys.modules.setdefault("playwright.async_api", _playwright_async_api)
 
 import nyxify_runner
+from core.task_store import TaskStore
+from core.nyxify_task_store import NyxifyTaskStore
 
 
 class _FakeLogger:
@@ -215,8 +219,8 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             "email": "person@example.com",
         }
 
-        def fake_handoff(profile_id, model, logger=None):
-            handoffs.append((profile_id, model))
+        def fake_handoff(profile_id, model, logger=None, username="", password=""):
+            handoffs.append((profile_id, model, username, password))
             return {"ok": True, "method": "api"}
 
         async def fake_snapboard_rotation(*_args, **_kwargs):
@@ -258,7 +262,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
         self.assertEqual(adspower.closed, [])
-        self.assertEqual(handoffs, [("k1new", "Clea")])
+        self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
 
     async def test_toggle_off_keeps_existing_close_after_signup_behavior(self):
@@ -277,11 +281,46 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(adspower.closed, [])
         self.assertEqual(adspower.renamed, [])
-        self.assertEqual(handoffs, [("k1new", "Clea")])
+        self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertTrue(any(update.get("last_step") == "profile_rename_failed" for _task_id, update in store.updates))
         self.assertTrue(any("rename unavailable" in update.get("error", "") for _task_id, update in store.updates))
         self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
         self.assertTrue(any(update.get("status") == "DONE" for _task_id, update in store.updates))
+
+    async def test_continuous_wait_guard_detects_active_nyx_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "nyx_tasks.db"
+            store = TaskStore(db_path=str(db_path))
+            task_id, _action = store.upsert_task(
+                profile_id="k1nyx",
+                model="Clea",
+                source="nyxify_continuous",
+                priority=100,
+            )
+
+            self.assertTrue(nyxify_runner._continuous_nyx_handoff_active(db_path=str(db_path)))
+
+            store.update_status(task_id, "DONE", "completed")
+
+            self.assertFalse(nyxify_runner._continuous_nyx_handoff_active(db_path=str(db_path)))
+
+    async def test_continuous_wait_guard_marks_ready_pending_nyxify_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = NyxifyTaskStore(db_path=str(Path(tmp) / "nyxify_tasks.db"))
+            store.upsert_task(
+                row_key="snapboard:ready",
+                model="Clea",
+                ip_address="1.2.3.4:5555",
+                proxy_address="1.2.3.4:5555:user:pass",
+                username="readyuser",
+                email="person@example.com",
+            )
+
+            count = nyxify_runner._mark_pending_tasks_waiting_for_continuous_nyx(store)
+
+            self.assertEqual(count, 1)
+            row = store.list_tasks(limit=1)[0]
+            self.assertEqual(row["last_step"], "waiting_for_continuous_nyx")
 
     async def test_close_path_publishes_closing_profile_before_profile_closed(self):
         # Non-continuous completion must not publish the ready step while the

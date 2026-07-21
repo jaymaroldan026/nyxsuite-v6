@@ -15,10 +15,8 @@ class NyxHandoffTests(unittest.TestCase):
             calls.append((path, payload or {}, token))
             if path == "/token":
                 return {"token": "tok"}
-            if path == "/queue/upsert":
-                return {"ok": True, "count": 1}
-            if path == "/bot/finish_remaining":
-                return {"ok": True, "started": True}
+            if path == "/queue/run_now":
+                return {"ok": True, "count": 1, "start_result": {"ok": True, "started": True}}
             raise AssertionError(path)
 
         with mock.patch.object(nyx_handoff, "_api_json", side_effect=fake_api_json), \
@@ -34,14 +32,14 @@ class NyxHandoffTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["method"], "api")
-        self.assertEqual(calls[1][0], "/queue/upsert")
-        self.assertEqual(calls[1][1]["entries"], [{
+        self.assertEqual(calls[1][0], "/queue/run_now")
+        self.assertEqual(calls[1][1], {
             "profile_id": "k1new",
             "model": "Willow",
             "username": "freshuser",
             "password": "FreshPw4!",
-        }])
-        self.assertEqual(calls[2][0], "/bot/finish_remaining")
+        })
+        self.assertEqual(len(calls), 2)
 
     def test_direct_fallback_queues_profile_and_requests_flush(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,6 +69,7 @@ class NyxHandoffTests(unittest.TestCase):
             self.assertEqual(rows[0]["profile_id"], "k1fallback")
             self.assertEqual(rows[0]["model"], "Clea")
             self.assertEqual(rows[0]["source"], "nyxify_continuous")
+            self.assertEqual(rows[0]["priority"], 100)
             self.assertNotIn("password", rows[0])
             private_row = TaskStore(db_path=str(db_path)).get_task_by_profile_id("k1fallback")
             self.assertEqual(private_row["username"], "fallbackuser")

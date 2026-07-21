@@ -107,6 +107,12 @@ def classify_task_failure(error_msg):
 
     return "error"
 
+
+def _refresh_pending_queue(_pending_queue, store):
+    """Reload PENDING rows so a mid-batch run-now handoff can preempt normal rows."""
+    return deque(store.get_pending_tasks())
+
+
 async def process_task(task, store, adspower):
     try:
         await process_queued_task(task, store, adspower, logger)
@@ -279,11 +285,17 @@ async def main():
                         runtime_config.get("max_parallel_profiles", DEFAULT_MAX_PARALLEL_PROFILES)
                         or DEFAULT_MAX_PARALLEL_PROFILES
                     )
-                    # If a fresh flush was requested mid-batch, latch back into
-                    # flush mode and clear the flag so the threshold guard
-                    # cannot stall the new request.
-                    if not flush_mode and os.path.exists(RUN_REMAINING_FILE):
-                        flush_mode = True
+                    # If a fresh flush/run-now was requested mid-batch, latch
+                    # back into flush mode, reload pending rows, and clear the
+                    # flag. Reloading matters because run-now rows are inserted
+                    # after this process built its in-memory deque.
+                    if os.path.exists(RUN_REMAINING_FILE):
+                        if not flush_mode:
+                            flush_mode = True
+                        try:
+                            pending_queue = _refresh_pending_queue(pending_queue, store)
+                        except Exception as refresh_error:
+                            logger.warning(f"Could not refresh pending queue after flush request: {refresh_error}")
                         try:
                             os.remove(RUN_REMAINING_FILE)
                         except Exception:

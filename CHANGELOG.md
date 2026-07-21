@@ -1,5 +1,26 @@
 # Changelog
 
+## 6.2.6 - Continuous Mode immediate Nyx handoff
+
+### Nyxify: one-account Continuous Mode pipeline
+- Continuous Mode now creates one Snapchat account, renames the AdsPower
+  profile, immediately hands that same profile to Nyx, and waits before
+  launching the next Nyxify signup.
+- Rename happens before the Nyx handoff. If GUI/API rename fails, Nyxify records
+  `profile_rename_failed` on the row but still starts Nyx because the account
+  already exists.
+- Continuous Mode now uses effective Nyxify launch concurrency `1` and marks
+  ready rows as `waiting_for_continuous_nyx` while a continuous Nyx task is
+  pending or running.
+
+### Nyx: priority run-now queue
+- Added a `/queue/run_now` local API handoff that writes high-priority
+  `nyxify_continuous` tasks with carried username/password credentials.
+- Pending task selection now claims high-priority continuous tasks before older
+  normal pending rows, while preserving existing in-progress Nyx work.
+- Normal queue upserts no longer downgrade an active continuous handoff's
+  source, priority, or credentials.
+
 ## 6.2.0 - Dashboard and extension popup control cleanup
 
 ### Dashboard: consistent Nyx/Nyxify control placement

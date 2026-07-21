@@ -26,7 +26,7 @@ from core.nyxify_cleanup import (
     cleanup_delete_failed_error,
     close_and_delete_profile,
 )
-from core.nyx_handoff import enqueue_profile_for_nyx
+from core.nyx_handoff import NYX_TASK_DB_PATH, enqueue_profile_for_nyx
 from core.nyxify_runtime_config import load_nyxify_config
 from core.whox_check import run_whox_trust_check
 from core.nyxify_task_store import NyxifyTaskStore
@@ -52,6 +52,44 @@ NYXIFY_COMPLETION_SOUND_ENABLED = str(os.getenv("NYXIFY_COMPLETION_SOUND", "1"))
 MAX_PROXY_ROTATION_ATTEMPTS = 30
 
 _LOCAL_API_TOKEN_CACHED = False
+
+
+def _continuous_nyx_handoff_active(db_path=None):
+    try:
+        from core.task_store import TaskStore
+
+        store = TaskStore(db_path=str(db_path or NYX_TASK_DB_PATH))
+        return store.has_active_continuous_handoff()
+    except Exception as exc:
+        logger.warning(f"Could not read Nyx continuous handoff state: {exc}")
+        return False
+
+
+def _mark_pending_tasks_waiting_for_continuous_nyx(store):
+    marked = 0
+    try:
+        rows = store.list_tasks(limit=500)
+    except Exception as exc:
+        logger.warning(f"Could not list Nyxify rows for continuous wait marker: {exc}")
+        return 0
+
+    for row in rows:
+        status = str(row.get("status") or "").strip().upper()
+        username = str(row.get("username") or "").strip()
+        if status != "PENDING" or not username or username.lower().startswith("temp"):
+            continue
+        if str(row.get("last_step") or "").strip() == "waiting_for_continuous_nyx":
+            continue
+        try:
+            marked += int(store.update_task_last_step_by_row_key(
+                row.get("row_key"),
+                "waiting_for_continuous_nyx",
+            ) or 0)
+        except Exception as exc:
+            logger.warning(
+                f"Could not mark Nyxify row {row.get('row_key')!r} waiting for continuous Nyx: {exc}"
+            )
+    return marked
 
 
 def _ensure_local_api_token():
@@ -1829,10 +1867,22 @@ async def main():
                         traceback.print_exc()
 
                 config = load_nyxify_config()
-                max_parallel = max(1, int(config.get("max_parallel_profiles") or 1))
+                continuous_mode_enabled = bool(config.get("continuous_mode_enabled", False))
+                configured_max_parallel = max(1, int(config.get("max_parallel_profiles") or 1))
+                max_parallel = 1 if continuous_mode_enabled else configured_max_parallel
                 open_slots = max_parallel - len(active_tasks)
 
                 if open_slots > 0:
+                    if continuous_mode_enabled and _continuous_nyx_handoff_active():
+                        marked = _mark_pending_tasks_waiting_for_continuous_nyx(store)
+                        suffix = f" Marked {marked} ready row(s) waiting." if marked else ""
+                        logger.info(
+                            "Continuous Mode is waiting for Nyx to finish the active Bitmoji handoff "
+                            f"before launching the next Nyxify signup.{suffix}"
+                        )
+                        await asyncio.sleep(2)
+                        continue
+
                     new_tasks = store.claim_pending_tasks(limit=open_slots)
                     for task in new_tasks:
                         t = asyncio.create_task(process_task(task, store, adspower))

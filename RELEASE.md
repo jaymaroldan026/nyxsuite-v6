@@ -9,6 +9,18 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.6
+
+- Continuous Mode now runs as a one-account pipeline: Nyxify creates the
+  Snapchat account, renames the AdsPower profile, hands it to Nyx immediately,
+  then waits for that continuous Nyx work before starting the next signup.
+- Nyx queue handoff now uses a high-priority `run_now` path so continuous
+  Bitmoji tasks are selected ahead of normal pending rows as soon as a Nyx slot
+  is available.
+- Nyxify now shows `waiting_for_continuous_nyx` while a continuous Nyx handoff
+  is pending or running, reducing accidental overlap without blocking manual
+  Stop/Restart controls.
+
 ### NyxSuite v6.2.5
 
 - AdsPower profile close now first targets the profile's own Chromium CDP

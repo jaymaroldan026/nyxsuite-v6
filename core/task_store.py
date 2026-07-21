@@ -9,6 +9,7 @@ from core.nyx_runtime_config import load_nyx_config
 DATA_DIR = APP_DATA_DIR / "data"
 DB_PATH = DATA_DIR / "bitmoji_tasks.db"
 PRUNE_DONE_KEEP = 150
+CONTINUOUS_TASK_PRIORITY = 100
 
 
 def utc_now_iso():
@@ -50,6 +51,7 @@ class TaskStore:
                     outfit_seed TEXT DEFAULT '',
                     source TEXT DEFAULT 'ui',
                     status TEXT NOT NULL DEFAULT 'PENDING',
+                    priority INTEGER NOT NULL DEFAULT 0,
                     run_token TEXT DEFAULT '',
                     last_step TEXT DEFAULT '',
                     error TEXT DEFAULT '',
@@ -71,6 +73,8 @@ class TaskStore:
                 conn.execute("ALTER TABLE tasks ADD COLUMN password TEXT NOT NULL DEFAULT ''")
             if "run_token" not in existing_columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN run_token TEXT DEFAULT ''")
+            if "priority" not in existing_columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS done_profiles (
@@ -148,10 +152,11 @@ class TaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, profile_id, username, model, gender, outfit_seed, source, status, last_step, error, completed_at
+                SELECT id, profile_id, username, model, gender, outfit_seed, source, status, priority,
+                       last_step, error, completed_at, created_at, updated_at
                 FROM tasks
                 WHERE status = 'PENDING'
-                ORDER BY updated_at ASC, id ASC
+                ORDER BY priority DESC, updated_at ASC, id ASC
                 """
             ).fetchall()
 
@@ -164,7 +169,7 @@ class TaskStore:
                 """
                 SELECT id, profile_id, username,
                        CASE WHEN TRIM(COALESCE(password, '')) <> '' THEN 1 ELSE 0 END AS has_password,
-                       model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
+                       model, gender, source, status, priority, run_token, last_step, error, completed_at, created_at, updated_at
                 FROM tasks
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ?
@@ -185,11 +190,16 @@ class TaskStore:
         source="ui",
         username="",
         password="",
+        priority=0,
     ):
 
         now = utc_now_iso()
         normalized_username = str(username or "").strip()
         normalized_password = str(password or "").strip()
+        try:
+            normalized_priority = max(0, int(priority or 0))
+        except Exception:
+            normalized_priority = 0
 
         with self._connect() as conn:
             should_ignore_done = self._should_ignore_done_profiles() if ignore_done_override is None else bool(ignore_done_override)
@@ -200,7 +210,7 @@ class TaskStore:
 
             existing = conn.execute(
                 """
-                SELECT id, status, run_token, last_step, error, completed_at, model, gender, outfit_seed, source, username, password
+                SELECT id, status, run_token, last_step, error, completed_at, model, gender, outfit_seed, source, username, password, priority
                 FROM tasks
                 WHERE profile_id = ?
                 """,
@@ -221,6 +231,23 @@ class TaskStore:
                 next_completed_at = existing["completed_at"] or ""
                 next_username = normalized_username or str(existing["username"] or "").strip()
                 next_password = normalized_password or str(existing["password"] or "").strip()
+                existing_source = str(existing["source"] or "").strip()
+                try:
+                    existing_priority = int(existing["priority"] or 0)
+                except Exception:
+                    existing_priority = 0
+                next_priority = max(existing_priority, normalized_priority)
+                next_source = source
+                preserve_active_continuous = (
+                    existing_status in {"PENDING", "RUNNING"}
+                    and existing_source.lower() == "nyxify_continuous"
+                    and str(source or "").strip().lower() != "nyxify_continuous"
+                    and existing_priority >= normalized_priority
+                )
+                if preserve_active_continuous:
+                    next_source = existing_source
+                    next_username = str(existing["username"] or "").strip() or normalized_username
+                    next_password = str(existing["password"] or "").strip() or normalized_password
 
                 if should_requeue_done:
                     next_status = status
@@ -228,6 +255,8 @@ class TaskStore:
                     next_last_step = ""
                     next_error = ""
                     next_completed_at = ""
+                    next_priority = normalized_priority
+                    next_source = source
                     conn.execute(
                         "DELETE FROM done_profiles WHERE profile_id = ?",
                         (profile_id,)
@@ -238,7 +267,8 @@ class TaskStore:
                 conn.execute(
                     """
                     UPDATE tasks
-                    SET username = ?, password = ?, model = ?, gender = ?, outfit_seed = ?, source = ?, status = ?, run_token = ?, last_step = ?, error = ?, completed_at = ?, updated_at = ?
+                    SET username = ?, password = ?, model = ?, gender = ?, outfit_seed = ?, source = ?,
+                        status = ?, priority = ?, run_token = ?, last_step = ?, error = ?, completed_at = ?, updated_at = ?
                     WHERE profile_id = ?
                     """,
                     (
@@ -247,8 +277,9 @@ class TaskStore:
                         model,
                         gender,
                         outfit_seed,
-                        source,
+                        next_source,
                         next_status,
+                        next_priority,
                         next_run_token,
                         next_last_step,
                         next_error,
@@ -262,8 +293,8 @@ class TaskStore:
             cursor = conn.execute(
                 """
                 INSERT INTO tasks (
-                    profile_id, username, password, model, gender, outfit_seed, source, status, run_token, last_step, error, completed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?)
+                    profile_id, username, password, model, gender, outfit_seed, source, status, priority, run_token, last_step, error, completed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?)
                 """,
                 (
                     profile_id,
@@ -274,6 +305,7 @@ class TaskStore:
                     outfit_seed,
                     source,
                     status,
+                    normalized_priority,
                     now,
                     now,
                 )
@@ -627,7 +659,7 @@ class TaskStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, profile_id, username, password, model, gender, source, status, run_token, last_step, error, completed_at, created_at, updated_at
+                SELECT id, profile_id, username, password, model, gender, source, status, priority, run_token, last_step, error, completed_at, created_at, updated_at
                 FROM tasks
                 WHERE profile_id = ?
                 """,
@@ -635,6 +667,21 @@ class TaskStore:
             ).fetchone()
 
         return dict(row) if row else None
+
+    def has_active_continuous_handoff(self):
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE LOWER(TRIM(COALESCE(source, ''))) = 'nyxify_continuous'
+                  AND status IN ('PENDING', 'RUNNING')
+                """
+            ).fetchone()
+        try:
+            return int(row[0]) > 0 if row else False
+        except Exception:
+            return False
 
     def relaunch_task_by_profile_id(self, profile_id):
         now = utc_now_iso()
