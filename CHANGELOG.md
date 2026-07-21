@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.2.9 - Continuous Mode OAuth tab and GUI rename recovery
+
+### Nyx: Continuous Mode OAuth tab wins over stale login tabs
+- Fixed a Continuous Mode stall where a newly handed-off profile could remain
+  `RUNNING` at `need_login` while another browser tab was already showing
+  Snapchat's `Continue to Bitmoji?` OAuth consent page.
+- Nyx now scans all visible CDP browser contexts and prioritizes OAuth/editor
+  progress states before older Snapchat login tabs, then continues into the
+  OAuth Continue click path.
+- Auto-login now checks for handoff progress before locking onto a login form,
+  preventing stale login tabs from interrupting immediate Nyxify-to-Nyx runs.
+
+### Nyxify: AdsPower GUI rename retries the temp-name view
+- GUI rename now remembers the Nyxify temporary AdsPower profile name and, if
+  the row is not visible, reapplies the `Name contains <temp>` filter before
+  opening the rename dialog.
+- This fixes rename failures where AdsPower was left on another search filter,
+  causing `Could not open the rename dialog` even though the temp-named profile
+  existed.
+
 ## 6.2.8 - OAuth Continue screen classification fix
 
 ### Nyx: OAuth consent no longer appears as need_login

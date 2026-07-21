@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.9
+
+- Continuous Mode now prioritizes an active Snapchat `Continue to Bitmoji?`
+  OAuth consent tab over older login tabs, so immediate Nyxify handoffs proceed
+  into Bitmoji automation instead of parking at `need_login`.
+- Nyx scans every CDP browser context for OAuth/editor progress states before
+  falling back to Snapchat login detection.
+- AdsPower GUI rename now retries by reapplying Nyxify's remembered temp-name
+  filter when the profile row is not visible under the current AdsPower search.
+
 ### NyxSuite v6.2.8
 
 - Fixed the Continuous Mode Bitmoji auth stall shown as `need_login` while the

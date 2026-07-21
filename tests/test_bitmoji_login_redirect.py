@@ -76,6 +76,18 @@ class _OAuthConsentContext:
         )
 
 
+class _SnapchatLoginContext:
+    url = "https://accounts.snapchat.com/accounts/v2/login"
+
+    def locator(self, selector):
+        if "input" in selector or "#username" in selector or "#password" in selector:
+            return _FakeLocator(1, "", visible=True)
+        return _FakeLocator(0)
+
+    async def evaluate(self, script):
+        return "Log In to Snapchat"
+
+
 class _SessionStateFlow(BitmojiCreator):
     def __init__(self, contexts):
         self._contexts = list(contexts)
@@ -169,6 +181,20 @@ class OAuthConsentStateTests(unittest.TestCase):
         flow = _SessionStateFlow([_OAuthConsentContext()])
 
         state = asyncio.run(flow.check_session_state(fast=True))
+
+        self.assertEqual(state, "CONTINUE")
+
+    def test_check_session_state_prioritizes_oauth_tab_over_earlier_login_tab(self):
+        flow = _SessionStateFlow([_SnapchatLoginContext(), _OAuthConsentContext()])
+
+        state = asyncio.run(flow.check_session_state(fast=True))
+
+        self.assertEqual(state, "CONTINUE")
+
+    def test_wait_for_initial_page_signal_prioritizes_oauth_tab_over_earlier_login_tab(self):
+        flow = _SessionStateFlow([_SnapchatLoginContext(), _OAuthConsentContext()])
+
+        state = asyncio.run(flow.wait_for_initial_page_signal(timeout_ms=10))
 
         self.assertEqual(state, "CONTINUE")
 

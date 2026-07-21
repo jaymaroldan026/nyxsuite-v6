@@ -504,6 +504,7 @@ class AdsPowerUIController:
         # The temp-name search fragment last applied by a create — the one
         # standing 'Name contains <temp>' filter the Nyxify flow reuses.
         self._temp_search_fragment = None
+        self._temp_search_name = None
         self._a11y_depth = 0
         self._prev_fg = None
         # Callback invoked when a searched-for profile ID is not visible in the
@@ -1653,7 +1654,10 @@ class AdsPowerUIController:
 
         This is the ONLY place the Nyxify flow initiates a search, and the search
         is always the temp name — never a profile id."""
-        fragment = self._search_fragment(name)
+        temp_name = str(name or "").strip()
+        if temp_name:
+            self._temp_search_name = temp_name
+        fragment = self._search_fragment(temp_name)
         if not fragment:
             return
         self._temp_search_fragment = fragment
@@ -2998,6 +3002,31 @@ class AdsPowerUIController:
             f"expected {expected_name!r}. Retrying.")
         return False
 
+    def _recover_presearch_row_for_rename(self, profile_id: str) -> bool:
+        """Recover Nyxify's temp-name view before a GUI rename.
+
+        If another operation leaves AdsPower on a Profile-ID or different search
+        chip, the just-created temp-named row is not visible and the rename
+        pencil/menu cannot be opened. Reapply the remembered Nyxify temp-name
+        filter, then re-check the target profile in that view.
+        """
+        if not getattr(getattr(self, "config", None), "assume_presearch", False):
+            return False
+        temp_name = str(getattr(self, "_temp_search_name", "") or "").strip()
+        if not temp_name:
+            logger.warning(
+                f"AdsPower UI: profile {profile_id} was not visible for rename, "
+                "and no temp profile name is remembered for a temp-name retry."
+            )
+            return False
+        logger.info(
+            f"AdsPower UI: profile {profile_id} was not visible for rename; "
+            f"reapplying temp-name filter {temp_name!r}."
+        )
+        self._ensure_temp_filter(temp_name)
+        self._wait_list_settled(timeout=3.0)
+        return self._ensure_row_visible(profile_id)
+
     @_serialized
     def rename_profile_by_id(self, profile_id: str, new_name: str) -> dict:
         """Rename a profile via the GUI (find the row -> click the Name edit
@@ -3014,7 +3043,8 @@ class AdsPowerUIController:
         if not new_name:
             raise AdsPowerUIError("rename_profile_by_id requires a new name.")
         self._connect()
-        self._ensure_row_visible(profile_id)
+        if not self._ensure_row_visible(profile_id):
+            self._recover_presearch_row_for_rename(profile_id)
         if not self._open_rename_dialog(profile_id):
             raise AdsPowerUIError(f"Could not open the rename dialog for {profile_id}.")
         rect = self._rect("Enter Name", "Edit", timeout=0.35)

@@ -97,6 +97,75 @@ class BitmojiInteractionMixin:
     async def find_login_with_snapchat_locator(self, ctx):
         return await self.find_first_visible_locator(ctx, self.LOGIN_WITH_SNAPCHAT_SELECTORS)
 
+    async def prioritized_session_state_from_contexts(self, contexts):
+        """Classify all open pages/frames with forward-progress states first.
+
+        AdsPower profiles can keep older Snapchat tabs around. If an older login
+        tab is scanned before the active OAuth consent tab, returning LOGIN parks
+        a continuous-mode handoff at need_login even though the visible page only
+        needs the Bitmoji Continue click. This helper gives OAuth/editor/home
+        states browser-wide priority before falling back to login.
+        """
+        contexts = list(contexts or [])
+
+        for ctx in contexts:
+            try:
+                current_url = ""
+                try:
+                    current_url = ctx.url or ""
+                except Exception:
+                    current_url = ""
+                if ("bitmoji.com/home" in current_url and await self.is_account_home_context(ctx)) or await self.is_account_home_context(ctx):
+                    return "ACCOUNT_HOME"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.is_editor_context(ctx):
+                    return "EDITOR"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.is_snapchat_oauth_context(ctx):
+                    return "CONTINUE"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.is_bitmoji_login_redirect_context(ctx):
+                    return "LOGIN_REDIRECT"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.find_female_avatar_locator(ctx):
+                    return "GENDER"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.find_login_with_snapchat_locator(ctx):
+                    return "LOGIN"
+                if await self.is_snapchat_login_context(ctx):
+                    return "LOGIN"
+            except Exception:
+                continue
+
+        for ctx in contexts:
+            try:
+                if await self.find_oauth_continue_locator(ctx):
+                    return "CONTINUE"
+            except Exception:
+                continue
+
+        return "UNKNOWN"
+
     async def is_snapchat_oauth_context(self, ctx):
         try:
             current_url = (ctx.url or "").strip()
@@ -695,12 +764,12 @@ class BitmojiInteractionMixin:
         # up to the manual-login wait.
         login_ctx = None
         for _ in range(16):
-            login_ctx = await self.get_snapchat_login_context()
-            if login_ctx is not None:
-                break
             handoff_state = await current_handoff_state("while waiting for Snapchat login form")
             if handoff_state is not None:
                 return handoff_state
+            login_ctx = await self.get_snapchat_login_context()
+            if login_ctx is not None:
+                break
             await asyncio.sleep(0.5)
         if login_ctx is None:
             if self.logger:
@@ -1155,22 +1224,13 @@ class BitmojiInteractionMixin:
                 if await self.wait_for_account_home_heading(timeout_ms=250):
                     return "ACCOUNT_HOME"
 
-                for ctx in await self.get_contexts():
+                contexts = await self.get_contexts()
+                state = await self.prioritized_session_state_from_contexts(contexts)
+                if state != "UNKNOWN":
+                    return state
+
+                for ctx in contexts:
                     try:
-                        if await self.is_editor_context(ctx):
-                            return "EDITOR"
-                        if await self.is_snapchat_oauth_context(ctx):
-                            return "CONTINUE"
-                        if await self.find_login_with_snapchat_locator(ctx):
-                            if await self.is_bitmoji_login_redirect_context(ctx):
-                                return "LOGIN_REDIRECT"
-                            return "LOGIN"
-                        if await self.is_snapchat_login_context(ctx):
-                            return "LOGIN"
-                        if await self.find_oauth_continue_locator(ctx):
-                            return "CONTINUE"
-                        if await self.find_female_avatar_locator(ctx):
-                            return "GENDER"
                         if await ctx.locator("canvas, .current_preview, [class*='avatar-builder']").count() > 0:
                             return "EDITOR"
 

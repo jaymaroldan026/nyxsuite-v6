@@ -582,6 +582,52 @@ class RenameDialogFallbackTests(unittest.TestCase):
         self.assertTrue(all(call[2] <= 0.35 for call in find_calls))
         ctrl._click_rect.assert_called_once_with(ok_rect, template_name="rename_ok_btn")
 
+    def test_rename_profile_reapplies_temp_filter_when_presearch_row_is_missing(self):
+        ctrl = AdsPowerUIController.__new__(AdsPowerUIController)
+        ctrl.config = SimpleNamespace(assume_presearch=True)
+        ctrl._temp_search_name = "Snapchat: xyz"
+        events = []
+        visible = {"value": False}
+
+        def ensure_row(profile_id):
+            events.append(("ensure", profile_id))
+            if visible["value"]:
+                return True
+            return False
+
+        def ensure_temp(name):
+            events.append(("temp", name))
+            visible["value"] = True
+
+        def open_dialog(profile_id):
+            events.append(("open", profile_id))
+            return True
+
+        ctrl._connect = mock.Mock()
+        ctrl._ensure_row_visible = mock.Mock(side_effect=ensure_row)
+        ctrl._ensure_temp_filter = mock.Mock(side_effect=ensure_temp)
+        ctrl._wait_list_settled = mock.Mock()
+        ctrl._open_rename_dialog = mock.Mock(side_effect=open_dialog)
+        ctrl._rect = mock.Mock(return_value=None)
+        ctrl._fill_name = mock.Mock()
+        ctrl._click_ok = mock.Mock()
+        ctrl._rename_confirmed_or_absent = mock.Mock(return_value=True)
+
+        result = ctrl.rename_profile_by_id("k1target", "Snapchat: playelia")
+
+        self.assertEqual(result, {
+            "profile_id": "k1target",
+            "name": "Snapchat: playelia",
+        })
+        self.assertEqual(events, [
+            ("ensure", "k1target"),
+            ("temp", "Snapchat: xyz"),
+            ("ensure", "k1target"),
+            ("open", "k1target"),
+        ])
+        ctrl._wait_list_settled.assert_called_once_with(timeout=3.0)
+        ctrl._fill_name.assert_called_once_with("Snapchat: playelia")
+
 
 class DeleteProfileLockTests(unittest.TestCase):
     def test_delete_profile_runs_full_gui_flow_under_global_lock(self):
@@ -1309,6 +1355,7 @@ class PreSearchFastPathTests(unittest.TestCase):
         ctrl._search_by = lambda *a, **k: self.fail("must not re-search when already active")
         ctrl._ensure_temp_filter("Snapchat: xoxoxo")
         self.assertEqual(ctrl._temp_search_fragment, "xoxoxo")
+        self.assertEqual(ctrl._temp_search_name, "Snapchat: xoxoxo")
 
     def test_ensure_temp_filter_searches_temp_name_when_not_active(self):
         # If the temp-name filter isn't applied, search it (and only it — by

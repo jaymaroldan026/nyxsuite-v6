@@ -418,6 +418,18 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         if self.context:
             pages.extend(self.context.pages)
 
+        # CDP-backed AdsPower browsers can expose multiple contexts. A Snapchat
+        # OAuth consent tab in a later context must still be visible to state
+        # detection, otherwise an older login tab can incorrectly park the run
+        # at need_login.
+        try:
+            for context in getattr(self.browser, "contexts", []) or []:
+                if context is self.context:
+                    continue
+                pages.extend(getattr(context, "pages", []) or [])
+        except Exception:
+            pass
+
         if self.page and self.page not in pages:
             pages.append(self.page)
 
@@ -524,47 +536,10 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
             print("State: ACCOUNT_HOME")
             return "ACCOUNT_HOME"
 
-        for ctx in await self.get_contexts():
-            try:
-                current_url = ""
-                try:
-                    current_url = ctx.url or ""
-                except Exception:
-                    current_url = ""
-
-                if ("bitmoji.com/home" in current_url and await self.is_account_home_context(ctx)) or await self.is_account_home_context(ctx):
-                    print("State: ACCOUNT_HOME")
-                    return "ACCOUNT_HOME"
-
-                if await self.is_snapchat_oauth_context(ctx):
-                    print("State: CONTINUE")
-                    return "CONTINUE"
-
-                if await self.is_snapchat_login_context(ctx):
-                    print("State: LOGIN")
-                    return "LOGIN"
-
-                if await self.find_login_with_snapchat_locator(ctx):
-                    # The bitmoji.com/login OAuth-callback page also carries a
-                    # "Log In with Snapchat" button. Route it to the reload /
-                    # re-OAuth recovery (LOGIN_REDIRECT) instead of the Snapchat
-                    # credential auto-login, which would find no form here and
-                    # loop into the manual-login timeout.
-                    if await self.is_bitmoji_login_redirect_context(ctx):
-                        print("State: LOGIN_REDIRECT")
-                        return "LOGIN_REDIRECT"
-                    print("State: LOGIN")
-                    return "LOGIN"
-
-                if await self.find_oauth_continue_locator(ctx):
-                    print("State: CONTINUE")
-                    return "CONTINUE"
-
-                if await self.find_female_avatar_locator(ctx):
-                    print("State: GENDER")
-                    return "GENDER"
-            except Exception:
-                continue
+        state = await self.prioritized_session_state_from_contexts(await self.get_contexts())
+        if state != "UNKNOWN":
+            print(f"State: {state}")
+            return state
 
         ctx = await self.get_editor_context()
         if ctx and await self.is_editor_context(ctx):
