@@ -9,6 +9,15 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.0
+
+- Tightened OAuth Continue detection so regular Snapchat welcome/account pages
+  do not count as OAuth consent buttons.
+- This prevents the OAuth-cleared check from sticking after the Continue click
+  when a welcome tab remains open.
+- Includes the v6.2.9 Continuous Mode OAuth tab priority and AdsPower GUI rename
+  recovery, with a reminder to restart the bridge/runners after updating.
+
 ### NyxSuite v6.2.9
 
 - Continuous Mode now prioritizes an active Snapchat `Continue to Bitmoji?`

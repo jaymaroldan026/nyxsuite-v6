@@ -88,6 +88,18 @@ class _SnapchatLoginContext:
         return "Log In to Snapchat"
 
 
+class _SnapchatWelcomeContext:
+    url = "https://accounts.snapchat.com/v2/welcome"
+
+    def locator(self, selector):
+        if selector == "button, input[type='submit']":
+            return _FakeLocator(1, "")
+        return _FakeLocator(0)
+
+    async def evaluate(self, script):
+        return "Accounts | Snapchat\nManage Apps\nLogout"
+
+
 class _SessionStateFlow(BitmojiCreator):
     def __init__(self, contexts):
         self._contexts = list(contexts)
@@ -197,6 +209,20 @@ class OAuthConsentStateTests(unittest.TestCase):
         state = asyncio.run(flow.wait_for_initial_page_signal(timeout_ms=10))
 
         self.assertEqual(state, "CONTINUE")
+
+    def test_oauth_locator_ignores_snapchat_welcome_buttons(self):
+        flow = _SessionStateFlow([_SnapchatWelcomeContext()])
+
+        locator = asyncio.run(flow.find_oauth_continue_locator(_SnapchatWelcomeContext()))
+
+        self.assertIsNone(locator)
+
+    def test_oauth_cleared_ignores_snapchat_welcome_buttons(self):
+        flow = _SessionStateFlow([_SnapchatWelcomeContext()])
+
+        cleared = asyncio.run(flow.is_oauth_continue_cleared())
+
+        self.assertTrue(cleared)
 
 
 class _AutoLoginFlow(BitmojiInteractionMixin):

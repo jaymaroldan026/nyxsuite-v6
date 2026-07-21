@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.3.0 - Continuous Mode OAuth cleanup
+
+### Nyx: Snapchat account pages no longer look like OAuth consent
+- Tightened OAuth Continue fallback detection so regular Snapchat account and
+  welcome pages are not mistaken for the `Continue to Bitmoji?` consent screen.
+- This prevents the OAuth-cleared check from sticking after the Continue click
+  when a non-consent Snapchat tab remains open.
+- Includes the v6.2.9 Continuous Mode OAuth tab priority and AdsPower GUI rename
+  recovery; restart the bridge/runners after updating so the loaded process uses
+  the current code.
+
 ## 6.2.9 - Continuous Mode OAuth tab and GUI rename recovery
 
 ### Nyx: Continuous Mode OAuth tab wins over stale login tabs

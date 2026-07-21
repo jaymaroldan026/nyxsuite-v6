@@ -912,7 +912,8 @@ class BitmojiInteractionMixin:
         except Exception:
             current_url = ""
 
-        if any(token in current_url for token in ["accounts.snapchat.com", "oauth", "authorize", "consent"]):
+        lowered_url = current_url.lower()
+        if any(token in lowered_url for token in ["oauth", "authorize", "consent"]):
             try:
                 generic_submit = ctx.locator("button, input[type='submit']")
                 actionable_submit = await self.first_actionable_locator(generic_submit)
