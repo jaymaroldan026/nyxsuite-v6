@@ -536,6 +536,10 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                     print("State: ACCOUNT_HOME")
                     return "ACCOUNT_HOME"
 
+                if await self.is_snapchat_oauth_context(ctx):
+                    print("State: CONTINUE")
+                    return "CONTINUE"
+
                 if await self.is_snapchat_login_context(ctx):
                     print("State: LOGIN")
                     return "LOGIN"

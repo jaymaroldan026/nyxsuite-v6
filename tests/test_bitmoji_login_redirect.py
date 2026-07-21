@@ -31,6 +31,84 @@ class _Flow(BitmojiInteractionMixin):
         return [types.SimpleNamespace(url=u) for u in self._urls]
 
 
+class _FakeLocator:
+    def __init__(self, count=0, text="", visible=True):
+        self._count = count
+        self._text = text
+        self._visible = visible
+
+    @property
+    def first(self):
+        return self
+
+    def nth(self, index):
+        return self
+
+    async def count(self):
+        return self._count
+
+    async def text_content(self):
+        return self._text
+
+    async def is_visible(self):
+        return self._visible
+
+
+class _OAuthConsentContext:
+    url = (
+        "https://accounts.snapchat.com/accounts/oauth2/auth?"
+        "response_type=code&scope=https%3A%2F%2Fauth.snapchat.com%2Foauth2%2Fapi%2Fbitmoji"
+    )
+
+    def locator(self, selector):
+        if selector == "h1":
+            return _FakeLocator(1, "Continue to Bitmoji?")
+        if "#username" in selector or "#password" in selector or "accountIdentifier" in selector:
+            return _FakeLocator(1, "", visible=False)
+        if "Continue" in selector or "button[type='submit']" in selector:
+            return _FakeLocator(1, "Continue")
+        return _FakeLocator(0)
+
+    async def evaluate(self, script):
+        return (
+            "Continue to Bitmoji?\n"
+            "By pressing Continue, you agree to use your Snapchat account to log in to Bitmoji."
+        )
+
+
+class _SessionStateFlow(BitmojiCreator):
+    def __init__(self, contexts):
+        self._contexts = list(contexts)
+        self.page = None
+
+    async def wait_if_paused(self):
+        return None
+
+    async def human_delay(self, *a, **k):
+        return None
+
+    async def detect_authorization_error(self):
+        return False
+
+    async def wait_for_account_home_heading(self, timeout_ms=3000):
+        return False
+
+    async def get_contexts(self):
+        return self._contexts
+
+    async def is_account_home_context(self, ctx):
+        return False
+
+    async def is_editor_context(self, ctx):
+        return False
+
+    async def get_editor_context(self):
+        return None
+
+    async def get_bitmoji_proxy_failure_signal(self, extra_error=""):
+        return ""
+
+
 def _ctx(url):
     return types.SimpleNamespace(url=url)
 
@@ -77,6 +155,22 @@ class InferSessionStateTests(unittest.TestCase):
 
     def test_home_infers_account_home(self):
         self.assertEqual(self._infer(["https://www.bitmoji.com/home/"]), "ACCOUNT_HOME")
+
+
+class OAuthConsentStateTests(unittest.TestCase):
+    def test_oauth_consent_is_not_snapchat_login_even_with_hidden_login_fields(self):
+        flow = _Flow()
+
+        is_login = asyncio.run(flow.is_snapchat_login_context(_OAuthConsentContext()))
+
+        self.assertFalse(is_login)
+
+    def test_check_session_state_prioritizes_oauth_continue_over_hidden_login_fields(self):
+        flow = _SessionStateFlow([_OAuthConsentContext()])
+
+        state = asyncio.run(flow.check_session_state(fast=True))
+
+        self.assertEqual(state, "CONTINUE")
 
 
 class _AutoLoginFlow(BitmojiInteractionMixin):

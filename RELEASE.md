@@ -9,6 +9,15 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.8
+
+- Fixed the Continuous Mode Bitmoji auth stall shown as `need_login` while the
+  browser is already on Snapchat's `Continue to Bitmoji?` OAuth consent page.
+- Snapchat OAuth consent pages now take priority over login-page detection, even
+  when the page contains hidden username/password fields.
+- Nyx now routes that screen straight into the OAuth Continue click path so the
+  Bitmoji editor automation can proceed without manual intervention.
+
 ### NyxSuite v6.2.7
 
 - Continuous Mode Nyx handoff no longer gets stuck at `need_login` when the

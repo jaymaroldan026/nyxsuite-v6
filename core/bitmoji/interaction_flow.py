@@ -1,6 +1,7 @@
 import asyncio
 import random
 import re
+from urllib.parse import urlparse
 
 from core.bitmoji.proxy_failure import (
     BitmojiProxyFailureError,
@@ -96,6 +97,39 @@ class BitmojiInteractionMixin:
     async def find_login_with_snapchat_locator(self, ctx):
         return await self.find_first_visible_locator(ctx, self.LOGIN_WITH_SNAPCHAT_SELECTORS)
 
+    async def is_snapchat_oauth_context(self, ctx):
+        try:
+            current_url = (ctx.url or "").strip()
+        except Exception:
+            current_url = ""
+
+        host = ""
+        path = ""
+        if current_url:
+            try:
+                parsed = urlparse(current_url)
+                host = (parsed.netloc or "").lower()
+                path = (parsed.path or "").lower()
+            except Exception:
+                lowered_url = current_url.lower()
+                host = lowered_url
+                path = lowered_url.split("?", 1)[0].split("#", 1)[0]
+
+        if host.endswith("accounts.snapchat.com") and (
+            path.startswith("/accounts/oauth2") or path.startswith("/oauth2")
+        ):
+            return True
+
+        if host.endswith("www.snapchat.com") and path.startswith("/bitmoji/oauth2"):
+            return True
+
+        try:
+            text = (await self.get_context_text(ctx) or "").lower()
+        except Exception:
+            text = ""
+
+        return "continue to bitmoji" in text and "snapchat account" in text
+
     async def is_snapchat_login_context(self, ctx):
         try:
             current_url = (ctx.url or "").lower()
@@ -103,6 +137,9 @@ class BitmojiInteractionMixin:
             current_url = ""
 
         if "accounts.snapchat.com" not in current_url:
+            return False
+
+        if await self.is_snapchat_oauth_context(ctx):
             return False
 
         if "/v2/login" in current_url or "/accounts/v2/login" in current_url:
@@ -1122,6 +1159,8 @@ class BitmojiInteractionMixin:
                     try:
                         if await self.is_editor_context(ctx):
                             return "EDITOR"
+                        if await self.is_snapchat_oauth_context(ctx):
+                            return "CONTINUE"
                         if await self.find_login_with_snapchat_locator(ctx):
                             if await self.is_bitmoji_login_redirect_context(ctx):
                                 return "LOGIN_REDIRECT"

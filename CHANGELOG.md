@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.2.8 - OAuth Continue screen classification fix
+
+### Nyx: OAuth consent no longer appears as need_login
+- Fixed the Continuous Mode stall where the dashboard showed `need_login` while
+  the AdsPower browser was already on Snapchat's `Continue to Bitmoji?` OAuth
+  consent page.
+- OAuth consent screens are now identified before Snapchat login screens, so
+  hidden account fields on the consent page cannot misroute the flow into
+  manual-login wait.
+- Nyx now proceeds directly to the OAuth Continue click path and then into the
+  Bitmoji editor automation.
+
 ## 6.2.7 - Continuous Mode Bitmoji auth handoff fix
 
 ### Nyx: continue past transient Snapchat login during Continuous Mode
