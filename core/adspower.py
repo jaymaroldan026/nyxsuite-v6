@@ -808,8 +808,36 @@ class AdsPowerManager:
     # CLOSE PROFILE
     # -------------------------------------------------
 
+    def _close_profile_tabs_via_cdp(self, profile_id):
+        pid = str(profile_id or "").strip()
+        if not pid:
+            return False
+
+        cdp_enabled = bool(getattr(self, "cdp_fallback_enabled", False))
+        fallback_profiles = getattr(self, "_cdp_fallback_profiles", set()) or set()
+        if not (cdp_enabled or self._is_gui_control_mode() or pid in fallback_profiles):
+            return False
+
+        try:
+            from core.adspower_cdp import close_open_profile_tabs
+
+            return bool(
+                close_open_profile_tabs(
+                    pid,
+                    session=getattr(self, "session", None),
+                    deep_scan=False,
+                )
+            )
+        except Exception as cdp_error:
+            logger.warning(f"Could not close AdsPower profile {pid} tabs via CDP: {cdp_error}")
+            return False
+
     def close_profile(self, profile_id):
-        pid = str(profile_id)
+        pid = str(profile_id or "").strip()
+
+        if self._close_profile_tabs_via_cdp(pid):
+            logger.info(f"Closed AdsPower profile {pid} by closing all CDP tabs.")
+            return {"code": 0, "msg": "closed_via_cdp_tabs"}
 
         if self._is_gui_control_mode() and self.ui_fallback_enabled:
             try:

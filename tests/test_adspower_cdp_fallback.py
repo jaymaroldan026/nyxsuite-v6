@@ -6,6 +6,7 @@ the AdsPowerManager.open_profile / close_profile fallback wiring.
 """
 
 import asyncio
+import types
 import unittest
 from unittest import mock
 
@@ -167,6 +168,7 @@ class CacheBaseDirTests(unittest.TestCase):
 class OpenProfileFallbackTests(unittest.TestCase):
     def _manager(self, fallback_enabled=True, ui_fallback=False):
         m = AdsPowerManager()
+        m.control_mode = "auto"
         m.cdp_fallback_enabled = fallback_enabled
         # Default the GUI fallback OFF so these CDP-path tests never drive the
         # real AdsPower app; UI-path tests below enable it with a mock.
@@ -349,20 +351,58 @@ class CloseProfileFallbackTests(unittest.TestCase):
         m._ui_controller = mock.Mock(return_value=fake_ui)
         return fake_ui
 
-    def test_close_gui_closes_fallback_profile(self):
-        # A no-API (GUI-opened) profile is now actively GUI-closed, not left open.
+    def test_close_cdp_closes_fallback_profile_before_gui(self):
+        # A no-API (GUI-opened) profile is closed by draining that browser's
+        # tabs over CDP first, avoiding another AdsPower GUI row search.
         m = AdsPowerManager()
         m.ui_fallback_enabled = True
         m._cdp_fallback_profiles.add("k1dyapw4")
         m._get_json = mock.Mock()
         fake_ui = self._gui(m)
-        result = m.close_profile("k1dyapw4")
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=True
+        ) as close_tabs:
+            result = m.close_profile("k1dyapw4")
         m._get_json.assert_not_called()              # never hits the gated stop API
-        fake_ui.close_profile_by_id.assert_called_once_with("k1dyapw4")
-        self.assertEqual(result.get("msg"), "closed_via_gui")
+        fake_ui.close_profile_by_id.assert_not_called()
+        close_tabs.assert_called_once()
+        self.assertEqual(close_tabs.call_args.args[0], "k1dyapw4")
+        self.assertIs(close_tabs.call_args.kwargs["session"], m.session)
+        self.assertFalse(close_tabs.call_args.kwargs["deep_scan"])
+        self.assertEqual(result.get("msg"), "closed_via_cdp_tabs")
         # Stays marked no-API after closing so the immediately-following rename
         # goes straight to the GUI (Nyxify closes then renames). Cleared on delete.
         self.assertIn("k1dyapw4", m._cdp_fallback_profiles)
+
+    def test_close_normal_profile_prefers_cdp_tabs_before_stop_api(self):
+        m = AdsPowerManager()
+        m._get_json = mock.Mock(return_value={"code": 0})
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=True
+        ) as close_tabs:
+            result = m.close_profile("normal-profile")
+
+        close_tabs.assert_called_once()
+        self.assertEqual(close_tabs.call_args.args[0], "normal-profile")
+        self.assertIs(close_tabs.call_args.kwargs["session"], m.session)
+        self.assertFalse(close_tabs.call_args.kwargs["deep_scan"])
+        m._get_json.assert_not_called()
+        self.assertEqual(result.get("msg"), "closed_via_cdp_tabs")
+
+    def test_close_fallback_profile_uses_gui_when_cdp_tabs_not_available(self):
+        m = AdsPowerManager()
+        m.ui_fallback_enabled = True
+        m._cdp_fallback_profiles.add("k1dyapw4")
+        m._get_json = mock.Mock()
+        fake_ui = self._gui(m)
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=False
+        ):
+            result = m.close_profile("k1dyapw4")
+
+        m._get_json.assert_not_called()
+        fake_ui.close_profile_by_id.assert_called_once_with("k1dyapw4")
+        self.assertEqual(result.get("msg"), "closed_via_gui")
 
     def test_close_leaves_open_when_ui_fallback_disabled(self):
         m = AdsPowerManager()
@@ -376,8 +416,12 @@ class CloseProfileFallbackTests(unittest.TestCase):
 
     def test_close_normal_profile_calls_stop_api(self):
         m = AdsPowerManager()
+        m.control_mode = "auto"
         m._get_json = mock.Mock(return_value={"code": 0})
-        m.close_profile("normal-profile")
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=False
+        ):
+            m.close_profile("normal-profile")
         m._get_json.assert_called_once()
         args, kwargs = m._get_json.call_args
         self.assertIn("/browser/stop", args[0])
@@ -386,19 +430,27 @@ class CloseProfileFallbackTests(unittest.TestCase):
         # A profile NOT in the fallback set whose stop API is permission-gated
         # still gets GUI-closed.
         m = AdsPowerManager()
+        m.control_mode = "auto"
         m.ui_fallback_enabled = True
         m._get_json = mock.Mock(side_effect=AdsPowerPermissionError("9110"))
         fake_ui = self._gui(m)
-        result = m.close_profile("normal-profile")
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=False
+        ):
+            result = m.close_profile("normal-profile")
         fake_ui.close_profile_by_id.assert_called_once_with("normal-profile")
         self.assertEqual(result.get("msg"), "closed_via_gui")
 
     def test_close_unreachable_api_profile_closes_via_gui(self):
         m = AdsPowerManager()
+        m.control_mode = "auto"
         m.ui_fallback_enabled = True
         m._get_json = mock.Mock(side_effect=AdsPowerUnreachableError("api down"))
         fake_ui = self._gui(m)
-        result = m.close_profile("normal-profile")
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=False
+        ):
+            result = m.close_profile("normal-profile")
         fake_ui.close_profile_by_id.assert_called_once_with("normal-profile")
         self.assertEqual(result.get("msg"), "closed_via_gui")
 
@@ -408,9 +460,91 @@ class CloseProfileFallbackTests(unittest.TestCase):
         m._cdp_fallback_profiles.add("k1dyapw4")
         fake_ui = self._gui(m)
         fake_ui.close_profile_by_id.side_effect = RuntimeError("button missing")
-        result = m.close_profile("k1dyapw4")
+        with mock.patch.object(
+            adspower_cdp, "close_open_profile_tabs", create=True, return_value=False
+        ):
+            result = m.close_profile("k1dyapw4")
         self.assertEqual(result.get("msg"), "gui_close_failed_left_open")
         self.assertIn("k1dyapw4", m._cdp_fallback_profiles)
+
+
+class CloseOpenProfileTabsTests(unittest.TestCase):
+    class _Page:
+        def __init__(self, name):
+            self.name = name
+            self.closed = False
+            self.close_kwargs = None
+
+        def close(self, **kwargs):
+            self.close_kwargs = kwargs
+            self.closed = True
+
+    class _Context:
+        def __init__(self, pages):
+            self._pages = pages
+
+        @property
+        def pages(self):
+            return [page for page in self._pages if not page.closed]
+
+    class _Browser:
+        def __init__(self, contexts):
+            self.contexts = contexts
+            self.detached = False
+
+        def close(self):
+            self.detached = True
+
+    class _PlaywrightContext:
+        def __init__(self, browser):
+            self.browser = browser
+            self.connected_endpoint = None
+
+        def __enter__(self):
+            self.chromium = types.SimpleNamespace(connect_over_cdp=self._connect)
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def _connect(self, endpoint):
+            self.connected_endpoint = endpoint
+            return self.browser
+
+    def test_close_open_profile_tabs_closes_every_page_in_every_context(self):
+        pages = [self._Page("one"), self._Page("two"), self._Page("three")]
+        browser = self._Browser([
+            self._Context(pages[:2]),
+            self._Context(pages[2:]),
+        ])
+        factory_context = self._PlaywrightContext(browser)
+
+        with mock.patch.object(
+            adspower_cdp,
+            "find_open_profile_cdp_endpoint",
+            return_value="ws://127.0.0.1:4567/devtools/browser/abc",
+        ):
+            result = adspower_cdp.close_open_profile_tabs(
+                "k1dyapw4",
+                session=object(),
+                playwright_factory=lambda: factory_context,
+            )
+
+        self.assertTrue(result)
+        self.assertTrue(all(page.closed for page in pages))
+        self.assertTrue(all(page.close_kwargs == {"run_before_unload": False} for page in pages))
+        self.assertTrue(browser.detached)
+        self.assertEqual(factory_context.connected_endpoint, "ws://127.0.0.1:4567/devtools/browser/abc")
+
+    def test_close_open_profile_tabs_returns_false_without_live_endpoint(self):
+        with mock.patch.object(adspower_cdp, "find_open_profile_cdp_endpoint", return_value=""):
+            result = adspower_cdp.close_open_profile_tabs(
+                "k1dyapw4",
+                session=object(),
+                playwright_factory=mock.Mock(),
+            )
+
+        self.assertFalse(result)
 
 
 class UiModeSelectionTests(unittest.TestCase):

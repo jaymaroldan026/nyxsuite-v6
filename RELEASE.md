@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.5
+
+- AdsPower profile close now first targets the profile's own Chromium CDP
+  endpoint and closes every tab, avoiding another AdsPower GUI search when the
+  browser can close itself.
+- The CDP close path bypasses page "Leave site?" prompts by closing tabs without
+  running before-unload handlers.
+- Existing AdsPower API and GUI close paths remain as fallbacks when a profile
+  does not have a live CDP endpoint.
+
 ### NyxSuite v6.2.4
 
 - Windows launcher now starts from its own install folder, preserves failures,

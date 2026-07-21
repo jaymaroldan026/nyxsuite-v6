@@ -28,6 +28,7 @@ profiles a human opened", not hands-off fleet startup.
 """
 import os
 import socket
+import time
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -305,3 +306,118 @@ def list_open_profile_endpoints(session=None):
                 session.close()
             except Exception:
                 pass
+
+
+_CDP_CLOSED_ERROR_PARTS = (
+    "target page, context or browser has been closed",
+    "page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "browser closed",
+)
+
+
+def _is_cdp_closed_error(exc):
+    text = str(exc or "").strip().lower()
+    return any(part in text for part in _CDP_CLOSED_ERROR_PARTS)
+
+
+def _snapshot_browser_pages(browser):
+    try:
+        contexts = list(getattr(browser, "contexts", []) or [])
+    except Exception as exc:
+        if _is_cdp_closed_error(exc):
+            return []
+        raise
+
+    pages = []
+    for context in contexts:
+        try:
+            pages.extend(list(getattr(context, "pages", []) or []))
+        except Exception as exc:
+            if _is_cdp_closed_error(exc):
+                continue
+            raise
+    return pages
+
+
+def _close_page_without_beforeunload(page):
+    try:
+        page.close(run_before_unload=False)
+        return True
+    except TypeError:
+        page.close()
+        return True
+    except Exception as exc:
+        if _is_cdp_closed_error(exc):
+            return False
+        raise
+
+
+def _close_all_browser_pages(browser, max_rounds=4):
+    """Close every visible tab/page in every Playwright browser context.
+
+    Closing the last AdsPower/SunBrowser tab usually tears down the browser
+    process, so browser/context access can disappear mid-loop. Once at least one
+    close has been requested, those "target closed" errors mean the intended
+    shutdown has started.
+    """
+    closed_count = 0
+    for _round in range(max(1, int(max_rounds or 1))):
+        pages = _snapshot_browser_pages(browser)
+        if not pages:
+            return closed_count
+        for page in pages:
+            if _close_page_without_beforeunload(page):
+                closed_count += 1
+        time.sleep(0.1)
+    return closed_count
+
+
+def close_open_profile_tabs(
+    profile_id,
+    session=None,
+    deep_scan=False,
+    playwright_factory=None,
+    max_rounds=4,
+):
+    """Close all tabs for one open AdsPower profile via its own CDP endpoint.
+
+    Returns ``True`` after at least one tab close was requested. Returns ``False``
+    when the profile has no live CDP endpoint, letting callers fall back to the
+    AdsPower API or GUI row controls.
+    """
+    wanted = str(profile_id or "").strip()
+    if not wanted:
+        return False
+
+    endpoint = find_open_profile_cdp_endpoint(wanted, session=session, deep_scan=deep_scan)
+    if not endpoint:
+        return False
+
+    if playwright_factory is None:
+        from playwright.sync_api import sync_playwright
+
+        playwright_factory = sync_playwright
+
+    browser = None
+    with playwright_factory() as playwright:
+        browser = playwright.chromium.connect_over_cdp(endpoint)
+        try:
+            closed_count = _close_all_browser_pages(browser, max_rounds=max_rounds)
+        finally:
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception as exc:
+                    if not _is_cdp_closed_error(exc):
+                        logger.debug(
+                            f"Could not detach from AdsPower profile {wanted} CDP browser: {exc}"
+                        )
+
+    if closed_count <= 0:
+        logger.warning(f"AdsPower profile {wanted} had a live CDP endpoint but no tabs to close.")
+        return False
+
+    logger.info(f"Closed {closed_count} tab(s) for AdsPower profile {wanted} via CDP.")
+    return True
