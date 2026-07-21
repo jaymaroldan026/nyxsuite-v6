@@ -637,6 +637,22 @@ class BitmojiInteractionMixin:
                 )
             return None
 
+        async def current_handoff_state(where=""):
+            try:
+                state = await self.check_session_state(fast=True)
+            except BannedSnapError:
+                raise
+            except Exception:
+                return None
+
+            if state == "BANNED":
+                raise BannedSnapError("Snapchat authorization error while waiting for login.")
+            if state == "LOGIN_REDIRECT":
+                return await self.recover_login_redirect(where)
+            if state in {"CONTINUE", "GENDER", "EDITOR", "ACCOUNT_HOME", "PROXY"}:
+                return state
+            return None
+
         # The login form can render a beat after the LOGIN state is detected
         # (redirect still settling). Poll briefly instead of instantly giving
         # up to the manual-login wait.
@@ -645,12 +661,15 @@ class BitmojiInteractionMixin:
             login_ctx = await self.get_snapchat_login_context()
             if login_ctx is not None:
                 break
+            handoff_state = await current_handoff_state("while waiting for Snapchat login form")
+            if handoff_state is not None:
+                return handoff_state
             await asyncio.sleep(0.5)
         if login_ctx is None:
             if self.logger:
                 self.logger.warning(
                     f"Login page detected for {profile_id} but no login form context "
-                    "appeared within 8s; falling back to manual login."
+                    "or OAuth continuation appeared within 8s; falling back to manual login."
                 )
             return None
 
@@ -681,6 +700,9 @@ class BitmojiInteractionMixin:
         for _ in range(12):
             login_ctx = await self.get_snapchat_login_context()
             if login_ctx is None:
+                handoff_state = await current_handoff_state("during Snapchat auto-login")
+                if handoff_state is not None:
+                    return handoff_state
                 unrecognized_states += 1
                 if unrecognized_states >= 4:
                     break

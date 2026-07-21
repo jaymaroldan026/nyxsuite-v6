@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.2.7 - Continuous Mode Bitmoji auth handoff fix
+
+### Nyx: continue past transient Snapchat login during Continuous Mode
+- Fixed a Continuous Mode handoff case where Nyx could mark the task
+  `need_login` and wait manually even though the newly created Snapchat session
+  was already advancing into Bitmoji OAuth.
+- While auto-login is waiting for a Snapchat login form, Nyx now checks whether
+  the browser has moved to OAuth Continue, gender selection, the editor, account
+  home, or the Bitmoji login redirect recovery path, then continues from that
+  state.
+- `need_login` is now emitted only after automatic login cannot continue and Nyx
+  is actually entering manual-login wait.
+
 ## 6.2.6 - Continuous Mode immediate Nyx handoff
 
 ### Nyxify: one-account Continuous Mode pipeline

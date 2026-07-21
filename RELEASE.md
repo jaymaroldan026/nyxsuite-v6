@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.2.7
+
+- Continuous Mode Nyx handoff no longer gets stuck at `need_login` when the
+  Snapchat login page advances into Bitmoji OAuth before the login form appears.
+- Nyx now recognizes OAuth/Bitmoji handoff states while waiting for Snapchat
+  auto-login fields, so it proceeds to Continue/Gender/Editor instead of
+  falling into manual-login wait.
+- `need_login` is now recorded only after automatic Snapchat login has actually
+  failed and Nyx is entering manual-login wait.
+
 ### NyxSuite v6.2.6
 
 - Continuous Mode now runs as a one-account pipeline: Nyxify creates the

@@ -930,8 +930,6 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 state = recovered or await self.check_session_state(fast=True)
 
             if state == "LOGIN":
-                if callable(progress_callback):
-                    progress_callback("need_login")
                 auto_login_state = await self.try_auto_snapchat_login(
                     profile_id,
                     credentials=snapchat_credentials,
@@ -940,6 +938,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 if auto_login_state is not None:
                     state = auto_login_state
                 else:
+                    if callable(progress_callback):
+                        progress_callback("need_login")
                     state = await self.wait_for_manual_login_resume(progress_callback=progress_callback)
 
             if state == "BANNED":
