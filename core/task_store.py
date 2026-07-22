@@ -699,6 +699,24 @@ class TaskStore:
         except Exception:
             return 0
 
+    def requeue_running_tasks_after_runner_restart(self):
+        now = utc_now_iso()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'PENDING',
+                    run_token = '',
+                    last_step = 'requeued_after_runner_restart',
+                    error = '',
+                    completed_at = '',
+                    updated_at = ?
+                WHERE status = 'RUNNING'
+                """,
+                (now,),
+            )
+            return cursor.rowcount
+
     def relaunch_task_by_profile_id(self, profile_id):
         now = utc_now_iso()
 

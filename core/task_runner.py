@@ -2,7 +2,7 @@ import asyncio
 import os
 import uuid
 
-from core.bitmoji_creator import BitmojiCreator
+from core.bitmoji_creator import BitmojiCreator, CdpAttachTimeoutError
 from core.adspower import (
     AdsPowerManager,
     AdsPowerPermissionError,
@@ -448,12 +448,26 @@ async def process_queued_task(task, store, adspower, logger):
                 or not _should_retry_profile_attempt_exception(attempt_error, last_result)
             ):
                 raise
+            recovered_cdp_attach = isinstance(attempt_error, CdpAttachTimeoutError)
+            if recovered_cdp_attach:
+                logger.warning(
+                    f"CDP attach timed out for profile {profile_id}; recycling the AdsPower "
+                    "browser before retrying the Bitmoji flow."
+                )
+                store.update_last_step(task_id, "recovering_cdp_attach", run_token=run_token)
+                try:
+                    await asyncio.to_thread(adspower.close_profile, profile_id)
+                except Exception as close_error:
+                    logger.warning(
+                        f"Could not close profile {profile_id} during CDP recovery: {close_error}"
+                    )
             logger.warning(
                 f"Bitmoji attempt {attempt}/{max_attempts} raised for profile {profile_id} "
                 f"at step '{last_step_seen['value']}' (last_result={last_result}): "
                 f"{attempt_error}; retrying the whole profile automatically."
             )
-            store.update_last_step(task_id, "retrying_bitmoji_flow", run_token=run_token)
+            if not recovered_cdp_attach:
+                store.update_last_step(task_id, "retrying_bitmoji_flow", run_token=run_token)
             if NYX_BITMOJI_RETRY_BACKOFF_SECONDS > 0:
                 await asyncio.sleep(NYX_BITMOJI_RETRY_BACKOFF_SECONDS)
             continue

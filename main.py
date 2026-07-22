@@ -140,6 +140,14 @@ def _effective_concurrency_limit_for_queue(concurrency_limit, store, pending_que
     return base_limit + min(continuous_pending, max(0, int(manual_login_blockers or 0)))
 
 
+def _reset_orphaned_running_tasks_on_startup(store):
+    try:
+        return int(store.requeue_running_tasks_after_runner_restart() or 0)
+    except Exception as exc:
+        logger.warning(f"Could not requeue orphaned Nyx RUNNING rows on startup: {exc}")
+        return 0
+
+
 async def process_task(task, store, adspower):
     try:
         await process_queued_task(task, store, adspower, logger)
@@ -218,6 +226,9 @@ async def main():
 
     try:
         store = get_queue_store()
+        requeued = _reset_orphaned_running_tasks_on_startup(store)
+        if requeued:
+            logger.info(f"Requeued {requeued} orphaned Nyx RUNNING task(s) after runner startup.")
         adspower = AdsPowerManager()
 
         def _mark_profile_missing(pid):

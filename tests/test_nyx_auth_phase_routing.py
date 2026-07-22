@@ -113,6 +113,43 @@ class AuthPhaseRoutingTests(unittest.TestCase):
         )
         self.assertEqual(store.status_calls[-1]["status"], "DONE")
 
+    def test_cdp_attach_timeout_recycles_profile_before_retry(self):
+        from core.bitmoji_creator import CdpAttachTimeoutError
+
+        store = _FakeStore()
+        task = {"id": "t1", "profile_id": "k1abc", "model": "willow"}
+        attempts = []
+        manager = mock.Mock()
+
+        async def fake_run_profile_task(*args, **kwargs):
+            attempts.append(args)
+            if len(attempts) == 1:
+                raise CdpAttachTimeoutError("Timed out connecting to AdsPower CDP")
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_PROFILE_RETRIES", 1), \
+             mock.patch.object(task_runner, "NYX_BITMOJI_RETRY_BACKOFF_SECONDS", 0):
+            asyncio.run(
+                task_runner.process_queued_task(
+                    task, store, adspower=manager, logger=_FakeLogger()
+                )
+            )
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(manager.close_profile.call_count, 1)
+        self.assertIn(
+            "recovering_cdp_attach",
+            [call["step"] for call in store.last_step_calls],
+        )
+        self.assertNotIn(
+            "retrying_bitmoji_flow",
+            [call["step"] for call in store.last_step_calls],
+        )
+        self.assertEqual(store.status_calls[-1]["status"], "DONE")
+
     def test_missing_profile_exception_is_not_retried(self):
         store = _FakeStore()
         task = {"id": "t1", "profile_id": "k1missing", "model": "willow"}

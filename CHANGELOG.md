@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.3.2 - CDP attach recovery
+
+### Nyx: recover stuck AdsPower browser attach during Continuous Mode
+- Added bounded Playwright CDP attach attempts so an AdsPower browser that is
+  half-responsive cannot park a continuous handoff for long 180-second retry
+  cycles.
+- Nyx now records `recovering_cdp_attach`, closes the AdsPower profile, and
+  retries the Bitmoji flow when CDP attach times out.
+- Runner startup now requeues orphaned `RUNNING` Nyx rows, so a restart after a
+  stuck attach does not leave Continuous Mode waiting forever.
+
 ## 6.3.1 - Continuous Mode queue-slot recovery
 
 ### Nyx: continuous handoffs no longer wait behind manual-login rows

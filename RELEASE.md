@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.2
+
+- Fixed a Continuous Mode stall where AdsPower's CDP endpoint was visible but
+  Playwright could not complete `connect_over_cdp`, leaving the Nyx row parked
+  at `running_bitmoji_flow`.
+- Nyx now times out CDP attach faster, records `recovering_cdp_attach`, closes
+  the AdsPower profile, and retries the Bitmoji run from a fresh browser
+  session.
+- Runner startup now requeues orphaned `RUNNING` Nyx rows so restarting Nyx can
+  recover active continuous handoffs instead of leaving them stuck.
+
 ### NyxSuite v6.3.1
 
 - Fixed a Continuous Mode queue stall where a new Nyxify handoff could remain

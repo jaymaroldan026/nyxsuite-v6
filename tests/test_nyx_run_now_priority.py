@@ -200,6 +200,28 @@ class NyxRunNowPriorityTests(unittest.TestCase):
                 1,
             )
 
+    def test_startup_requeues_orphaned_running_continuous_handoff(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TaskStore(db_path=str(Path(tmp) / "nyx_tasks.db"))
+            task_id, _ = store.upsert_task(
+                profile_id="k1continuous",
+                model="Chloe",
+                source="nyxify_continuous",
+                priority=100,
+            )
+            store.begin_run(task_id, "dead-run", step="running_bitmoji_flow")
+
+            requeued = main._reset_orphaned_running_tasks_on_startup(store)
+
+            row = store.get_task_by_profile_id("k1continuous")
+            self.assertEqual(requeued, 1)
+            self.assertEqual(row["status"], "PENDING")
+            self.assertEqual(row["last_step"], "requeued_after_runner_restart")
+            self.assertEqual(row["priority"], 100)
+            self.assertEqual(row["source"], "nyxify_continuous")
+
 
 class NyxRunNowApiTests(unittest.TestCase):
     def setUp(self):

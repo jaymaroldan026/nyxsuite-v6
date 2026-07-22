@@ -17,6 +17,10 @@ from snap_selectors.selectors import BITMOJI_SELECTORS
 BITMOJI_CREATE_URL = "https://www.bitmoji.com/avatar/create/?require_snapchat"
 
 
+class CdpAttachTimeoutError(Exception):
+    """Raised when AdsPower CDP is reachable but Playwright cannot attach."""
+
+
 def _is_manual_browser_close(exc):
     """True when the error means the AdsPower browser/profile was closed out from
     under us mid-run (user manually exited the profile, or AdsPower stopped it).
@@ -78,6 +82,9 @@ def _transition_phase_semaphore():
 
 
 class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMixin):
+    CDP_ATTACH_TIMEOUT_SECONDS = float(os.getenv("NYX_CDP_ATTACH_TIMEOUT_SECONDS", "45"))
+    CDP_ATTACH_ATTEMPTS = max(1, int(os.getenv("NYX_CDP_ATTACH_ATTEMPTS", "2") or "2"))
+
     LOGIN_WITH_SNAPCHAT_SELECTORS = [
         "button:has-text('Log In with Snapchat')",
         "button:has-text('Snapchat')",
@@ -244,9 +251,12 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         last_error = None
         self.playwright = await async_playwright().start()
 
-        for attempt in range(4):
+        for attempt in range(self.CDP_ATTACH_ATTEMPTS):
             try:
-                self.browser = await self.playwright.chromium.connect_over_cdp(self.ws_endpoint)
+                self.browser = await asyncio.wait_for(
+                    self.playwright.chromium.connect_over_cdp(self.ws_endpoint),
+                    timeout=self.CDP_ATTACH_TIMEOUT_SECONDS,
+                )
 
                 for _ in range(20):
                     if self.browser.contexts:
@@ -260,15 +270,31 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                     await asyncio.sleep(0.25)
 
                 raise Exception("Connected to browser, but no browser context became ready.")
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                if self.logger:
+                    self.logger.warning(
+                        f"CDP connect retry {attempt + 1}/{self.CDP_ATTACH_ATTEMPTS} "
+                        f"timed out after {self.CDP_ATTACH_TIMEOUT_SECONDS:.0f}s "
+                        f"for websocket {self.ws_endpoint}"
+                    )
+                await asyncio.sleep(1.0 + (attempt * 0.4))
             except Exception as exc:
                 last_error = exc
                 if self.logger:
                     self.logger.warning(
-                        f"CDP connect retry {attempt + 1}/4 failed for websocket {self.ws_endpoint}: {exc}"
+                        f"CDP connect retry {attempt + 1}/{self.CDP_ATTACH_ATTEMPTS} "
+                        f"failed for websocket {self.ws_endpoint}: {exc}"
                     )
                 await asyncio.sleep(1.0 + (attempt * 0.4))
 
-        raise Exception(f"Could not connect to AdsPower browser via CDP: {last_error}")
+        try:
+            await self.stop()
+        finally:
+            raise CdpAttachTimeoutError(
+                f"Timed out connecting to AdsPower CDP after {self.CDP_ATTACH_ATTEMPTS} "
+                f"attempt(s): {last_error}"
+            )
 
     async def stop(self, *, close_page=False):
         if close_page and self.page:
