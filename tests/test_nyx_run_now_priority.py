@@ -144,6 +144,62 @@ class NyxRunNowPriorityTests(unittest.TestCase):
                 ["k1continuous", "k1normal1", "k1normal2"],
             )
 
+    def test_continuous_handoff_borrows_slot_from_normal_need_login_wait(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TaskStore(db_path=str(Path(tmp) / "nyx_tasks.db"))
+            normal_id, _ = store.upsert_task(
+                profile_id="k1normal",
+                model="Willow",
+                source="extension_popup",
+            )
+            store.begin_run(normal_id, "normal-run", step="opening_profile")
+            store.update_last_step(normal_id, "need_login", run_token="normal-run")
+            store.upsert_task(
+                profile_id="k1continuous",
+                model="Tessa",
+                source="nyxify_continuous",
+                priority=100,
+            )
+
+            pending_queue = deque(store.get_pending_tasks())
+
+            self.assertEqual(
+                main._effective_concurrency_limit_for_queue(
+                    1, store, pending_queue, active_task_count=1
+                ),
+                2,
+            )
+
+    def test_continuous_handoff_does_not_borrow_slot_from_active_work(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TaskStore(db_path=str(Path(tmp) / "nyx_tasks.db"))
+            normal_id, _ = store.upsert_task(
+                profile_id="k1normal",
+                model="Willow",
+                source="extension_popup",
+            )
+            store.begin_run(normal_id, "normal-run", step="opening_profile")
+            store.update_last_step(normal_id, "running_bitmoji_flow", run_token="normal-run")
+            store.upsert_task(
+                profile_id="k1continuous",
+                model="Tessa",
+                source="nyxify_continuous",
+                priority=100,
+            )
+
+            pending_queue = deque(store.get_pending_tasks())
+
+            self.assertEqual(
+                main._effective_concurrency_limit_for_queue(
+                    1, store, pending_queue, active_task_count=1
+                ),
+                1,
+            )
+
 
 class NyxRunNowApiTests(unittest.TestCase):
     def setUp(self):

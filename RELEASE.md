@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.1
+
+- Fixed a Continuous Mode queue stall where a new Nyxify handoff could remain
+  pending because an older normal Nyx row was parked at `need_login` and held
+  the only Nyx slot.
+- High-priority `nyxify_continuous` tasks can now temporarily borrow an extra
+  slot from non-continuous manual-login waits, so the immediate Bitmoji run
+  starts without waiting for manual login cleanup.
+- Active editor/Bitmoji work is not interrupted; the temporary slot only opens
+  for the non-continuous `need_login` blocker case.
+
 ### NyxSuite v6.3.0
 
 - Tightened OAuth Continue detection so regular Snapchat welcome/account pages

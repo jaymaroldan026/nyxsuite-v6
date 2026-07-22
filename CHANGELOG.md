@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.3.1 - Continuous Mode queue-slot recovery
+
+### Nyx: continuous handoffs no longer wait behind manual-login rows
+- Fixed a Continuous Mode stall where a freshly queued Nyxify handoff could stay
+  pending while an older non-continuous Nyx row sat `RUNNING` at `need_login`
+  and occupied the only available Nyx slot.
+- Nyx can now temporarily borrow one slot for high-priority
+  `nyxify_continuous` tasks when the only blocker is a non-continuous manual
+  login wait.
+- Active Bitmoji/editor work is still allowed to finish normally; the extra
+  slot only applies to the manual-login wait case.
+
 ## 6.3.0 - Continuous Mode OAuth cleanup
 
 ### Nyx: Snapchat account pages no longer look like OAuth consent

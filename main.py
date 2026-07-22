@@ -113,6 +113,33 @@ def _refresh_pending_queue(_pending_queue, store):
     return deque(store.get_pending_tasks())
 
 
+def _pending_continuous_handoff_count(pending_queue):
+    count = 0
+    for task in list(pending_queue or []):
+        source = str((task or {}).get("source") or "").strip().lower()
+        status = str((task or {}).get("status") or "").strip().upper()
+        if source == "nyxify_continuous" and status == "PENDING":
+            count += 1
+    return count
+
+
+def _effective_concurrency_limit_for_queue(concurrency_limit, store, pending_queue, active_task_count=0):
+    base_limit = max(1, int(concurrency_limit or 1))
+    if int(active_task_count or 0) <= 0:
+        return base_limit
+
+    continuous_pending = _pending_continuous_handoff_count(pending_queue)
+    if continuous_pending <= 0:
+        return base_limit
+
+    try:
+        manual_login_blockers = store.count_non_continuous_need_login_running()
+    except Exception:
+        manual_login_blockers = 0
+
+    return base_limit + min(continuous_pending, max(0, int(manual_login_blockers or 0)))
+
+
 async def process_task(task, store, adspower):
     try:
         await process_queued_task(task, store, adspower, logger)
@@ -330,7 +357,21 @@ async def main():
                         if not active_tasks:
                             break
                     else:
-                        while pending_queue and len(active_tasks) < concurrency_limit:
+                        effective_concurrency_limit = _effective_concurrency_limit_for_queue(
+                            concurrency_limit,
+                            store,
+                            pending_queue,
+                            active_task_count=len(active_tasks),
+                        )
+                        if (
+                            effective_concurrency_limit > concurrency_limit
+                            and len(active_tasks) >= concurrency_limit
+                        ):
+                            logger.info(
+                                "Continuous run-now handoff is pending while a non-continuous "
+                                "profile waits at need_login; temporarily allowing one extra Nyx slot."
+                            )
+                        while pending_queue and len(active_tasks) < effective_concurrency_limit:
                             task = pending_queue.popleft()
                             active_tasks.add(asyncio.create_task(process_task(task, store, adspower)))
 

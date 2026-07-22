@@ -683,6 +683,22 @@ class TaskStore:
         except Exception:
             return False
 
+    def count_non_continuous_need_login_running(self):
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE status = 'RUNNING'
+                  AND LOWER(TRIM(COALESCE(last_step, ''))) = 'need_login'
+                  AND LOWER(TRIM(COALESCE(source, ''))) <> 'nyxify_continuous'
+                """
+            ).fetchone()
+        try:
+            return max(0, int(row[0] or 0)) if row else 0
+        except Exception:
+            return 0
+
     def relaunch_task_by_profile_id(self, profile_id):
         now = utc_now_iso()
 
