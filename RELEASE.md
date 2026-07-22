@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.5
+
+- Continuous Mode now releases Nyxify's Playwright/CDP browser connection before
+  queueing the profile into Nyx, so Nyx attaches with its own fresh controller.
+- Nyxify no longer closes the completed Snapchat signup tab before handoff; the
+  AdsPower browser stays open and Nyx takes over through the normal profile
+  attach path.
+- Added regression coverage for the handoff contract: signup tab remains open,
+  Nyxify is disconnected, and the profile is still queued to Nyx.
+
 ### NyxSuite v6.3.4
 
 - Continuous Mode now closes the Snapchat signup tab before handing the profile

@@ -203,6 +203,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             rotate_during_create=rotate_during_create,
         )
         context = _FakeContext()
+        playwright = _FakePlaywright()
         handoffs = []
         handoff_observations = []
         adspower_id_update = adspower_id_update or (lambda *_args, **_kwargs: True)
@@ -229,7 +230,10 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         }
 
         def fake_handoff(profile_id, model, logger=None, username="", password=""):
-            handoff_observations.append({"signup_closed": context.signup_page.closed})
+            handoff_observations.append({
+                "signup_closed": context.signup_page.closed,
+                "playwright_stopped": playwright.stopped,
+            })
             handoffs.append((profile_id, model, username, password))
             return {"ok": True, "method": "api"}
 
@@ -238,7 +242,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_disable_extensions(*_args, **_kwargs):
             return {
-                "playwright_instance": _FakePlaywright(),
+                "playwright_instance": playwright,
                 "signup_page": None,
                 "context": context,
                 "signup_url": "",
@@ -269,7 +273,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             await nyxify_runner.process_task(task, store, adspower)
 
         if capture_handoff_state:
-            return store, adspower, handoffs, handoff_observations, context
+            return store, adspower, handoffs, handoff_observations, context, playwright
         return store, adspower, handoffs
 
     async def test_cookie_warmup_is_visible_step_before_signup_handoff(self):
@@ -292,16 +296,17 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
 
-    async def test_continuous_mode_closes_signup_tab_before_nyx_handoff(self):
-        _store, _adspower, handoffs, observations, context = await self._run_task(
+    async def test_continuous_mode_releases_playwright_before_nyx_handoff_without_closing_signup_tab(self):
+        _store, _adspower, handoffs, observations, context, playwright = await self._run_task(
             True,
             capture_handoff_state=True,
         )
 
         self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
-        self.assertEqual(observations, [{"signup_closed": True}])
-        self.assertTrue(context.signup_page.closed)
+        self.assertEqual(observations, [{"signup_closed": False, "playwright_stopped": True}])
+        self.assertFalse(context.signup_page.closed)
         self.assertFalse(context.start_page.closed)
+        self.assertTrue(playwright.stopped)
 
     async def test_toggle_off_keeps_existing_close_after_signup_behavior(self):
         _store, adspower, handoffs = await self._run_task(False)

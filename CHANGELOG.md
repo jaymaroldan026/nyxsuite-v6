@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.3.5 - Continuous Mode handoff disconnect
+
+### Nyxify: disconnect before Nyx handoff without closing signup tab
+- Continuous Mode now stops Nyxify's Playwright/CDP connection after the rename
+  phase and before queueing the AdsPower profile into Nyx.
+- The completed Snapchat signup tab is left open instead of being closed by
+  Nyxify, preventing stale page-control handles while keeping the browser state
+  intact for Nyx's normal attach flow.
+- Regression coverage now verifies that the signup tab remains open and the
+  Nyxify Playwright connection is stopped before the Nyx queue call.
+
 ## 6.3.4 - Continuous Mode editor speed scope
 
 ### Nyxify: close signup tab before Nyx handoff
