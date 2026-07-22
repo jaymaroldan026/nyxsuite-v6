@@ -70,6 +70,19 @@ class PreflightTests(unittest.TestCase):
     """The auto-connect probe hits the keyless root /status endpoint (no API
     key, not rate-limited) — these mock the HTTP layer (session.get)."""
 
+    def setUp(self):
+        self.config_patch = mock.patch(
+            "core.nyx_runtime_config.load_nyx_config",
+            return_value={
+                "adspower_control_mode": "auto",
+                "adspower_api_key": "",
+                "adspower_host": "",
+                "adspower_port": "",
+            },
+        )
+        self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
+
     def test_ok_when_status_code_zero(self):
         m = AdsPowerManager()
         m.session.get = mock.Mock(return_value=_FakeResponse({"code": 0, "msg": "success"}))

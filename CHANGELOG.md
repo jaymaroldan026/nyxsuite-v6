@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.3.3 - Transparent macOS tray icon
+
+### Bridge: optional invisible menu-bar icon on macOS
+- Added a Settings toggle for a transparent macOS menu-bar tray icon.
+- When enabled, the tray keeps its clickable menu-bar target and the same
+  Open/Start/Stop/Restart/Update actions, but the status dot is invisible.
+- The preference is saved in bridge runtime config and preserved across future
+  updater installs.
+
 ## 6.3.2 - CDP attach recovery
 
 ### Nyx: recover stuck AdsPower browser attach during Continuous Mode

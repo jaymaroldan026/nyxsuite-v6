@@ -37,6 +37,17 @@ class _WarmupContext:
 
 
 class CookieWarmupOrderingTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.config_patch = mock.patch(
+            "core.nyxify_runtime_config.load_nyxify_config",
+            return_value={
+                "cookie_warmup_enabled": True,
+                "cookie_warmup_sites": [],
+            },
+        )
+        self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
+
     async def test_open_signup_helper_does_not_run_cookie_warmup(self):
         calls = []
         context = object()

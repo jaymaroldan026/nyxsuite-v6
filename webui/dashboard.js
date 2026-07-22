@@ -56,6 +56,7 @@ const PRODUCTS = {
 const state = {
   nyx: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), advancedVisible: false },
   nyxify: { rows: new Map(), counts: {}, bot: {}, usage: null, health: null, live: null, config: {}, search: "", sort: "", dir: 1, statusFilter: "", checked: new Set(), fullautoVisible: false, proxyrankVisible: false, advancedVisible: false, bannedRows: [], proxyRankingRows: [] },
+  bridge: { settings: { transparent_tray_icon: false } },
   version: "",
   update: { checked: false, available: false, current: "", latest: "", latest_name: "", notes: "", backups: [], availableVersions: [] },
 };
@@ -95,6 +96,7 @@ function onMessage(data) {
   if (ev.type === "snapshot") {
     const st = ev.status || {};
     state.version = (st.bridge || {}).version || "";
+    state.bridge.settings = (st.bridge || {}).settings || state.bridge.settings;
     const prods = st.products || {};
     Object.keys(PRODUCTS).forEach(p => { if (prods[p]) applyProductSnapshot(p, prods[p]); });
   } else if (ev.type === "update") {
@@ -490,6 +492,12 @@ async function renderSettings() {
   const asEl = el("autostart-toggle");
   if (autostart.ok) asEl.checked = autostart.enabled;
 
+  const tray = await callBridge("tray_icon");
+  if (tray.ok) {
+    state.bridge.settings.transparent_tray_icon = !!tray.transparent;
+  }
+  renderTrayIconPreference();
+
   await refreshConfig("nyx");
   renderAdsPowerModeControls();
   renderUpdatesCard();
@@ -498,6 +506,19 @@ async function renderSettings() {
   state.update.backups = backups.ok ? (backups.backups || []) : [];
   state.update.availableVersions = backups.ok ? (backups.available_versions || []) : [];
   renderUpdatesCard();
+}
+
+function renderTrayIconPreference() {
+  const toggle = el("tray-transparent-toggle");
+  if (toggle) {
+    toggle.checked = !!(state.bridge.settings || {}).transparent_tray_icon;
+  }
+  const feedback = el("tray-transparent-feedback");
+  if (feedback && !feedback.dataset.busy) {
+    feedback.textContent = toggle && toggle.checked
+      ? "Transparent on macOS; click target stays active."
+      : "Current visible status dot.";
+  }
 }
 
 function currentAdsPowerControlMode() {
@@ -722,6 +743,25 @@ el("autostart-toggle").addEventListener("change", async () => {
   const enabled = el("autostart-toggle").checked;
   const r = await callBridge("set_autostart", { enabled });
   el("autostart-feedback").textContent = r.ok ? (r.message || "Done.") : (r.error || "Failed.");
+});
+
+el("tray-transparent-toggle").addEventListener("change", async () => {
+  const transparent = el("tray-transparent-toggle").checked;
+  const feedback = el("tray-transparent-feedback");
+  if (feedback) {
+    feedback.dataset.busy = "1";
+    feedback.textContent = "Saving menu bar icon setting...";
+  }
+  const r = await callBridge("set_tray_icon", { transparent });
+  if (r.ok) {
+    state.bridge.settings.transparent_tray_icon = !!r.transparent;
+    el("tray-transparent-toggle").checked = !!r.transparent;
+    if (feedback) feedback.textContent = r.message || "Menu bar icon setting saved.";
+  } else {
+    el("tray-transparent-toggle").checked = !transparent;
+    if (feedback) feedback.textContent = r.error || "Could not save menu bar icon setting.";
+  }
+  if (feedback) feedback.dataset.busy = "";
 });
 
 el("update-check-btn").addEventListener("click", async () => {

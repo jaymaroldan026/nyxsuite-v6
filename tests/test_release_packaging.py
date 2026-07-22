@@ -43,6 +43,7 @@ def test_shell_release_zip_uses_portable_native_host_manifest(tmp_path):
     assert "NyxSuite-v9.9.9-test/ui_templates/adspower/elements/new_profile_btn.png" in names
     assert update_config["repo"] == "jaymaroldan026/nyxsuite-v6"
     assert update_config["asset_pattern"] == "NyxSuite-v*.zip"
+    assert "data/bridge_config.json" in update_config["data_preserve_paths"]
 
 
 def test_shell_release_zip_accepts_relative_output_dir(tmp_path):

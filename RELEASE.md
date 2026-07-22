@@ -9,6 +9,13 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.3
+
+- Added a Settings toggle for making the macOS menu-bar tray icon transparent.
+- Transparent mode keeps the same clickable tray target and menu actions while
+  hiding the visible status dot.
+- The bridge saves the preference locally and preserves it across updates.
+
 ### NyxSuite v6.3.2
 
 - Fixed a Continuous Mode stall where AdsPower's CDP endpoint was visible but

@@ -27,6 +27,7 @@ import webbrowser
 
 from pathlib import Path
 
+from core.bridge_runtime_config import load_bridge_config, save_bridge_config
 from core.agent_token import get_or_create_token
 from core.process_utils import ensure_logs_dir
 from core.runner_lock import RunnerLock
@@ -82,6 +83,8 @@ class BridgeApp:
         self.nyxify_api = None
         self.dashboard = None
         self._tray_icon = None
+        self._last_tray_image = None
+        self._transparent_tray_icon = False
         self._stop = threading.Event()
         self.token = ""
 
@@ -102,6 +105,7 @@ class BridgeApp:
 
         # Per-install token required on state-changing endpoints (env can override).
         self.token = os.getenv("NYXSUITE_TOKEN") or get_or_create_token()
+        self._transparent_tray_icon = bool(load_bridge_config().get("transparent_tray_icon", False))
         self.adspower = AdsPowerManager()
         self.nyx = NyxController(self.supervisor, adspower=self.adspower)
         self.nyxify = NyxifyController(self.supervisor, adspower=self.adspower)
@@ -146,6 +150,7 @@ class BridgeApp:
             host="127.0.0.1",
             port=DASHBOARD_PORT,
             bridge_actions=self._bridge_actions(),
+            bridge_settings_provider=self._bridge_settings_snapshot,
             version=self._version(),
             token=self.token,
         )
@@ -175,10 +180,17 @@ class BridgeApp:
             "set_autostart": self._action_set_autostart,
             "install_deps": self._action_install_deps,
             "install_deps_status": self._action_install_deps_status,
+            "tray_icon": self._action_tray_icon,
+            "set_tray_icon": self._action_set_tray_icon,
             "sync_extensions": self._action_sync_extensions,
             "hotkey_product": self._action_hotkey_product,
             "adspower_test": self._action_adspower_test,
             "shutdown": self._action_shutdown,
+        }
+
+    def _bridge_settings_snapshot(self) -> dict:
+        return {
+            "transparent_tray_icon": bool(getattr(self, "_transparent_tray_icon", False)),
         }
 
     def _action_hotkey_product(self, payload=None) -> dict:
@@ -445,6 +457,26 @@ class BridgeApp:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def _action_tray_icon(self, payload=None) -> dict:
+        transparent = bool(getattr(self, "_transparent_tray_icon", False))
+        return {"ok": True, "transparent": transparent}
+
+    def _action_set_tray_icon(self, payload=None) -> dict:
+        transparent = bool((payload or {}).get("transparent", False))
+        try:
+            saved = save_bridge_config({"transparent_tray_icon": transparent})
+            transparent = bool(saved.get("transparent_tray_icon", False))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        self._transparent_tray_icon = transparent
+        self._repaint_tray_icon()
+        label = "transparent" if transparent else "visible"
+        return {
+            "ok": True,
+            "transparent": transparent,
+            "message": f"Tray icon set to {label}.",
+        }
+
     _install_deps_status = {"state": "idle", "output": ""}
 
     def _action_install_deps(self, payload=None) -> dict:
@@ -683,6 +715,22 @@ class BridgeApp:
             draw.ellipse(box, outline=(120, 122, 130, 190), width=3)
         return img
 
+    def _make_tray_image(self, nyx_running: bool, nyxify_running: bool):
+        if sys.platform == "darwin" and bool(getattr(self, "_transparent_tray_icon", False)):
+            from PIL import Image
+
+            return Image.new("RGBA", (44, 44), (0, 0, 0, 0))
+        return self._make_status_dot(nyx_running, nyxify_running)
+
+    def _repaint_tray_icon(self):
+        if self._tray_icon is None:
+            return
+        state = (self._nyx_running(), self._nyxify_running())
+        self._apply_tray_image(
+            self._make_tray_image(*state),
+            self._tray_title(*state),
+        )
+
     def _apply_tray_image(self, image, title):
         """Set the tray icon image/title, marshaling to the macOS main thread.
 
@@ -694,6 +742,7 @@ class BridgeApp:
         icon = self._tray_icon
         if icon is None:
             return
+        self._last_tray_image = image
 
         def _apply():
             try:
@@ -743,8 +792,10 @@ class BridgeApp:
 
             # Rebuild the NSImage from the PIL image we last painted so we own a
             # known-good color, non-template image regardless of pystray's cache.
-            state = (self._nyx_running(), self._nyxify_running())
-            pil = self._make_status_dot(*state)
+            pil = getattr(self, "_last_tray_image", None)
+            if pil is None:
+                state = (self._nyx_running(), self._nyxify_running())
+                pil = self._make_tray_image(*state)
             buf = io.BytesIO()
             pil.save(buf, "png")
             nsimg = AppKit.NSImage.alloc().initWithData_(Foundation.NSData(buf.getvalue()))
@@ -815,7 +866,7 @@ class BridgeApp:
                     state = (self._nyx_running(), self._nyxify_running())
                     if self._tray_icon is not None and state != last:
                         self._apply_tray_image(
-                            self._make_status_dot(*state),
+                            self._make_tray_image(*state),
                             self._tray_title(*state),
                         )
                         # Keep the Start/Stop enabled-state and status lines
@@ -839,7 +890,7 @@ class BridgeApp:
             return None
 
         try:
-            image = self._make_status_dot(self._nyx_running(), self._nyxify_running())
+            image = self._make_tray_image(self._nyx_running(), self._nyxify_running())
         except Exception:
             # PIL unavailable / draw failed — fall back to the bundled icon.
             try:

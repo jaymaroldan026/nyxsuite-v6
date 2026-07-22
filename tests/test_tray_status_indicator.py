@@ -18,6 +18,8 @@ def _bridge(nyx_running=False, nyxify_running=False):
         nyx_running if name == "nyx" else nyxify_running
     )
     b.supervisor = supervisor
+    b._transparent_tray_icon = False
+    b._tray_icon = None
     return b
 
 
@@ -54,6 +56,26 @@ class TrayStatusIndicatorTests(unittest.TestCase):
         # The Nyx (blue) and Nyxify (gray) fills are actually present.
         self.assertIn((59, 130, 246, 255), nyx)
         self.assertIn((160, 162, 170, 255), nyxify)
+
+    def test_transparent_tray_image_on_macos_keeps_click_target_size(self):
+        b = _bridge(nyx_running=True, nyxify_running=True)
+        b._transparent_tray_icon = True
+
+        with mock.patch.object(bridge_app.sys, "platform", "darwin"):
+            img = b._make_tray_image(True, True)
+
+        self.assertEqual(img.size, (44, 44))
+        self.assertEqual(img.mode, "RGBA")
+        self.assertTrue(all(px == (0, 0, 0, 0) for px in img.getdata()))
+
+    def test_transparent_setting_does_not_hide_non_macos_tray_image(self):
+        b = _bridge(nyx_running=True, nyxify_running=False)
+        b._transparent_tray_icon = True
+
+        with mock.patch.object(bridge_app.sys, "platform", "win32"):
+            img = b._make_tray_image(True, False)
+
+        self.assertIn((59, 130, 246, 255), list(img.getdata()))
 
     def test_title_reflects_state(self):
         b = _bridge()
@@ -114,6 +136,33 @@ class TrayMenuSyncTests(unittest.TestCase):
             self.assertTrue(refreshed.wait(5.0), "menu was never rebuilt while polling")
         finally:
             b._stop.set()
+
+
+class TrayPreferenceActionTests(unittest.TestCase):
+    def test_tray_icon_action_reports_current_preference(self):
+        b = _bridge()
+        b._transparent_tray_icon = True
+
+        result = b._action_tray_icon({})
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["transparent"])
+
+    def test_set_tray_icon_saves_and_repaints_live_icon(self):
+        b = _bridge(nyx_running=True, nyxify_running=False)
+        b._transparent_tray_icon = False
+        b._tray_icon = mock.Mock()
+        b._apply_tray_image = mock.Mock()
+        b._tray_title = mock.Mock(return_value="Nyx Suite - test")
+
+        with mock.patch("bridge_app.save_bridge_config", return_value={"transparent_tray_icon": True}) as save:
+            result = b._action_set_tray_icon({"transparent": True})
+
+        save.assert_called_once_with({"transparent_tray_icon": True})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["transparent"])
+        self.assertTrue(b._transparent_tray_icon)
+        b._apply_tray_image.assert_called_once()
 
 
 if __name__ == "__main__":

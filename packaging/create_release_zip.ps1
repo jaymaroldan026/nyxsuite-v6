@@ -171,6 +171,7 @@ $updateConfig = @"
   "exe_to_relaunch": "",
   "data_preserve_paths": [
     "data/*.db",
+    "data/bridge_config.json",
     "data/nyx_config.json",
     "data/nyxify_config.json",
     "data/bitmoji_models.json",

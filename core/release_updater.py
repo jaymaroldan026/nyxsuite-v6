@@ -574,6 +574,7 @@ def _ensure_data_dirs(install_root: Path) -> None:
 
 DATA_PRESERVE_DEFAULTS = [
     "data/*.db",
+    "data/bridge_config.json",
     "data/nyx_config.json",
     "data/nyxify_config.json",
     "data/bitmoji_models.json",

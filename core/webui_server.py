@@ -86,12 +86,14 @@ def _row_signature(row):
 
 class WebDashboardServer:
     def __init__(self, controllers=None, host="127.0.0.1", port=8870,
-                 bridge_actions=None, version="", watch_interval=0.5, token=""):
+                 bridge_actions=None, bridge_settings_provider=None,
+                 version="", watch_interval=0.5, token=""):
         self.controllers = controllers or {}
         self.token = str(token or "")
         self.host = host
         self.port = int(port)
         self.bridge_actions = bridge_actions or {}
+        self.bridge_settings_provider = bridge_settings_provider
         self.version = str(version or "")
         self.watch_interval = float(watch_interval)
         self._server = None
@@ -112,7 +114,13 @@ class WebDashboardServer:
                 products[name] = controller.status_snapshot()
             except Exception as exc:
                 products[name] = {"error": str(exc)}
-        return {"ok": True, "products": products, "bridge": {"version": self.version}}
+        settings = {}
+        if callable(self.bridge_settings_provider):
+            try:
+                settings = self.bridge_settings_provider() or {}
+            except Exception:
+                settings = {}
+        return {"ok": True, "products": products, "bridge": {"version": self.version, "settings": settings}}
 
     def _inject_token(self, body: bytes) -> bytes:
         """Inject window.__NYX_TOKEN__ into index.html so the same-origin SPA has it."""
