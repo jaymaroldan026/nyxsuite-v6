@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.4
+
+- Continuous Mode now closes the Snapchat signup tab before handing the profile
+  to Nyx, so the Bitmoji run starts from a cleaner browser tab set.
+- The Automation Speed setting now applies only while Nyx is actively editing
+  the Bitmoji avatar, leaving OAuth/login/navigation waits on their fixed
+  reliability timings.
+- Added regression coverage for continuous handoff tab cleanup and editor-only
+  speed scaling.
+
 ### NyxSuite v6.3.3
 
 - Added a Settings toggle for making the macOS menu-bar tray icon transparent.

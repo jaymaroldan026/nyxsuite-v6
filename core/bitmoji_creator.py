@@ -190,6 +190,7 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         self.think_max = float(os.getenv("THINK_DELAY_MAX", "0.7"))
         self.profile_jitter = __import__("random").uniform(0.9, 1.15)
         self.automation_speed = 1.0
+        self._automation_speed_active = False
         self.hair_randomizer_enabled = False
         self._runtime_config_mtime_ns = None
         self.pause_file = Path(__file__).resolve().parents[1] / "logs" / "bot.paused"
@@ -243,6 +244,18 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
             yield
         finally:
             sem.release()
+
+    @asynccontextmanager
+    async def automation_speed_phase(self, phase_name="editor"):
+        previous = bool(getattr(self, "_automation_speed_active", False))
+        self._automation_speed_active = True
+        try:
+            logger = getattr(self, "logger", None)
+            if logger:
+                logger.info(f"Automation speed active for Bitmoji {phase_name} phase")
+            yield
+        finally:
+            self._automation_speed_active = previous
 
     async def start(self):
         if not str(self.ws_endpoint or "").strip():
@@ -323,7 +336,7 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
             low *= self.profile_jitter
             high *= self.profile_jitter
 
-        if respect_speed:
+        if respect_speed and bool(getattr(self, "_automation_speed_active", False)):
             speed = max(0.1, min(2.0, self.automation_speed))
             low /= speed
             high /= speed
@@ -979,30 +992,31 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 print("Bitmoji already exists for this account")
                 return True
 
-            if callable(progress_callback):
-                progress_callback("applying_face_model")
-            face_applied = await self.apply_face_model(model, profile_id)
-            if not face_applied:
-                if await self.reconcile_has_bitmoji_result("face_model_returned_false"):
-                    return True
-                return False
+            async with self.automation_speed_phase("editor"):
+                if callable(progress_callback):
+                    progress_callback("applying_face_model")
+                face_applied = await self.apply_face_model(model, profile_id)
+                if not face_applied:
+                    if await self.reconcile_has_bitmoji_result("face_model_returned_false"):
+                        return True
+                    return False
 
-            print("FACE APPLIED")
-            await self.human_delay(0.5, 1.2, kind="think")
+                print("FACE APPLIED")
+                await self.human_delay(0.5, 1.2, kind="think")
 
-            if callable(progress_callback):
-                progress_callback("applying_outfit")
-            await self.apply_outfit(profile_id, model=model, outfit_seed=outfit_seed)
-            if callable(progress_callback):
-                progress_callback("outfit_applied")
+                if callable(progress_callback):
+                    progress_callback("applying_outfit")
+                await self.apply_outfit(profile_id, model=model, outfit_seed=outfit_seed)
+                if callable(progress_callback):
+                    progress_callback("outfit_applied")
 
-            print("OUTFIT APPLIED")
-            await self.human_delay(0.05, 0.12, kind="think", respect_speed=False, respect_jitter=False)
+                print("OUTFIT APPLIED")
+                await self.human_delay(0.05, 0.12, kind="think", respect_speed=False, respect_jitter=False)
 
-            if callable(progress_callback):
-                progress_callback("saving_bitmoji")
-            async with self.transition_phase_slot("save_bitmoji"):
-                await self.save_bitmoji()
+                if callable(progress_callback):
+                    progress_callback("saving_bitmoji")
+                async with self.transition_phase_slot("save_bitmoji"):
+                    await self.save_bitmoji()
             if callable(progress_callback):
                 progress_callback("completed")
             print("BITMOJI SAVED")

@@ -92,6 +92,65 @@ def _mark_pending_tasks_waiting_for_continuous_nyx(store):
     return marked
 
 
+def _is_snapchat_signup_tab_url(url):
+    normalized = str(url or "").strip().lower()
+    return (
+        "accounts.snapchat.com/v2/signup" in normalized
+        or "accounts.snapchat.com/accounts/signup" in normalized
+    )
+
+
+async def _close_signup_tabs_before_nyx(context, signup_page=None, logger=None, profile_id=""):
+    pages = []
+    seen = set()
+
+    try:
+        pages.extend(getattr(context, "pages", []) or [])
+    except Exception:
+        pass
+    if signup_page is not None:
+        pages.append(signup_page)
+
+    closed = 0
+    for page in pages:
+        if page is None:
+            continue
+        marker = id(page)
+        if marker in seen:
+            continue
+        seen.add(marker)
+
+        try:
+            if page.is_closed():
+                continue
+        except Exception:
+            pass
+
+        try:
+            page_url = str(getattr(page, "url", "") or "")
+        except Exception:
+            page_url = ""
+        if not _is_snapchat_signup_tab_url(page_url):
+            continue
+
+        try:
+            await page.close()
+            closed += 1
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    f"Could not close Snapchat signup tab before Nyx handoff "
+                    f"for AdsPower profile {profile_id}: {exc}"
+                )
+
+    if closed and logger:
+        logger.info(
+            f"Closed {closed} Snapchat signup tab(s) before Nyx handoff "
+            f"for AdsPower profile {profile_id}."
+        )
+    return closed
+
+
 def _ensure_local_api_token():
     global NYXIFY_LOCAL_API_TOKEN, _LOCAL_API_TOKEN_CACHED
     if _LOCAL_API_TOKEN_CACHED:
@@ -1387,14 +1446,22 @@ async def process_task(task, store, adspower):
             f"has_page={bool(signup_page)}, has_context={bool(context)}"
         )
 
+        signup_page_close_intent = {"before_nyx": False}
+
         if signup_page is not None:
-            signup_page.on(
-                "close",
-                lambda: logger.warning(
+            def _on_signup_page_close():
+                if signup_page_close_intent.get("before_nyx"):
+                    logger.info(
+                        f"Nyxify signup page closed before Nyx handoff for task {task_id} "
+                        f"(profile_id={created.get('profile_id')})."
+                    )
+                    return
+                logger.warning(
                     f"Nyxify signup page closed for task {task_id} "
                     f"(profile_id={created.get('profile_id')})."
-                ),
-            )
+                )
+
+            signup_page.on("close", _on_signup_page_close)
 
         if signup_url and signup_page and context:
             last_step = "signup_opened"
@@ -1618,6 +1685,13 @@ async def process_task(task, store, adspower):
             ):
                 profile_id_value = str(created.get("profile_id") or "").strip()
                 handoff_model = model_tag or str(task.get("model") or "").strip()
+                signup_page_close_intent["before_nyx"] = True
+                await _close_signup_tabs_before_nyx(
+                    context,
+                    signup_page=signup_page,
+                    logger=logger,
+                    profile_id=profile_id_value,
+                )
                 store.update_task_state(task_id, last_step="queueing_nyx")
                 handoff_result = await asyncio.to_thread(
                     enqueue_profile_for_nyx,

@@ -123,10 +123,33 @@ class _FakeAdsPower:
 
 
 class _FakePage:
-    url = "https://accounts.snapchat.com/v2/signup"
+    def __init__(self, url="https://accounts.snapchat.com/v2/signup"):
+        self.url = url
+        self.closed = False
+        self.handlers = {}
+
+    def is_closed(self):
+        return self.closed
+
+    async def close(self):
+        self.closed = True
+        callback = self.handlers.get("close")
+        if callback:
+            callback()
 
     def on(self, *_args, **_kwargs):
-        pass
+        if len(_args) >= 2:
+            self.handlers[_args[0]] = _args[1]
+
+
+class _FakeContext:
+    def __init__(self):
+        self.signup_page = _FakePage()
+        self.start_page = _FakePage("https://start.adspower.net/?id=k1new")
+
+    @property
+    def pages(self):
+        return [self.start_page, self.signup_page]
 
 
 class _FakePlaywright:
@@ -141,25 +164,8 @@ async def _fake_rotate_proxy(**kwargs):
     return kwargs["proxy_value"], {"proxy": None}
 
 
-async def _fake_disable_extensions(*_args, **_kwargs):
-    return {
-        "playwright_instance": _FakePlaywright(),
-        "signup_page": None,
-        "context": object(),
-        "signup_url": "",
-    }
-
-
 async def _fake_warmup(*_args, **_kwargs):
     return {"enabled": True, "visited": ["https://wikipedia.org/"]}
-
-
-async def _fake_open_signup(*_args, **_kwargs):
-    return {
-        "page": _FakePage(),
-        "url": "https://accounts.snapchat.com/v2/signup",
-        "method": "new_tab",
-    }
 
 
 async def _fake_signup(**kwargs):
@@ -189,13 +195,16 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         adspower_id_update=None,
         rotate_during_create=False,
         snapboard_rotation="",
+        capture_handoff_state=False,
     ):
         store = _FakeStore()
         adspower = _FakeAdsPower(
             rename_error=rename_error,
             rotate_during_create=rotate_during_create,
         )
+        context = _FakeContext()
         handoffs = []
+        handoff_observations = []
         adspower_id_update = adspower_id_update or (lambda *_args, **_kwargs: True)
         config = {
             "blocked_proxies": [],
@@ -220,18 +229,34 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         }
 
         def fake_handoff(profile_id, model, logger=None, username="", password=""):
+            handoff_observations.append({"signup_closed": context.signup_page.closed})
             handoffs.append((profile_id, model, username, password))
             return {"ok": True, "method": "api"}
 
         async def fake_snapboard_rotation(*_args, **_kwargs):
             return snapboard_rotation
 
+        async def fake_disable_extensions(*_args, **_kwargs):
+            return {
+                "playwright_instance": _FakePlaywright(),
+                "signup_page": None,
+                "context": context,
+                "signup_url": "",
+            }
+
+        async def fake_open_signup(*_args, **_kwargs):
+            return {
+                "page": context.signup_page,
+                "url": "https://accounts.snapchat.com/v2/signup",
+                "method": "new_tab",
+            }
+
         with mock.patch.object(nyxify_runner, "logger", _FakeLogger()), \
                 mock.patch.object(nyxify_runner, "load_nyxify_config", return_value=config), \
                 mock.patch.object(nyxify_runner, "_rotate_proxy_until_usable", side_effect=_fake_rotate_proxy), \
-                mock.patch.object(nyxify_runner, "disable_profile_extensions", side_effect=_fake_disable_extensions), \
+                mock.patch.object(nyxify_runner, "disable_profile_extensions", side_effect=fake_disable_extensions), \
                 mock.patch.object(nyxify_runner, "warm_ads_profile_cookies", side_effect=_fake_warmup), \
-                mock.patch.object(nyxify_runner, "open_snapchat_signup", side_effect=_fake_open_signup), \
+                mock.patch.object(nyxify_runner, "open_snapchat_signup", side_effect=fake_open_signup), \
                 mock.patch.object(nyxify_runner, "perform_snapchat_signup", side_effect=signup_side_effect), \
                 mock.patch.object(nyxify_runner, "_wait_for_snapboard_update", side_effect=_fake_snapboard_wait), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_username_update", return_value=True), \
@@ -243,6 +268,8 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(nyxify_runner, "enqueue_profile_for_nyx", side_effect=fake_handoff):
             await nyxify_runner.process_task(task, store, adspower)
 
+        if capture_handoff_state:
+            return store, adspower, handoffs, handoff_observations, context
         return store, adspower, handoffs
 
     async def test_cookie_warmup_is_visible_step_before_signup_handoff(self):
@@ -264,6 +291,17 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adspower.closed, [])
         self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertTrue(any(update.get("last_step") == "queued_for_nyx" for _task_id, update in store.updates))
+
+    async def test_continuous_mode_closes_signup_tab_before_nyx_handoff(self):
+        _store, _adspower, handoffs, observations, context = await self._run_task(
+            True,
+            capture_handoff_state=True,
+        )
+
+        self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
+        self.assertEqual(observations, [{"signup_closed": True}])
+        self.assertTrue(context.signup_page.closed)
+        self.assertFalse(context.start_page.closed)
 
     async def test_toggle_off_keeps_existing_close_after_signup_behavior(self):
         _store, adspower, handoffs = await self._run_task(False)

@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.3.4 - Continuous Mode editor speed scope
+
+### Nyxify: close signup tab before Nyx handoff
+- Continuous Mode now closes the Snapchat signup/account-creation tab after a
+  confirmed signup and before queueing the AdsPower profile into Nyx.
+- The AdsPower profile itself stays open for the immediate Bitmoji handoff;
+  only the stale signup tab is removed.
+
+### Nyx: Automation Speed only affects Bitmoji editor actions
+- The Automation Speed slider now affects the face, outfit, and save editor
+  phase only.
+- OAuth, login, redirect, and editor-load waits keep their fixed timing so the
+  speed setting does not make authentication less reliable.
+
 ## 6.3.3 - Transparent macOS tray icon
 
 ### Bridge: optional invisible menu-bar icon on macOS
