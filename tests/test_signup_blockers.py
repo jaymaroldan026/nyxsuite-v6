@@ -665,16 +665,25 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         page = FakeProgressPage()
         username_state = {"value": "milyaure", "manual_override": False}
         unable_detector = mock.AsyncMock(return_value=True)
+        retry_done = False
+
+        async def detect_handoff(_page, *_args, **_kwargs):
+            return "email" if retry_done else ""
+
+        async def retry_username(*_args, **_kwargs):
+            nonlocal retry_done
+            retry_done = True
+            return "freshmily"
 
         with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
             mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
             mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
-            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(return_value="email")), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(side_effect=detect_handoff)), \
             mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(side_effect=["milyaure", "freshmily"])), \
             mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(side_effect=[True, False])), \
             mock.patch.object(signup_flow, "_is_use_email_switch_visible", mock.AsyncMock(return_value=False)), \
             mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
-            mock.patch.object(signup_flow, "_retry_taken_username", mock.AsyncMock(return_value="freshmily")) as retry_taken, \
+            mock.patch.object(signup_flow, "_retry_taken_username", mock.AsyncMock(side_effect=retry_username)) as retry_taken, \
             mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", unable_detector), \
             mock.patch.object(signup_flow, "_click_signup_submit", mock.AsyncMock(return_value=True)):
             stage = await signup_flow._wait_for_signup_progress(
@@ -691,6 +700,46 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         retry_taken.assert_awaited_once()
         unable_detector.assert_not_awaited()
         self.assertEqual(page.waits[0], 700)
+
+    async def test_email_handoff_wins_over_stale_username_taken_error(self):
+        class FakeProgressPage:
+            url = "https://accounts.snapchat.com/v2/signup"
+
+            def __init__(self):
+                self.waits = []
+
+            async def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+
+        page = FakeProgressPage()
+        username_state = {"value": "milyaure", "manual_override": False}
+        retry_taken = mock.AsyncMock(return_value="")
+        steps = []
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(return_value="email")), \
+            mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(return_value="milyaure")), \
+            mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_is_use_email_switch_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_retry_taken_username", retry_taken), \
+            mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", mock.AsyncMock(return_value=True)):
+            stage = await signup_flow._wait_for_signup_progress(
+                page,
+                logger=None,
+                profile_id="194",
+                timeout_ms=1000,
+                username_retry_provider=mock.AsyncMock(return_value="freshmily"),
+                username_state=username_state,
+                progress_callback=lambda step: steps.append(step),
+            )
+
+        self.assertEqual(stage, "email")
+        retry_taken.assert_not_awaited()
+        self.assertEqual(steps, ["awaiting_email_verification"])
+        self.assertEqual(page.waits, [])
 
     async def test_unable_to_process_retry_uses_fast_submit_and_short_settle(self):
         class FakeProgressPage:

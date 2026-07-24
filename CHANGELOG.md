@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.3.8 - Signup handoff priority
+
+### Nyxify: stale username errors no longer delay email handoff
+- Signup progress now checks for email, OTP, phone, and welcome handoff stages
+  before handling username-taken retry UI.
+- This prevents stale username-error elements from keeping a row stuck at
+  `retrying_signup_username` after Snapchat has already advanced to email
+  verification or welcome.
+- Added regression coverage for the email handoff winning over a stale
+  username-taken state.
+
 ## 6.3.7 - Blank signup shell refresh
 
 ### Nyxify: recover the empty Snapchat signup shell

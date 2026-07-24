@@ -1770,6 +1770,35 @@ async def _wait_for_signup_progress(
                         f"Full Auto retry is disabled for this signup run."
                     )
 
+        handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
+        if handoff_stage and stall_state is not None:
+            stall_state["form_since"] = None
+            stall_state["page_issue_since"] = None
+        if handoff_stage == "welcome":
+            await set_progress("signup_complete")
+            return "welcome"
+
+        if handoff_stage == "otp":
+            await set_progress("awaiting_otp")
+            return "otp"
+
+        if handoff_stage == "phone":
+            await set_progress("awaiting_phone_verification")
+            return "phone"
+
+        if handoff_stage == "email":
+            await set_progress("awaiting_email_verification")
+            return "email"
+
+        if handoff_stage == "email_switch":
+            await set_progress("clicking_use_email_instead")
+            clicked_email = await _click_use_email_instead(page, logger, profile_id)
+            if clicked_email:
+                await page.wait_for_timeout(900)
+                if remaining_ms is not None:
+                    remaining_ms -= 900
+                continue
+
         username_taken_visible = await _is_username_taken_error_visible(page)
         if username_taken_visible:
             try:
@@ -1817,35 +1846,6 @@ async def _wait_for_signup_progress(
                     f"[{profile_id}] Username is already taken and Full Auto Mode is off."
                 )
                 username_taken_warning_logged = True
-
-        handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
-        if handoff_stage and stall_state is not None:
-            stall_state["form_since"] = None
-            stall_state["page_issue_since"] = None
-        if handoff_stage == "welcome":
-            await set_progress("signup_complete")
-            return "welcome"
-
-        if handoff_stage == "otp":
-            await set_progress("awaiting_otp")
-            return "otp"
-
-        if handoff_stage == "phone":
-            await set_progress("awaiting_phone_verification")
-            return "phone"
-
-        if handoff_stage == "email":
-            await set_progress("awaiting_email_verification")
-            return "email"
-
-        if handoff_stage == "email_switch":
-            await set_progress("clicking_use_email_instead")
-            clicked_email = await _click_use_email_instead(page, logger, profile_id)
-            if clicked_email:
-                await page.wait_for_timeout(900)
-                if remaining_ms is not None:
-                    remaining_ms -= 900
-                continue
 
         if not username_taken_visible and await _is_unable_to_process_error_visible(page):
             unable_to_process_attempts += 1
