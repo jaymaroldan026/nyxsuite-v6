@@ -64,6 +64,11 @@ class FakeProgressPage:
         self.waits.append(ms)
 
 
+class FakeBlankSignupShellPage(FakeProgressPage):
+    async def evaluate(self, _script):
+        return True
+
+
 class SignupInitialSubmitRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_submit_failure_refreshes_and_refills_signup_form(self):
         page = FakeProgressPage()
@@ -276,6 +281,36 @@ class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stage, "")
         resubmit.assert_awaited_once()
         self.assertIn("refreshing_signup_page_issue", steps)
+        self.assertEqual(stall_state["refresh_attempts"], 1)
+
+    async def test_blank_signup_shell_refreshes_immediately(self):
+        page = FakeBlankSignupShellPage()
+        resubmit = mock.AsyncMock(return_value=True)
+        stall_state = {"refresh_attempts": 0, "form_since": None,
+                       "blank_refill_attempts": 0, "page_issue_since": None,
+                       "refill": mock.AsyncMock()}
+        steps = []
+
+        patches = self._common_patches()
+        patches[-1] = mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value=""))
+        patches += [
+            mock.patch.object(signup_flow, "_signup_form_is_blank", mock.AsyncMock(return_value=False)),
+            mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=True)),
+            mock.patch.object(signup_flow, "_submit_is_clickable", mock.AsyncMock(return_value=False)),
+        ]
+        for p in patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+
+        stage = await signup_flow._wait_for_signup_progress(
+            page, logger=None, profile_id="777", timeout_ms=1000,
+            progress_callback=lambda s: steps.append(s),
+            resubmit_callback=resubmit, stall_state=stall_state,
+        )
+
+        self.assertEqual(stage, "")
+        resubmit.assert_awaited_once()
+        self.assertIn("refreshing_signup_blank_shell", steps)
         self.assertEqual(stall_state["refresh_attempts"], 1)
 
     async def test_unexpected_page_waits_until_stall_window_expires(self):

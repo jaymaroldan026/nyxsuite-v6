@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.3.7 - Blank signup shell refresh
+
+### Nyxify: recover the empty Snapchat signup shell
+- Detects the blank Snapchat signup shell where `/v2/signup` loads with
+  `#__next` and `__NEXT_DATA__` but no rendered signup form or verification
+  controls.
+- Refreshes and re-enters the saved signup details immediately for that shell,
+  instead of waiting for the normal missing-page stall window.
+- Preserves the new `refreshing_signup_blank_shell` progress state so failures
+  during this refresh path clean up and requeue like the other signup recovery
+  states.
+
 ## 6.3.6 - Signup retry recovery
 
 ### Nyxify: refresh stuck signup submits and speed retry checks

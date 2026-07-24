@@ -83,6 +83,7 @@ class NyxifyCleanupTests(unittest.TestCase):
             "refreshing_stalled_signup",
             "refreshing_stuck_signup",
             "refreshing_signup_page_issue",
+            "refreshing_signup_blank_shell",
             "refilling_signup_form",
         ):
             with self.subTest(last_step=last_step):

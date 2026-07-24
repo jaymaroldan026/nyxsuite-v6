@@ -839,6 +839,52 @@ async def _emit_signup_progress(progress_callback, step: str, logger=None, profi
         logger and logger.warning(f"[{profile_id}] Signup progress callback failed for {step!r}: {exc}")
 
 
+async def _is_blank_signup_shell(page) -> bool:
+    try:
+        current_url = str(page.url or "").strip().lower()
+    except Exception:
+        current_url = ""
+    if "accounts.snapchat.com" not in current_url or "/v2/signup" not in current_url:
+        return False
+
+    try:
+        return bool(
+            await page.evaluate(
+                """
+                () => {
+                    const root = document.querySelector("#__next");
+                    const nextData = document.querySelector("script#__NEXT_DATA__");
+                    if (!root || !nextData || document.readyState !== "complete") {
+                        return false;
+                    }
+                    const isVisible = (node) => {
+                        if (!node) return false;
+                        const style = window.getComputedStyle(node);
+                        if (!style) return false;
+                        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+                            return false;
+                        }
+                        const rect = node.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    };
+                    const controls = Array.from(document.querySelectorAll(
+                        "#firstname, #username, input, button, form, select, textarea, a[href], [role='button']"
+                    ));
+                    if (controls.some(isVisible)) {
+                        return false;
+                    }
+                    const bodyText = String((document.body && document.body.innerText) || "")
+                        .replace(/\\s+/g, " ")
+                        .trim();
+                    return root.querySelectorAll("*").length <= 1 && bodyText.length <= 40;
+                }
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
 async def _is_unable_to_process_error_visible(page) -> bool:
     try:
         if bool(
@@ -1917,6 +1963,14 @@ async def _wait_for_signup_progress(
             else:
                 stall_state["form_since"] = None
                 stall_state["blank_refill_attempts"] = 0
+                if await _is_blank_signup_shell(page):
+                    if await trigger_form_refresh(
+                        "signup page loaded a blank Snapchat shell", "refreshing_signup_blank_shell"
+                    ):
+                        await page.wait_for_timeout(1500)
+                        if remaining_ms is not None:
+                            remaining_ms -= 1500
+                        continue
                 if stall_state.get("page_issue_since") is None:
                     stall_state["page_issue_since"] = time.monotonic()
                 page_issue_elapsed = time.monotonic() - float(
