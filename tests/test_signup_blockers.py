@@ -656,8 +656,11 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         class FakeProgressPage:
             url = "https://accounts.snapchat.com/v2/signup"
 
-            async def wait_for_timeout(self, _ms):
-                return None
+            def __init__(self):
+                self.waits = []
+
+            async def wait_for_timeout(self, ms):
+                self.waits.append(ms)
 
         page = FakeProgressPage()
         username_state = {"value": "milyaure", "manual_override": False}
@@ -687,6 +690,7 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(username_state["value"], "freshmily")
         retry_taken.assert_awaited_once()
         unable_detector.assert_not_awaited()
+        self.assertEqual(page.waits[0], 700)
 
     async def test_unable_to_process_retry_uses_fast_submit_and_short_settle(self):
         class FakeProgressPage:
@@ -718,7 +722,7 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(stage, "")
         click_submit.assert_awaited_once_with(page, None, "194", fast=True)
-        self.assertEqual(page.waits[0], 600)
+        self.assertEqual(page.waits[0], 300)
 
 
 if __name__ == "__main__":

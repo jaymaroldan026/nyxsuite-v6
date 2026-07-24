@@ -75,6 +75,28 @@ class NyxifyCleanupTests(unittest.TestCase):
             nyxify_runner._should_cleanup_failed_created_profile(failure_step, error)
         )
 
+    def test_signup_refresh_failures_route_to_cleanup_retry(self):
+        error = "Page.wait_for_timeout: Target page, context or browser has been closed"
+
+        for last_step in (
+            "refreshing_signup_recaptcha",
+            "refreshing_stalled_signup",
+            "refreshing_stuck_signup",
+            "refreshing_signup_page_issue",
+            "refilling_signup_form",
+        ):
+            with self.subTest(last_step=last_step):
+                failure_step = nyxify_runner._classify_failure_last_step(
+                    created={"profile_id": "k1closed"},
+                    last_step=last_step,
+                    error_message=error,
+                )
+
+                self.assertEqual(failure_step, last_step)
+                self.assertTrue(
+                    nyxify_runner._should_cleanup_failed_created_profile(failure_step, error)
+                )
+
     def test_failed_signup_cleanup_keeps_profile_id_when_delete_fails(self):
         store = FakeStore()
         adspower = FakeAdsPower(delete_error="AdsPower API error: {'code': -1, 'msg': 'user_ids is required'}")

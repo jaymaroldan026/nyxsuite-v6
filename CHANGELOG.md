@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.3.6 - Signup retry recovery
+
+### Nyxify: refresh stuck signup submits and speed retry checks
+- If Agree and Continue does not click after the initial signup fill, Nyxify now
+  refreshes the signup page, re-enters the saved form details, and retries
+  within the existing bounded refresh budget.
+- Signup refresh/refill progress states now preserve their failure step so the
+  runner can clean up the half-created AdsPower profile, rotate/requeue, and
+  avoid stranding the SnapBoard row.
+- Username-taken retry settling is now 700ms, and unable-to-process retry
+  settling is now 300ms, while keeping the same button-enabled and blocker
+  checker logic.
+
 ## 6.3.5 - Continuous Mode handoff disconnect
 
 ### Nyxify: disconnect before Nyx handoff without closing signup tab

@@ -64,6 +64,55 @@ class FakeProgressPage:
         self.waits.append(ms)
 
 
+class SignupInitialSubmitRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_initial_submit_failure_refreshes_and_refills_signup_form(self):
+        page = FakeProgressPage()
+        steps = []
+        fill_form = mock.AsyncMock(return_value={"submitted": False, "username": "clearetry"})
+        reload_refill = mock.AsyncMock(return_value=True)
+        handle_verification = mock.AsyncMock(
+            return_value={
+                "reached_verification": True,
+                "otp_entered": True,
+                "final_username": "clearetry",
+                "email": "clea@example.com",
+            }
+        )
+
+        with mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+             mock.patch.object(signup_flow, "_wait_visible", mock.AsyncMock(return_value=True)), \
+             mock.patch.object(signup_flow, "_is_non_english_signup_page", mock.AsyncMock(return_value=False)), \
+             mock.patch.object(signup_flow, "get_random_name", return_value="Clea"), \
+             mock.patch.object(signup_flow, "generate_birthday", return_value={"month": 7, "day": 6, "year": "2004"}), \
+             mock.patch.object(signup_flow, "_fill_signup_form", fill_form), \
+             mock.patch.object(signup_flow, "_reload_and_refill_signup", reload_refill), \
+             mock.patch.object(signup_flow, "_handle_verification", handle_verification):
+            result = await signup_flow.perform_snapchat_signup(
+                page,
+                model="Clea",
+                username="clearetry",
+                email="clea@example.com",
+                names_dir=".",
+                logger=None,
+                profile_id="k1retry",
+                otp_fetcher=mock.AsyncMock(return_value="123456"),
+                progress_callback=lambda step: steps.append(step),
+            )
+
+        self.assertEqual(result["error"], "")
+        reload_refill.assert_awaited_once_with(
+            page,
+            "Clea",
+            {"month": 7, "day": 6, "year": "2004"},
+            "clearetry",
+            "",
+            None,
+            "k1retry",
+        )
+        handle_verification.assert_awaited_once()
+        self.assertIn("refreshing_stuck_signup", steps)
+
+
 class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_default_refresh_windows_are_100_and_200_seconds(self):
         self.assertEqual(signup_flow.SIGNUP_STALL_SECONDS, 100)

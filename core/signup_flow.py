@@ -37,8 +37,11 @@ SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PRE_C
 SIGNUP_FAST_SUBMIT_POST_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_POST_CLEAR_MS", "150"))
 SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS", "90"))
 SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS", "220"))
+SIGNUP_USERNAME_RETRY_SETTLE_MS = int(
+    os.getenv("NYXIFY_SIGNUP_USERNAME_RETRY_SETTLE_MS", "700")
+)
 SIGNUP_UNABLE_TO_PROCESS_RETRY_SETTLE_MS = int(
-    os.getenv("NYXIFY_SIGNUP_UNABLE_RETRY_SETTLE_MS", "600")
+    os.getenv("NYXIFY_SIGNUP_UNABLE_RETRY_SETTLE_MS", "300")
 )
 
 _USERNAME_TAKEN_ERROR_MARKERS = [
@@ -1752,11 +1755,11 @@ async def _wait_for_signup_progress(
                 )
                 if not next_username:
                     username_taken_warning_logged = True
-                    await page.wait_for_timeout(1200)
+                    await page.wait_for_timeout(SIGNUP_USERNAME_RETRY_SETTLE_MS)
                     continue
                 if isinstance(username_state, dict):
                     username_state["value"] = next_username
-                await page.wait_for_timeout(1200)
+                await page.wait_for_timeout(SIGNUP_USERNAME_RETRY_SETTLE_MS)
                 continue
             if logger and manual_override and not username_taken_warning_logged:
                 logger.warning(
@@ -2794,7 +2797,32 @@ async def perform_snapchat_signup(
         fill_result = await _fill_signup_form(signup_page, snap_name, birthday, username, password, logger, profile_id)
         result["username"] = fill_result.get("username", username)
         if not fill_result.get("submitted"):
-            raise RuntimeError("Failed to submit the signup form.")
+            submitted_after_refresh = False
+            for attempt in range(1, SIGNUP_MAX_REFRESH_ATTEMPTS + 1):
+                logger and logger.warning(
+                    f"[{profile_id}] Agree and Continue did not click after filling signup; "
+                    f"refreshing and re-entering signup details "
+                    f"(attempt {attempt}/{SIGNUP_MAX_REFRESH_ATTEMPTS})."
+                )
+                await _emit_signup_progress(progress_callback, "refreshing_stuck_signup", logger, profile_id)
+                active = await _resolve_active_signup_page(signup_page, logger, profile_id)
+                submitted_after_refresh = await _reload_and_refill_signup(
+                    active,
+                    snap_name,
+                    birthday,
+                    str(result.get("username") or username or "").strip(),
+                    password,
+                    logger,
+                    profile_id,
+                )
+                if submitted_after_refresh:
+                    break
+                await active.wait_for_timeout(1500)
+            if not submitted_after_refresh:
+                raise RuntimeError(
+                    "signup_stuck_retry_exhausted: Agree and Continue was not clickable "
+                    f"after {SIGNUP_MAX_REFRESH_ATTEMPTS} refresh attempts."
+                )
 
         username_state = {
             "value": str(result.get("username") or "").strip(),
