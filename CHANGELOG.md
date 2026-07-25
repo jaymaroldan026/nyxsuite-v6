@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.4.1 - Nyxify phone-step handoff speed
+
+### Nyxify: skip stale signup-submit retries once Step 2 is visible
+- Nyxify now rechecks the live signup handoff state before retrying the Step 1
+  "Agree and Continue" button after a stale unable-to-process signal.
+- When Snapchat has already advanced to phone verification and shows
+  "Use Email Instead", Nyxify clicks the email switch immediately instead of
+  waiting on the old Step 1 submit button path.
+- Fast submit retries now use bounded enabled/click waits, preventing
+  Playwright's default 30-second click fallback from delaying the phone/email
+  verification handoff.
+- Added regression coverage for stale unable-to-process handoff rechecks and
+  bounded signup-submit click waits.
+
 ## 6.4.0 - Extension popup performance
 
 ### Extensions: queue tables removed from popups

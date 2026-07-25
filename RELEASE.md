@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.1
+
+- Fixed a Nyxify delay on Snapchat Step 2 where the page already showed
+  "Use Email Instead" but the runner could still be retrying the old Step 1
+  "Agree and Continue" path.
+- Nyxify now rechecks the live handoff state before retrying after a stale
+  unable-to-process signal, so phone/email verification controls take priority.
+- Fast signup-submit retries now use bounded enabled/click waits instead of
+  falling into Playwright's long default click timeout.
+- Added regression tests for the stale handoff retry and bounded click waits.
+
 ### NyxSuite v6.4.0
 
 - Nyx and Nyxify extension popups no longer render their queue tables or selected-row queue actions, reducing popup work while keeping the runner controls and status counters available.

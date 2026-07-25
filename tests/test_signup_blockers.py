@@ -581,7 +581,11 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
             self.assertTrue(await signup_flow._click_signup_submit(page))
 
-        js_click.assert_awaited_once_with(page, "button:has-text('Agree and Continue')")
+        js_click.assert_awaited_once_with(
+            page,
+            "button:has-text('Agree and Continue')",
+            timeout_ms=1500,
+        )
 
     async def test_click_signup_submit_keeps_faster_clear_and_human_pause_windows(self):
         page = FakePage(text="Sign Up Step 1 of 3")
@@ -626,6 +630,54 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(clear_windows, [250, 150])
         self.assertEqual(pause_windows, [(90, 220)])
+
+    async def test_click_signup_submit_fast_mode_uses_bounded_waits(self):
+        page = FakePage(text="Sign Up Step 1 of 3")
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(side_effect=lambda _page, selectors: selectors[0])), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=False)) as wait_enabled, \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock()), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=False)) as js_click:
+            self.assertFalse(await signup_flow._click_signup_submit(page, fast=True))
+
+        wait_enabled.assert_awaited_once_with(
+            page,
+            "button:has-text('Agree and Continue')",
+            timeout_ms=1200,
+        )
+        js_click.assert_awaited_once_with(
+            page,
+            "button:has-text('Agree and Continue')",
+            timeout_ms=1000,
+        )
+
+    async def test_js_click_uses_bounded_locator_fallback_timeout(self):
+        class FakeLocator:
+            def __init__(self, page):
+                self._page = page
+
+            @property
+            def first(self):
+                return self
+
+            async def click(self, **kwargs):
+                self._page.click_kwargs = dict(kwargs)
+
+        class FakeClickPage:
+            def __init__(self):
+                self.click_kwargs = None
+
+            async def evaluate(self, _script, _selector):
+                return False
+
+            def locator(self, _selector):
+                return FakeLocator(self)
+
+        page = FakeClickPage()
+
+        self.assertTrue(await signup_flow._js_click(page, "button[type='submit']", timeout_ms=700))
+        self.assertEqual(page.click_kwargs, {"force": True, "timeout": 700})
 
     async def test_username_taken_detector_accepts_shorter_copy(self):
         class FakeUsernameTakenPage:
@@ -811,6 +863,50 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stage, "")
         click_submit.assert_awaited_once_with(page, None, "194", fast=True)
         self.assertEqual(page.waits[0], 300)
+
+    async def test_unable_to_process_rechecks_handoff_before_retry_submit(self):
+        class FakeProgressPage:
+            url = "https://accounts.snapchat.com/v2/signup"
+
+            def __init__(self):
+                self.waits = []
+
+            async def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+
+        page = FakeProgressPage()
+        steps = []
+        detect_calls = 0
+
+        async def detect_handoff(*_args, **_kwargs):
+            nonlocal detect_calls
+            detect_calls += 1
+            if detect_calls == 2:
+                return "email_switch"
+            return ""
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(side_effect=detect_handoff)), \
+            mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", mock.AsyncMock(side_effect=[True, False])), \
+            mock.patch.object(signup_flow, "_click_use_email_instead", mock.AsyncMock(return_value=True)) as click_email, \
+            mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_click_signup_submit", mock.AsyncMock(return_value=True)) as click_submit:
+            stage = await signup_flow._wait_for_signup_progress(
+                page,
+                logger=None,
+                profile_id="194",
+                timeout_ms=1000,
+                progress_callback=lambda step: steps.append(step),
+            )
+
+        self.assertEqual(stage, "")
+        click_email.assert_awaited_once()
+        click_submit.assert_not_awaited()
+        self.assertEqual(steps, ["clicking_use_email_instead"])
 
 
 if __name__ == "__main__":

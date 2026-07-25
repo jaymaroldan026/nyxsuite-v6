@@ -37,6 +37,13 @@ SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PRE_C
 SIGNUP_FAST_SUBMIT_POST_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_POST_CLEAR_MS", "150"))
 SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS", "90"))
 SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS", "220"))
+SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS = int(
+    os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS", "1200")
+)
+SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS = int(
+    os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS", "1000")
+)
+SIGNUP_JS_CLICK_TIMEOUT_MS = int(os.getenv("NYXIFY_SIGNUP_JS_CLICK_TIMEOUT_MS", "1500"))
 SIGNUP_USERNAME_RETRY_SETTLE_MS = int(
     os.getenv("NYXIFY_SIGNUP_USERNAME_RETRY_SETTLE_MS", "700")
 )
@@ -455,7 +462,7 @@ async def _wait_enabled(page, selector: str, timeout_ms: int = 12000) -> bool:
     return False
 
 
-async def _js_click(page, selector: str) -> bool:
+async def _js_click(page, selector: str, *, timeout_ms: int | None = None) -> bool:
     try:
         ok = await page.evaluate(_JS_CLICK, selector)
         if ok:
@@ -463,7 +470,8 @@ async def _js_click(page, selector: str) -> bool:
     except Exception:
         pass
     try:
-        await page.locator(selector).first.click(force=True)
+        click_timeout = max(1, int(timeout_ms if timeout_ms is not None else SIGNUP_JS_CLICK_TIMEOUT_MS))
+        await page.locator(selector).first.click(force=True, timeout=click_timeout)
         return True
     except Exception:
         return False
@@ -679,11 +687,13 @@ async def _click_signup_submit(page, logger=None, profile_id: str = "", *, fast:
     pause_min_ms = SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS if fast else 350
     pause_max_ms = SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS if fast else 900
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=pre_clear_ms)
-    enabled = await _wait_enabled(page, submit_selector, timeout_ms=12000)
+    enabled_timeout_ms = SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS if fast else 12000
+    click_timeout_ms = SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS if fast else SIGNUP_JS_CLICK_TIMEOUT_MS
+    enabled = await _wait_enabled(page, submit_selector, timeout_ms=enabled_timeout_ms)
     logger and logger.info(f"[{profile_id}] Submit button enabled={enabled}")
     await _human_pause(page, pause_min_ms, pause_max_ms)
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=post_clear_ms)
-    clicked = await _js_click(page, submit_selector)
+    clicked = await _js_click(page, submit_selector, timeout_ms=click_timeout_ms)
     logger and logger.info(f"[{profile_id}] Submit click={clicked}")
     return clicked
 
@@ -1792,13 +1802,19 @@ async def _wait_for_signup_progress(
             return "email"
 
         if handoff_stage == "email_switch":
-            await set_progress("clicking_use_email_instead")
-            clicked_email = await _click_use_email_instead(page, logger, profile_id)
-            if clicked_email:
-                await page.wait_for_timeout(900)
-                if remaining_ms is not None:
-                    remaining_ms -= 900
-                continue
+            if not email_switch_clicked:
+                await set_progress("clicking_use_email_instead")
+                clicked_email = await _click_use_email_instead(page, logger, profile_id)
+                if clicked_email:
+                    email_switch_clicked = True
+                    await page.wait_for_timeout(900)
+                    if remaining_ms is not None:
+                        remaining_ms -= 900
+                    continue
+            await page.wait_for_timeout(300)
+            if remaining_ms is not None:
+                remaining_ms -= 300
+            continue
 
         username_taken_visible = await _is_username_taken_error_visible(page)
         if username_taken_visible:
@@ -1878,6 +1894,33 @@ async def _wait_for_signup_progress(
             unable_to_process_attempts += 1
             if unable_to_process_attempts >= 15:
                 raise RuntimeError("unable_to_process: Snapchat was unable to process the signup request after 15 retries.")
+            handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
+            if handoff_stage == "welcome":
+                await set_progress("signup_complete")
+                return "welcome"
+            if handoff_stage == "otp":
+                await set_progress("awaiting_otp")
+                return "otp"
+            if handoff_stage == "phone":
+                await set_progress("awaiting_phone_verification")
+                return "phone"
+            if handoff_stage == "email":
+                await set_progress("awaiting_email_verification")
+                return "email"
+            if handoff_stage == "email_switch":
+                if not email_switch_clicked:
+                    await set_progress("clicking_use_email_instead")
+                    clicked_email = await _click_use_email_instead(page, logger, profile_id)
+                    if clicked_email:
+                        email_switch_clicked = True
+                        await page.wait_for_timeout(900)
+                        if remaining_ms is not None:
+                            remaining_ms -= 900
+                        continue
+                await page.wait_for_timeout(300)
+                if remaining_ms is not None:
+                    remaining_ms -= 300
+                continue
             logger and logger.warning(
                 f"[{profile_id}] Snapchat unable-to-process error detected; "
                 f"retrying Agree and Continue ({unable_to_process_attempts}/15)."
