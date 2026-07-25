@@ -1231,7 +1231,16 @@ async def _retry_taken_username(page, current_username: str, username_retry_prov
     )
 
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=500)
-    ok = await _humanized_type(page, username_selector, next_username, logger, f"[{profile_id}] retry username")
+    if await _detect_signup_handoff_stage(page, logger, profile_id) in {"email", "otp", "phone", "welcome", "email_switch"}:
+        logger and logger.info(f"[{profile_id}] Skipping retry type — page already transitioned.")
+        return ""
+    try:
+        ok = await asyncio.wait_for(
+            _humanized_type(page, username_selector, next_username, logger, f"[{profile_id}] retry username"),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        ok = False
     if not ok:
         handoff_stage = await _detect_signup_handoff_stage(page, logger, profile_id)
         if handoff_stage == "email_switch":
