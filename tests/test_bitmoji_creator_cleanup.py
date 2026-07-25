@@ -15,7 +15,8 @@ from core.bitmoji_creator import BitmojiCreator
 
 
 class _FakePage:
-    def __init__(self):
+    def __init__(self, url="https://www.bitmoji.com/avatar/create/?require_snapchat"):
+        self.url = url
         self.closed = False
 
     def is_closed(self):
@@ -23,6 +24,20 @@ class _FakePage:
 
     async def close(self):
         self.closed = True
+
+
+class _FakeContext:
+    def __init__(self, pages):
+        self._pages = list(pages)
+
+    @property
+    def pages(self):
+        return list(self._pages)
+
+
+class _FakeBrowser:
+    def __init__(self, contexts):
+        self.contexts = list(contexts)
 
 
 class _FakePlaywright:
@@ -84,6 +99,31 @@ class BitmojiCreatorCleanupTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(creator.page.closed)
         self.assertTrue(creator.playwright.stopped)
+
+    async def test_close_all_tabs_except_adspower_start_removes_signup_and_bitmoji_tabs(self):
+        start_page = _FakePage("https://start.adspower.net/?id=k1abc&host=127.0.0.1:20725")
+        signup_page = _FakePage("https://accounts.snapchat.com/v2/signup")
+        error_page = _FakePage("https://accounts.snapchat.com/accounts/v2/403")
+        bitmoji_create_page = _FakePage("https://www.bitmoji.com/avatar/create/?require_snapchat")
+        bitmoji_login_page = _FakePage("https://www.bitmoji.com/login/?code=abc")
+        context = _FakeContext([start_page, signup_page, error_page])
+        second_context = _FakeContext([bitmoji_create_page, bitmoji_login_page])
+
+        creator = BitmojiCreator.__new__(BitmojiCreator)
+        creator.context = context
+        creator.browser = _FakeBrowser([context, second_context])
+        creator.page = bitmoji_login_page
+        creator.logger = None
+
+        closed = await creator.close_all_tabs_except_adspower_start()
+
+        self.assertEqual(closed, 4)
+        self.assertFalse(start_page.closed)
+        self.assertTrue(signup_page.closed)
+        self.assertTrue(error_page.closed)
+        self.assertTrue(bitmoji_create_page.closed)
+        self.assertTrue(bitmoji_login_page.closed)
+        self.assertIsNone(creator.page)
 
 
 if __name__ == "__main__":

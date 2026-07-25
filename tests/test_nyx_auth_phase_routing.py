@@ -7,8 +7,52 @@ moves straight to the next account.
 """
 
 import asyncio
+import sys
+import types
 import unittest
 from unittest import mock
+
+_playwright_pkg = types.ModuleType("playwright")
+_playwright_async_api = types.ModuleType("playwright.async_api")
+_playwright_async_api.async_playwright = lambda: None
+_playwright_async_api.TimeoutError = TimeoutError
+sys.modules.setdefault("playwright", _playwright_pkg)
+sys.modules.setdefault("playwright.async_api", _playwright_async_api)
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *_args, **_kwargs: None))
+
+
+class _RequestsResponse:
+    status_code = 200
+    text = "{}"
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        return None
+
+
+class _RequestsSession:
+    def __init__(self):
+        self.trust_env = False
+
+    def get(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+    def post(self, *_args, **_kwargs):
+        return _RequestsResponse()
+
+
+_requests_stub = types.ModuleType("requests")
+_requests_stub.Session = _RequestsSession
+_requests_stub.get = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.post = lambda *_args, **_kwargs: _RequestsResponse()
+_requests_stub.exceptions = types.SimpleNamespace(
+    ConnectionError=ConnectionError,
+    Timeout=TimeoutError,
+    RequestException=Exception,
+)
+sys.modules.setdefault("requests", _requests_stub)
 
 from core import task_runner
 from core.adspower import AdsPowerProfileNotOpenError
@@ -188,6 +232,50 @@ class AuthPhaseRoutingTests(unittest.TestCase):
             asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
 
         self.assertEqual(len(attempts), 2)
+        self.assertEqual(store.status_calls[-1]["status"], "DONE")
+
+    def test_continuous_source_requests_pre_bitmoji_tab_cleanup(self):
+        store = _FakeStore()
+        task = {
+            "id": "t1",
+            "profile_id": "k1abc",
+            "model": "willow",
+            "source": "nyxify_continuous",
+        }
+        cleanup_flags = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            cleanup_flags.append(kwargs.get("cleanup_tabs_before_bitmoji"))
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(cleanup_flags, [True])
+        self.assertEqual(store.status_calls[-1]["status"], "DONE")
+
+    def test_non_continuous_source_keeps_existing_tab_behavior(self):
+        store = _FakeStore()
+        task = {
+            "id": "t1",
+            "profile_id": "k1abc",
+            "model": "willow",
+            "source": "extension_popup",
+        }
+        cleanup_flags = []
+
+        async def fake_run_profile_task(*args, **kwargs):
+            cleanup_flags.append(kwargs.get("cleanup_tabs_before_bitmoji"))
+            return (True, "normal")
+
+        with mock.patch.object(task_runner, "run_profile_task", fake_run_profile_task), \
+             mock.patch.object(task_runner, "_get_nyxify_hold_reason",
+                               lambda profile_id, nyx_task=None: ""):
+            asyncio.run(task_runner.process_queued_task(task, store, adspower=object(), logger=_FakeLogger()))
+
+        self.assertEqual(cleanup_flags, [False])
         self.assertEqual(store.status_calls[-1]["status"], "DONE")
 
     def test_nyx_holds_profile_when_nyxify_has_not_reached_success(self):

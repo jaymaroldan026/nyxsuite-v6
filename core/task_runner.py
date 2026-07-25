@@ -290,6 +290,7 @@ async def run_profile_task(
     outfit_seed="",
     progress_callback=None,
     manual_queue_mode=False,
+    cleanup_tabs_before_bitmoji=False,
     owns_run=None,
 ):
 
@@ -310,6 +311,13 @@ async def run_profile_task(
             profile_opened = True
             creator = BitmojiCreator(ws_endpoint, logger)
             await creator.start()
+            if cleanup_tabs_before_bitmoji:
+                if callable(progress_callback):
+                    progress_callback("cleaning_tabs_for_bitmoji")
+                closed_tabs = await creator.close_all_tabs_except_adspower_start()
+                logger.info(
+                    f"Closed {closed_tabs} pre-Bitmoji tab(s) for continuous profile {profile_id}."
+                )
 
         success = await creator.run(
             profile_id,
@@ -436,6 +444,7 @@ async def process_queued_task(task, store, adspower, logger):
                 outfit_seed=outfit_seed,
                 progress_callback=progress_callback,
                 manual_queue_mode=manual_queue_mode,
+                cleanup_tabs_before_bitmoji=source == "nyxify_continuous",
                 owns_run=lambda: store.is_current_run(task_id, run_token),
             )
         except Exception as attempt_error:

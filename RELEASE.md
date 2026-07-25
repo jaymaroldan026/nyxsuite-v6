@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.9
+
+- Continuous Mode now prunes stale browser tabs after Nyx attaches and before
+  opening Bitmoji, preserving one AdsPower start tab.
+- Nyxify-continuous handoffs close leftover Snapchat signup, 403, Bitmoji
+  login, and Bitmoji create tabs so Nyx starts from a single fresh Bitmoji
+  flow.
+- Manual and non-continuous Nyx runs keep the existing less-aggressive tab
+  behavior.
+- Added regression coverage for the continuous-only pre-Bitmoji tab cleanup.
+
 ### NyxSuite v6.3.5
 
 - Continuous Mode now releases Nyxify's Playwright/CDP browser connection before

@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.3.9 - Continuous Mode pre-Bitmoji tab cleanup
+
+### Nyx: stale signup and Bitmoji tabs are pruned before editor work
+- Continuous Mode now closes leftover Snapchat signup, 403, Bitmoji login, and
+  Bitmoji create tabs after Nyx attaches and before it opens the fresh Bitmoji
+  flow.
+- Nyx preserves one `https://start.adspower.net/` tab so the AdsPower browser
+  stays alive while removing old pages that can confuse state detection.
+- Manual and non-continuous Nyx runs keep the existing tab behavior.
+- Added regression coverage for continuous-only pre-Bitmoji tab cleanup and
+  queue routing.
+
 ## 6.3.8 - Signup handoff priority
 
 ### Nyxify: stale username errors no longer delay email handoff

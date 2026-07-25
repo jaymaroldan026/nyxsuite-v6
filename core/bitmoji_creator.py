@@ -451,6 +451,96 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
 
         return closed_count
 
+    async def close_all_tabs_except_adspower_start(self):
+        if not self.context:
+            return 0
+
+        pages = []
+        seen = set()
+
+        def add_page(page):
+            if page is None:
+                return
+            marker = id(page)
+            if marker in seen:
+                return
+            seen.add(marker)
+            pages.append(page)
+
+        try:
+            for page in getattr(self.context, "pages", []) or []:
+                add_page(page)
+        except Exception:
+            pass
+
+        try:
+            for context in getattr(self.browser, "contexts", []) or []:
+                for page in getattr(context, "pages", []) or []:
+                    add_page(page)
+        except Exception:
+            pass
+
+        add_page(self.page)
+
+        preserved_page = None
+        for page in pages:
+            try:
+                if page.is_closed():
+                    continue
+            except Exception:
+                continue
+            if self._is_adspower_start_page_url(self._get_page_url(page)):
+                preserved_page = page
+                break
+
+        if preserved_page is None:
+            for page in pages:
+                try:
+                    if not page.is_closed():
+                        preserved_page = page
+                        break
+                except Exception:
+                    continue
+            if preserved_page is not None and self.logger:
+                self.logger.warning(
+                    "No AdsPower start tab was visible before continuous Bitmoji handoff; "
+                    "preserving one open tab so the browser window stays alive."
+                )
+
+        closed_count = 0
+        for page in pages:
+            if page is None or page is preserved_page:
+                continue
+
+            url = self._get_page_url(page)
+            try:
+                if page.is_closed():
+                    continue
+            except Exception:
+                continue
+
+            try:
+                await page.close()
+                closed_count += 1
+                if self.logger:
+                    self.logger.info(
+                        f"Closed pre-Bitmoji continuous-mode tab: {url or '<unknown url>'}"
+                    )
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Could not close pre-Bitmoji continuous-mode tab {url}: {exc}"
+                    )
+
+        if self.page is not None and self.page is not preserved_page:
+            try:
+                if self.page.is_closed():
+                    self.page = None
+            except Exception:
+                self.page = None
+
+        return closed_count
+
     async def get_candidate_pages(self):
         pages = []
 
