@@ -1,8 +1,4 @@
-let latestQueueRows = [];
-let selectedQueueProfileIds = new Set();
 let isHeaderRefreshing = false;
-let lastQueueRenderSignature = "";
-let queueContainerInitialized = false;
 let lastRunnerStatusSignature = "";
 let lastEventLogSignature = "";
 let lastLastSeenSignature = "";
@@ -96,149 +92,6 @@ function syncBitmojiShowButtonState() {
       setBitmojiShowButtonState(response.visible === true);
     });
   });
-}
-
-function getFilteredQueueRows(rows) {
-  const searchValue = String(document.getElementById("queueSearchInput").value || "").trim().toLowerCase();
-  return (rows || []).filter((row) => {
-    if (!searchValue) {
-      return true;
-    }
-    return String(row.profile_id || "").toLowerCase().indexOf(searchValue) !== -1;
-  });
-}
-
-function getQueueProfileId(row) {
-  return String(row && row.profile_id || "").trim();
-}
-
-function getVisibleSelectedQueueProfileIds(filteredRows) {
-  const visibleIds = new Set((filteredRows || []).map(getQueueProfileId).filter(Boolean));
-  return Array.from(selectedQueueProfileIds).filter((profileId) => visibleIds.has(profileId));
-}
-
-function getSelectedQueueProfileIds() {
-  const searchValue = String(document.getElementById("queueSearchInput").value || "").trim();
-  const filteredRows = getFilteredQueueRows(latestQueueRows);
-  const visibleSelected = getVisibleSelectedQueueProfileIds(filteredRows);
-
-  if (visibleSelected.length) {
-    return visibleSelected;
-  }
-
-  if (searchValue && filteredRows.length === 1) {
-    return [getQueueProfileId(filteredRows[0])].filter(Boolean);
-  }
-
-  if (filteredRows.length === 1) {
-    return [getQueueProfileId(filteredRows[0])].filter(Boolean);
-  }
-
-  return [];
-}
-
-function setSelectedQueueProfileIds(profileIds) {
-  selectedQueueProfileIds = new Set((profileIds || []).map((profileId) => String(profileId || "").trim()).filter(Boolean));
-  lastQueueRenderSignature = "";
-}
-
-function getQueueActionProfileId() {
-  const selectedIds = getSelectedQueueProfileIds();
-  if (selectedIds.length) {
-    return selectedIds[0];
-  }
-
-  const searchValue = String(document.getElementById("queueSearchInput").value || "").trim();
-  const filteredRows = getFilteredQueueRows(latestQueueRows);
-
-  if (searchValue && filteredRows.length === 1) {
-    return getQueueProfileId(filteredRows[0]);
-  }
-
-  if (filteredRows.length === 1) {
-    return getQueueProfileId(filteredRows[0]);
-  }
-
-  return searchValue;
-}
-
-function renderQueueTable(rows) {
-  const queueTable = document.getElementById("queueTable");
-  const filteredRows = getFilteredQueueRows(rows);
-  const renderSignature = JSON.stringify(
-    filteredRows.map((row) => [
-      String(row.profile_id || "").trim(),
-      String(row.model || "").trim(),
-      String(row.status || "").trim(),
-      String(row.last_step || "").trim(),
-    ])
-  );
-
-  if (!filteredRows.length) {
-    selectedQueueProfileIds.clear();
-    lastQueueRenderSignature = "empty";
-    queueTable.innerHTML = '<div class="queue-table-empty">No queue rows found.</div>';
-    return;
-  }
-
-  const visibleSelected = getVisibleSelectedQueueProfileIds(filteredRows);
-  if (!visibleSelected.length) {
-    setSelectedQueueProfileIds([getQueueProfileId(filteredRows[0])]);
-  } else if (visibleSelected.length !== selectedQueueProfileIds.size) {
-    setSelectedQueueProfileIds(visibleSelected);
-  }
-
-  const selectionSignature = `${renderSignature}|selected=${getVisibleSelectedQueueProfileIds(filteredRows).sort().join(",")}`;
-  if (selectionSignature === lastQueueRenderSignature) {
-    return;
-  }
-  lastQueueRenderSignature = selectionSignature;
-
-  const header = `
-    <div class="queue-table-header">
-      <div class="queue-cell queue-open-cell"></div>
-      <div class="queue-cell">AdsPower ID</div>
-      <div class="queue-cell">Model</div>
-      <div class="queue-cell">Status</div>
-      <div class="queue-cell">Last Step</div>
-    </div>
-  `;
-
-  const rowsHtml = filteredRows.map((row) => {
-    const profileId = getQueueProfileId(row);
-    const isSelected = selectedQueueProfileIds.has(profileId);
-    const selectedClass = isSelected ? " queue-table-row-selected" : "";
-    const normalizedStatus = String(row.status || "").trim().toUpperCase();
-    let indicatorClass = "queue-open-indicator-base";
-    let indicatorLabel = "Base";
-    if (normalizedStatus === "FAILED") {
-      indicatorClass = "queue-open-indicator-failed";
-      indicatorLabel = "Failed";
-    } else if (normalizedStatus === "RUNNING") {
-      indicatorClass = "queue-open-indicator-running";
-      indicatorLabel = "Running";
-    } else if (normalizedStatus === "DONE") {
-      indicatorClass = "queue-open-indicator-done";
-      indicatorLabel = "Done";
-    }
-    return `
-      <div
-        class="queue-table-row${selectedClass}"
-        data-profile-id="${profileId}"
-        title="${profileId}"
-      >
-        <div class="queue-cell queue-open-cell">
-          <span class="queue-open-indicator ${indicatorClass}" title="${indicatorLabel}" aria-label="${indicatorLabel}"></span>
-        </div>
-        <div class="queue-cell queue-id-cell">${profileId || "-"}</div>
-        <div class="queue-cell">${String(row.model || "-")}</div>
-        <div class="queue-cell">${String(row.status || "-")}</div>
-        <div class="queue-cell">${String(row.last_step || "-")}</div>
-      </div>
-    `;
-  }).join("");
-
-  queueTable.innerHTML = header + rowsHtml;
 }
 
 function renderEventLog(events) {
@@ -918,7 +771,6 @@ function renderRunnerStatus(runnerStatus) {
     config.pending_threshold || "",
     config.max_parallel_profiles || "",
     config.automation_speed || "",
-    (runnerStatus.rows || []).map((row) => `${row.profile_id}|${row.model}|${row.status}|${row.last_step}`).join("\n"),
   ].join("||");
 
   if (signature === lastRunnerStatusSignature) {
@@ -941,8 +793,6 @@ function renderRunnerStatus(runnerStatus) {
     `Speed: ${automationSpeedToPercent(config.automation_speed)}%`,
   ].join("\n");
 
-  latestQueueRows = runnerStatus.rows || [];
-  renderQueueTable(latestQueueRows);
 }
 
 function applyPopupStatusSnapshot(status) {
@@ -1185,62 +1035,6 @@ function runBotAction(action, statusMessage, successFormatter) {
   });
 }
 
-function runQueueRowAction(type, actionProfileId, statusMessage, successMessage) {
-  const profileId = String(actionProfileId || "").trim();
-
-  if (!profileId) {
-    setPrimaryStatus("Enter an AdsPower ID for the queue action.", 2500);
-    return;
-  }
-
-  setPrimaryStatus(statusMessage, 2000);
-  chrome.runtime.sendMessage({ type, profileId }, (response) => {
-    if (!response || !response.ok) {
-      setPrimaryStatus((response && response.error) || "Queue row action failed.", 2500);
-      return;
-    }
-
-    refreshPopupStatus(successMessage);
-  });
-}
-
-function markDoneSelectedQueueProfiles() {
-  const profileIds = getSelectedQueueProfileIds();
-
-  if (!profileIds.length) {
-    setPrimaryStatus("Select one or more queue rows to mark DONE.", 2500);
-    return;
-  }
-
-  setPrimaryStatus(`Marking ${profileIds.length} profile(s) DONE...`, 2000);
-
-  let completed = 0;
-  const failures = [];
-
-  function markNext(index) {
-    if (index >= profileIds.length) {
-      if (failures.length) {
-        refreshPopupStatus(`Marked ${completed} profile(s) DONE. ${failures.length} failed; first failure: ${failures[0]}.`);
-        return;
-      }
-      refreshPopupStatus(`Marked ${completed} profile(s) DONE.`);
-      return;
-    }
-
-    const profileId = profileIds[index];
-    chrome.runtime.sendMessage({ type: "NYX_MARK_DONE_PROFILE", profileId }, (response) => {
-      if (!response || !response.ok) {
-        failures.push(`${profileId} (${(response && response.error) || "unknown error"})`);
-      } else {
-        completed += 1;
-      }
-      markNext(index + 1);
-    });
-  }
-
-  markNext(0);
-}
-
 function warmupAllInaccessibleFromSnapboard() {
   setPrimaryStatus("Changing inaccessible SnapBoard rows to Warm Up...", 2000);
 
@@ -1267,38 +1061,6 @@ function warmupAllInaccessibleFromSnapboard() {
       setPrimaryStatus(`Changed ${Number(response.updated || 0)} row(s) to Warm Up.`, 2500);
     });
   });
-}
-
-function closeQueueProfile(actionProfileId) {
-  const profileId = String(actionProfileId || "").trim();
-
-  if (!profileId) {
-    setPrimaryStatus("Enter an AdsPower ID for the queue action.", 2500);
-    return;
-  }
-
-  setPrimaryStatus(`Closing AdsPower profile ${profileId}...`, 2000);
-  chrome.runtime.sendMessage(
-    {
-      type: "NYX_BOT_ACTION",
-      action: "close_profile",
-      payload: { profile_id: profileId },
-    },
-    (response) => {
-      if (!response || !response.ok) {
-        setPrimaryStatus((response && response.error) || "Could not close AdsPower profile.", 2500);
-        return;
-      }
-
-      const payload = response.payload || {};
-      if (payload.ok === false) {
-        setPrimaryStatus(payload.message || "Could not close AdsPower profile.", 2500);
-        return;
-      }
-
-      refreshPopupStatus(payload.message || `Closed ${profileId}.`);
-    }
-  );
 }
 
 function removeMissingProfileRow() {
@@ -1481,48 +1243,6 @@ document.getElementById("popupAutomationSpeed").addEventListener("blur", flushPo
   }
 });
 document.getElementById("headerRefreshButton").addEventListener("click", handleHeaderRefreshClick);
-document.getElementById("queueSearchInput").addEventListener("input", () => {
-  renderQueueTable(latestQueueRows);
-});
-if (!queueContainerInitialized) {
-  const queueTable = document.getElementById("queueTable");
-  queueTable.addEventListener("click", (event) => {
-    const rowButton = event.target && event.target.closest(".queue-table-row");
-    const isToggleClick = event.ctrlKey || event.metaKey;
-    if (!rowButton || ((event.target && event.target.closest(".queue-id-cell")) && !isToggleClick)) {
-      return;
-    }
-    const profileId = String(rowButton.dataset.profileId || "").trim();
-    if (isToggleClick) {
-      const nextSelection = new Set(selectedQueueProfileIds);
-      if (nextSelection.has(profileId)) {
-        nextSelection.delete(profileId);
-      } else if (profileId) {
-        nextSelection.add(profileId);
-      }
-      selectedQueueProfileIds = nextSelection;
-    } else {
-      setSelectedQueueProfileIds([profileId]);
-    }
-    renderQueueTable(latestQueueRows);
-  });
-  queueContainerInitialized = true;
-}
-document.getElementById("markDoneQueueProfileButton").addEventListener("click", () => {
-  markDoneSelectedQueueProfiles();
-});
-document.getElementById("relaunchQueueProfileButton").addEventListener("click", () => {
-  const profileId = getQueueActionProfileId();
-  runQueueRowAction("NYX_RELAUNCH_QUEUE_PROFILE", profileId, "Relaunching profile...", `Relaunched ${profileId}.`);
-});
-document.getElementById("closeQueueProfileButton").addEventListener("click", () => {
-  const profileId = getQueueActionProfileId();
-  closeQueueProfile(profileId);
-});
-document.getElementById("removeQueueProfileButton").addEventListener("click", () => {
-  const profileId = getQueueActionProfileId();
-  runQueueRowAction("NYX_REMOVE_QUEUE_PROFILE", profileId, "Removing profile from queue...", `Removed ${profileId} from Nyx queue.`);
-});
 let dailyStartSaveTimer = null;
 const dailyStartInputEl = document.getElementById("dailyStartAdspowerIdInput");
 dailyStartInputEl.addEventListener("input", () => {

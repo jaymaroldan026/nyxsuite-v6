@@ -1,7 +1,4 @@
-let latestQueueRows = [];
 let latestScrapeStatus = null;
-let selectedRowKey = "";
-let renderedQueueSignature = "";
 let renderedScrapeSignature = "";
 let popupLivePort = null;
 let popupLiveReconnectTimer = null;
@@ -72,24 +69,6 @@ function applyPrimaryStatus(message) {
   }
 
   statusLine.textContent = String(message || "");
-}
-
-function getQueueSignature(rows) {
-  return JSON.stringify((rows || []).map((row) => [
-    String(row.row_key || "").trim(),
-    String(row.model || ""),
-    String(row.ip_address || ""),
-    String(row.proxy_address || ""),
-    String(row.adspower_profile_id || ""),
-    String(row.status || ""),
-  ]));
-}
-
-function syncSelectedRowClass() {
-  document.querySelectorAll(".queue-table-row").forEach((element) => {
-    const isSelected = String(element.dataset.rowKey || "").trim() === selectedRowKey;
-    element.classList.toggle("queue-table-row-selected", isSelected);
-  });
 }
 
 function setInputValue(id, value) {
@@ -209,57 +188,6 @@ function updateRunnerActionButtons(runnerStatus) {
   pauseResumeButton.title = pauseResumeAction === "resume" ? "Resume Nyxify runner" : "Pause Nyxify runner";
   pauseResumeButton.disabled = isOffline || !isActive;
   pauseResumeButton.classList.toggle("runner-action-resume-active", pauseResumeAction === "resume");
-}
-
-function renderSheetQueue(rows) {
-  const container = document.getElementById("sheetQueue");
-  if (!container) {
-    return;
-  }
-
-  if (!rows || !rows.length) {
-    selectedRowKey = "";
-    renderedQueueSignature = "";
-    container.innerHTML = '<div class="queue-table-empty">No Nyxify queue rows found.</div>';
-    return;
-  }
-
-  if (!rows.some((row) => String(row.row_key || "").trim() === selectedRowKey)) {
-    selectedRowKey = String(rows[0].row_key || "").trim();
-  }
-
-  const nextSignature = getQueueSignature(rows);
-  if (nextSignature === renderedQueueSignature) {
-    syncSelectedRowClass();
-    return;
-  }
-
-  const header = `
-    <div class="queue-table-header">
-      <div class="queue-cell">Model</div>
-      <div class="queue-cell">IP</div>
-      <div class="queue-cell">Proxy</div>
-      <div class="queue-cell">AdsPower ID</div>
-      <div class="queue-cell">Status</div>
-    </div>
-  `;
-
-  const rowsHtml = rows.map((row) => {
-    const rowKey = String(row.row_key || "").trim();
-    const selectedClass = rowKey === selectedRowKey ? " queue-table-row-selected" : "";
-    return `
-      <div class="queue-table-row${selectedClass}" data-row-key="${rowKey}">
-        <div class="queue-cell" data-label="Model">${String(row.model || "-")}</div>
-        <div class="queue-cell" data-label="IP">${String(row.ip_address || "-")}</div>
-        <div class="queue-cell" data-label="Proxy">${String(row.proxy_address || "-")}</div>
-        <div class="queue-cell" data-label="AdsPower ID">${String(row.adspower_profile_id || "-")}</div>
-        <div class="queue-cell" data-label="Status">${String(row.status || "-")}</div>
-      </div>
-    `;
-  }).join("");
-
-  container.innerHTML = header + rowsHtml;
-  renderedQueueSignature = nextSignature;
 }
 
 function getScrapeEntriesByStatus(results, statuses) {
@@ -421,10 +349,6 @@ function applyPopupStatusSnapshot(status) {
     ? "No sync has run yet."
     : `${lastSync.failed ? "Last sync failed" : "Last sync ok"} at ${new Date(lastSync.syncedAt).toLocaleString()}${lastSync.message ? `: ${lastSync.message}` : ""}`;
 
-  if (!runnerLoading || (Array.isArray(runnerStatus.rows) && runnerStatus.rows.length)) {
-    latestQueueRows = runnerStatus.rows || [];
-  }
-  renderSheetQueue(latestQueueRows);
   if (Object.prototype.hasOwnProperty.call(safeStatus, "scrapeStatus")) {
     renderScrapeSnapshot(safeStatus.scrapeStatus || {});
   }
@@ -440,7 +364,6 @@ function applyStoredSettingsSnapshot() {
         runnerStatus: {
           loading: true,
           counts: {},
-          rows: latestQueueRows,
           bot: {
             detail: "Checking Nyxify runner...",
           },
@@ -674,10 +597,6 @@ function connectLiveStatus() {
   });
 }
 
-function getSelectedRow() {
-  return latestQueueRows.find((row) => String(row.row_key || "").trim() === selectedRowKey) || null;
-}
-
 function setActivePopupView(viewId) {
   const normalizedViewId = viewId === "scrapeView" ? "scrapeView" : "runnerView";
   document.querySelectorAll(".popup-tab").forEach((button) => {
@@ -899,52 +818,6 @@ document.getElementById("clearPopupBlockedProxiesButton").addEventListener("clic
     refreshPopupStatus("Banned proxy list cleared.", true);
   });
 });
-document.getElementById("banProxyButton").addEventListener("click", () => {
-  const row = getSelectedRow();
-  if (!row || !(row.proxy_address || row.ip_address)) {
-    setPrimaryStatus("Select a row with a proxy first.", 2500);
-    return;
-  }
-
-  chrome.runtime.sendMessage({
-    type: "NYXIFY_BAN_PROXY",
-    proxyValue: row.proxy_address || row.ip_address,
-  }, (response) => {
-    if (!response || !response.ok) {
-      setPrimaryStatus((response && response.error) || "Could not ban proxy.", 2500);
-      return;
-    }
-    refreshPopupStatus(`Banned proxy ${row.proxy_address || row.ip_address}.`);
-  });
-});
-
-document.getElementById("removeQueueRowButton").addEventListener("click", () => {
-  const row = getSelectedRow();
-  if (!row) {
-    setPrimaryStatus("Select a queue row first.", 2500);
-    return;
-  }
-
-  chrome.runtime.sendMessage({
-    type: "NYXIFY_REMOVE_QUEUE_ROW",
-    rowKey: row.row_key,
-  }, (response) => {
-    if (!response || !response.ok) {
-      setPrimaryStatus((response && response.error) || "Could not remove Nyxify row.", 2500);
-      return;
-    }
-    refreshPopupStatus(`Removed ${row.model} | ${row.ip_address}.`);
-  });
-});
-
-document.getElementById("sheetQueue").addEventListener("click", (event) => {
-  const row = event.target && event.target.closest(".queue-table-row");
-  if (!row) {
-    return;
-  }
-  selectedRowKey = String(row.dataset.rowKey || "").trim();
-  syncSelectedRowClass();
-});
 
 document.querySelectorAll(".popup-tab").forEach((button) => {
   button.addEventListener("click", () => {
@@ -979,7 +852,7 @@ document.addEventListener("visibilitychange", () => {
   }
   if (!document.hidden) {
     connectLiveStatus();
-    refreshPopupStatus("Refreshing Nyxify queue...", true);
+    refreshPopupStatus("Refreshing Nyxify status...", true);
   }
 });
 
@@ -1040,6 +913,13 @@ function focusOrCreateDashboard(url, setUrl) {
 }
 // Nyxify's Open Dashboard deep-links straight to the Nyxify section.
 function openWebApp() { focusOrCreateDashboard(DASHBOARD_URL + "#nyxify", true); }
+
+function openSetupInstall() {
+  checkAgentRunning().then((running) => {
+    if (running) focusOrCreateDashboard(DASHBOARD_URL + "#setup", true);
+    else chrome.tabs.create({ url: chrome.runtime.getURL("setup.html") });
+  });
+}
 
 function startBridgeViaNative() {
   return new Promise((resolve) => {
@@ -1157,7 +1037,8 @@ if (bridgeToggle) {
           hostMissing = !probe.ok && isHostMissingError(probe.error);
         }
         if (hostMissing) {
-          setPrimaryStatus("NyxSuite isn't installed for this browser yet. Double-click run_nyx_suite once (or use Setup & Install in the Nyx extension), then try again.", 6000);
+          setPrimaryStatus("NyxSuite isn't installed for this browser yet. Opening Setup & Install...", 6000);
+          openSetupInstall();
           bridgeToggle.dataset.busy = "false";
           renderBridgeToggle(false, false);
           return;
@@ -1178,7 +1059,7 @@ if (bridgeToggle) {
           clearInterval(poll);
           bridgeToggle.dataset.busy = "false";
           renderBridgeToggle(false, false);
-          setPrimaryStatus("NyxSuite didn't come online — try Setup & Install in the Nyx extension.", 4500);
+          setPrimaryStatus("NyxSuite didn't come online - try Setup & Install.", 4500);
         }
       }, 800);
     }
@@ -1187,6 +1068,8 @@ if (bridgeToggle) {
 
 const openWebAppButton = document.getElementById("openWebAppButton");
 if (openWebAppButton) openWebAppButton.addEventListener("click", openWebApp);
+const setupInstallButton = document.getElementById("setupInstallButton");
+if (setupInstallButton) setupInstallButton.addEventListener("click", openSetupInstall);
 
 setActivePopupView(window.localStorage.getItem(POPUP_VIEW_STORAGE_KEY) || "runnerView");
 applyStoredSettingsSnapshot();

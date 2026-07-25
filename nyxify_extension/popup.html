@@ -165,15 +165,6 @@
         </section>
 
         <section class="card">
-          <h2>Nyxify Queue</h2>
-          <div class="button-row queue-action-row">
-            <button id="banProxyButton" class="button button-secondary" type="button">Ban Proxy</button>
-            <button id="removeQueueRowButton" class="button button-danger" type="button">Remove Row</button>
-          </div>
-          <div id="sheetQueue" class="queue-table">Loading local Nyxify rows...</div>
-        </section>
-
-        <section class="card">
           <h2>Banned Proxies</h2>
           <p class="muted">One pattern per line. Matches by host prefix, full prefix, or substring (e.g. <code>130</code> blocks all <code>130.x.x.x</code> proxies).</p>
           <textarea id="popupBlockedProxies" class="input textarea-input" placeholder="e.g. 130&#10;82.26&#10;109.176.200.39:57813"></textarea>
@@ -268,6 +259,9 @@
       </div>
     </section>
 
+    <div class="button-row button-row-compact button-row-single setup-install-row">
+      <button id="setupInstallButton" class="button button-secondary button-small" type="button" title="Set up & install Nyx Suite (opens the install web UI)">Setup &amp; Install</button>
+    </div>
     <p class="brand-mark">Powered by Roldan Creation</p>
   </main>
   <script src="popup.js"></script>

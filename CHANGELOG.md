@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.4.0 - Extension popup performance
+
+### Extensions: queue tables removed from popups
+- Removed the Nyx Queue table and selected-row actions from the Nyx extension popup, reducing popup DOM work while keeping runner controls, Daily Update, Nyx Scrape, and Setup & Install available.
+- Removed the Nyxify Queue table and selected-row actions from the Nyxify extension popup, keeping runner controls, counters, banned proxies, Last detected, Local Sync, and Username Scrape available.
+- Dashboard queue views, backend queues, and local queue APIs are unchanged; queue inspection and row-level actions now stay in the dashboard.
+
+### Nyxify: Setup & Install parity
+- Added Setup & Install directly to the Nyxify popup.
+- Nyxify now opens the install web UI when the shared bridge is running, or its bundled setup helper when the bridge/native host still needs first-run setup.
+
 ## 6.3.10 - SnapBoard bridge timing recovery
 
 ### Nyxify: fail fast when a local SnapBoard bridge is not picking up requests

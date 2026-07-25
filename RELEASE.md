@@ -9,6 +9,12 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.0
+
+- Nyx and Nyxify extension popups no longer render their queue tables or selected-row queue actions, reducing popup work while keeping the runner controls and status counters available.
+- Dashboard queue views, backend queues, and local queue APIs remain unchanged; queue inspection and row-level actions stay in the dashboard.
+- Nyxify now has its own Setup & Install button and bundled setup helper, matching the Nyx popup setup flow.
+
 ### NyxSuite v6.3.10
 
 - Nyxify now detects local SnapBoard bridge pickup failures quickly for email,
