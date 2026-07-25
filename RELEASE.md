@@ -9,6 +9,20 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.3.10
+
+- Nyxify now detects local SnapBoard bridge pickup failures quickly for email,
+  phone, and SMS requests, avoiding long per-attempt waits on affected devices.
+- Local API SnapBoard requests refresh stale bridge tokens after HTTP 401 and
+  retry once, reducing device-specific token/session drift.
+- Signup progress now treats visible email, phone, OTP, and welcome handoff
+  states as authoritative over stale username retry UI, so rows stop reporting
+  `retrying_signup_username` once verification has started.
+- "Use email instead" is clicked once per signup wait and then Nyxify waits for
+  the verification controls.
+- Added regression tests for bridge timing, stale-token recovery, pending
+  SnapBoard status metadata, and stale username retry handoff.
+
 ### NyxSuite v6.3.9
 
 - Continuous Mode now prunes stale browser tabs after Nyx attaches and before

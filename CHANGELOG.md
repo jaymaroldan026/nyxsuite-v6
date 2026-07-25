@@ -1,5 +1,27 @@
 # Changelog
 
+## 6.3.10 - SnapBoard bridge timing recovery
+
+### Nyxify: fail fast when a local SnapBoard bridge is not picking up requests
+- Email, phone, and SMS fetches now poll the local bridge every 0.5 seconds and
+  stop quickly when the pending request is not dispatched by the SnapBoard
+  bridge, instead of waiting through long 120-165 second timeouts per attempt.
+- Local API requests now refresh a stale bridge token after an HTTP 401 and
+  retry once, which fixes device-specific token/session drift without requiring
+  a full app restart.
+- SnapBoard status endpoints now expose pending request metadata so the runner
+  can tell the difference between "bridge has not picked this up" and
+  "SnapBoard is still working."
+
+### Nyxify: verification phase wins over stale username retry UI
+- If Snapchat has already moved to the email, phone, or OTP verification phase,
+  Nyxify no longer leaves the row on `retrying_signup_username` because of a
+  stale username-taken element.
+- "Use email instead" is clicked once per signup wait, then Nyxify waits for the
+  verification controls instead of repeatedly clicking the switch.
+- Added regression coverage for bridge timeout/token recovery and stale signup
+  username retry detection.
+
 ## 6.3.9 - Continuous Mode pre-Bitmoji tab cleanup
 
 ### Nyx: stale signup and Bitmoji tabs are pruned before editor work

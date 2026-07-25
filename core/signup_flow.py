@@ -1709,6 +1709,7 @@ async def _wait_for_signup_progress(
     unable_to_process_attempts = 0
     username_taken_warning_logged = False
     manual_submit_username = ""
+    email_switch_clicked = False
     last_progress_step = ""
 
     async def set_progress(step: str) -> None:
@@ -1805,13 +1806,39 @@ async def _wait_for_signup_progress(
                 current_url = str(page.url or "").strip()
             except Exception:
                 current_url = ""
+            email_switch_visible = await _is_use_email_switch_visible(page)
+            email_input_visible = bool(await _visible_any(page, email_selectors))
+            otp_input_visible = bool(await _visible_any(page, otp_selectors))
             logger and logger.info(
                 f"[{profile_id}] Username retry context: url={current_url!r}, "
                 f"username_input={bool(current_visible_username)}, "
-                f"email_switch={await _is_use_email_switch_visible(page)}, "
-                f"email_input={bool(await _visible_any(page, email_selectors))}, "
-                f"otp_input={bool(await _visible_any(page, otp_selectors))}."
+                f"email_switch={email_switch_visible}, "
+                f"email_input={email_input_visible}, "
+                f"otp_input={otp_input_visible}."
             )
+            if email_switch_visible:
+                if not email_switch_clicked:
+                    await set_progress("clicking_use_email_instead")
+                    clicked_email = await _click_use_email_instead(page, logger, profile_id)
+                    if clicked_email:
+                        email_switch_clicked = True
+                        await page.wait_for_timeout(900)
+                        if remaining_ms is not None:
+                            remaining_ms -= 900
+                        continue
+                await page.wait_for_timeout(300)
+                if remaining_ms is not None:
+                    remaining_ms -= 300
+                continue
+            if email_input_visible:
+                await set_progress("awaiting_email_verification")
+                return "email"
+            if otp_input_visible:
+                await set_progress("awaiting_otp")
+                return "otp"
+            if await _is_phone_verification_step(page):
+                await set_progress("awaiting_phone_verification")
+                return "phone"
             manual_override = bool(isinstance(username_state, dict) and username_state.get("manual_override"))
             if username_retry_provider is not None and not manual_override:
                 current_username = ""

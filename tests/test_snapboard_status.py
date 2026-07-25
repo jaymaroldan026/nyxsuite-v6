@@ -106,6 +106,16 @@ class StatusUpdateApiTests(unittest.TestCase):
         self.assertTrue(status["done"])
         self.assertEqual(status["phone"], "+15551234567")
 
+    def test_email_status_reports_undispatched_pending_request(self):
+        resp = self._post("/email/request", {"row_key": "snapboard:99"})
+        self.assertTrue(resp["ok"])
+
+        status = self._get("/email/status?row_key=snapboard:99")
+        self.assertFalse(status["done"])
+        self.assertTrue(status["requested"])
+        self.assertFalse(status["dispatched"])
+        self.assertGreaterEqual(status["age_seconds"], 0)
+
     def test_sms_request_pending_result_flow(self):
         resp = self._post("/sms/request", {"row_key": "snapboard:99"})
         self.assertTrue(resp["ok"])

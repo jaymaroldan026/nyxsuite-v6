@@ -741,6 +741,45 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(steps, ["awaiting_email_verification"])
         self.assertEqual(page.waits, [])
 
+    async def test_email_switch_wins_over_stale_username_taken_error(self):
+        class FakeProgressPage:
+            url = "https://accounts.snapchat.com/v2/signup"
+
+            def __init__(self):
+                self.waits = []
+
+            async def wait_for_timeout(self, ms):
+                self.waits.append(ms)
+
+        page = FakeProgressPage()
+        steps = []
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+            mock.patch.object(signup_flow, "_is_account_creation_blocked_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_is_recaptcha_connect_error_visible", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_detect_signup_handoff_stage", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_read_input_value", mock.AsyncMock(return_value="milyaure")), \
+            mock.patch.object(signup_flow, "_is_username_taken_error_visible", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_is_use_email_switch_visible", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_click_use_email_instead", mock.AsyncMock(return_value=True)) as click_email, \
+            mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(return_value="")), \
+            mock.patch.object(signup_flow, "_retry_taken_username", mock.AsyncMock(return_value="")) as retry_taken, \
+            mock.patch.object(signup_flow, "_is_unable_to_process_error_visible", mock.AsyncMock(return_value=False)):
+            stage = await signup_flow._wait_for_signup_progress(
+                page,
+                logger=None,
+                profile_id="194",
+                timeout_ms=1000,
+                username_retry_provider=mock.AsyncMock(return_value="freshmily"),
+                username_state={"value": "milyaure", "manual_override": False},
+                progress_callback=lambda step: steps.append(step),
+            )
+
+        self.assertEqual(stage, "")
+        click_email.assert_awaited_once()
+        retry_taken.assert_not_awaited()
+        self.assertEqual(steps, ["clicking_use_email_instead"])
+
     async def test_unable_to_process_retry_uses_fast_submit_and_short_settle(self):
         class FakeProgressPage:
             url = "https://accounts.snapchat.com/v2/signup"

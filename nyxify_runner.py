@@ -39,6 +39,10 @@ load_dotenv()
 POLL_INTERVAL_SECONDS = int(os.getenv("NYXIFY_POLL_INTERVAL_SECONDS", "8"))
 NYXIFY_LOCAL_API_URL = os.getenv("NYXIFY_LOCAL_API_URL", "http://127.0.0.1:8866")
 NYXIFY_LOCAL_API_TOKEN = os.getenv("NYXIFY_LOCAL_API_TOKEN") or os.getenv("NYXSUITE_TOKEN") or ""
+SNAPBOARD_BRIDGE_POLL_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_BRIDGE_POLL_SECONDS", "0.5"))
+SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS = float(
+    os.getenv("NYXIFY_SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS", "8")
+)
 PAUSE_FILE = os.getenv("NYXIFY_PAUSE_FILE", str(LOGS_DIR / "nyxify_runner.paused"))
 TASK_DB_PATH = os.getenv("NYXIFY_TASK_DB_PATH", str(APP_DATA_DIR / "data" / "nyxify_tasks.db"))
 RUNNER_LOCK_HOST = os.getenv("NYXIFY_RUNNER_LOCK_HOST", "127.0.0.1")
@@ -92,8 +96,11 @@ def _mark_pending_tasks_waiting_for_continuous_nyx(store):
     return marked
 
 
-def _ensure_local_api_token():
+def _ensure_local_api_token(force_refresh=False):
     global NYXIFY_LOCAL_API_TOKEN, _LOCAL_API_TOKEN_CACHED
+    if force_refresh:
+        NYXIFY_LOCAL_API_TOKEN = ""
+        _LOCAL_API_TOKEN_CACHED = False
     if _LOCAL_API_TOKEN_CACHED:
         return NYXIFY_LOCAL_API_TOKEN
     if NYXIFY_LOCAL_API_TOKEN:
@@ -109,6 +116,33 @@ def _ensure_local_api_token():
     except Exception:
         pass
     return NYXIFY_LOCAL_API_TOKEN
+
+
+def _local_api_auth(payload=None, *, force_refresh=False):
+    token = _ensure_local_api_token(force_refresh=force_refresh)
+    headers = {}
+    body = dict(payload or {})
+    if token:
+        headers["X-Nyxify-Token"] = token
+        body["token"] = token
+    return body, headers
+
+
+def _post_local_api_response(path, payload=None, *, timeout=5):
+    last_response = None
+    for force_refresh in (False, True):
+        body, headers = _local_api_auth(payload, force_refresh=force_refresh)
+        response = _requests.post(
+            f"{NYXIFY_LOCAL_API_URL}{path}",
+            json=body,
+            headers=headers or None,
+            timeout=timeout,
+        )
+        last_response = response
+        if response.status_code == 401 and not force_refresh:
+            continue
+        return response
+    return last_response
 
 
 # Single-instance lock shared with the Nyx runner and the bridge supervisor.
@@ -463,18 +497,8 @@ def _request_snapboard_rotation_sync(row_key, timeout_seconds=40, max_clicks=Non
     payload = {"row_key": row_key}
     if max_clicks is not None:
         payload["max_clicks"] = max_clicks
-    token = _ensure_local_api_token()
-    headers = {}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload["token"] = token
     try:
-        _requests.post(
-            f"{NYXIFY_LOCAL_API_URL}/proxy/rotate_request",
-            json=payload,
-            headers=headers or None,
-            timeout=5,
-        )
+        _post_local_api_response("/proxy/rotate_request", payload, timeout=5)
     except Exception as exc:
         logger.warning(f"Could not send proxy rotate request to local API: {exc}")
         return None
@@ -511,20 +535,10 @@ async def _request_snapboard_rotation(row_key, timeout_seconds=40, max_clicks=No
 
 
 def _post_with_retries(path, payload, *, attempts=4, label=""):
-    token = _ensure_local_api_token()
-    headers = {}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload = {**payload, "token": token}
     last_error = ""
     for attempt in range(1, attempts + 1):
         try:
-            response = _requests.post(
-                f"{NYXIFY_LOCAL_API_URL}{path}",
-                json=payload,
-                headers=headers or None,
-                timeout=5,
-            )
+            response = _post_local_api_response(path, payload, timeout=5)
             if response.ok:
                 return True
             last_error = f"HTTP {response.status_code}"
@@ -563,17 +577,7 @@ def _request_snapboard_adspower_name_update(row_key, adspower_name):
 
 
 def _post_local_json(path, payload, timeout=5):
-    token = _ensure_local_api_token()
-    headers = {}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload = {**payload, "token": token}
-    response = _requests.post(
-        f"{NYXIFY_LOCAL_API_URL}{path}",
-        json=payload,
-        headers=headers or None,
-        timeout=timeout,
-    )
+    response = _post_local_api_response(path, payload, timeout=timeout)
     data = response.json()
     if not response.ok or data.get("ok") is False:
         raise RuntimeError(data.get("error") or f"HTTP {response.status_code}")
@@ -835,38 +839,52 @@ async def _cleanup_stale_pending_profile(task_id, task, store, adspower):
     return "cleaned"
 
 
-async def _request_snapboard_email(row_key, timeout_seconds=75, force_new=False):
+def _elapsed_label(started_at):
+    return f"{max(0.0, time.monotonic() - float(started_at or time.monotonic())):.1f}s"
+
+
+async def _request_snapboard_value(
+    row_key,
+    *,
+    request_path,
+    status_path,
+    value_key,
+    label,
+    timeout_seconds,
+    force_new=None,
+):
     normalized_row_key = str(row_key or "").strip()
     if not normalized_row_key:
         return ""
 
-    token = _ensure_local_api_token()
-    headers = {}
-    payload = {"row_key": normalized_row_key, "force_new": bool(force_new)}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload["token"] = token
+    started_at = time.monotonic()
+    payload = {"row_key": normalized_row_key}
+    if force_new is not None:
+        payload["force_new"] = bool(force_new)
     try:
-        response = _requests.post(
-            f"{NYXIFY_LOCAL_API_URL}/email/request",
-            json=payload,
-            headers=headers or None,
-            timeout=5,
-        )
+        response = _post_local_api_response(request_path, payload, timeout=5)
         if not response.ok:
-            logger.warning(f"Could not request SnapBoard email fetch for {normalized_row_key}: HTTP {response.status_code}")
+            logger.warning(
+                f"Could not request SnapBoard {label} fetch for {normalized_row_key}: "
+                f"HTTP {response.status_code}"
+            )
             return ""
     except Exception as exc:
-        logger.warning(f"Could not request SnapBoard email fetch for {normalized_row_key}: {exc}")
+        logger.warning(f"Could not request SnapBoard {label} fetch for {normalized_row_key}: {exc}")
         return ""
+    request_elapsed = time.monotonic() - started_at
 
-    deadline = time.monotonic() + max(1, int(timeout_seconds or 75))
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds or 75))
     last_error = ""
+    poll_count = 0
+    poll_delay = max(0.1, float(SNAPBOARD_BRIDGE_POLL_SECONDS or 0.5))
+    dispatch_timeout = max(1.0, float(SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS or 8))
     while time.monotonic() < deadline:
-        await asyncio.sleep(1)
+        await asyncio.sleep(poll_delay)
+        poll_count += 1
         try:
             response = _requests.get(
-                f"{NYXIFY_LOCAL_API_URL}/email/status",
+                f"{NYXIFY_LOCAL_API_URL}{status_path}",
                 params={"row_key": normalized_row_key},
                 timeout=5,
             )
@@ -875,126 +893,80 @@ async def _request_snapboard_email(row_key, timeout_seconds=75, force_new=False)
                 continue
             data = response.json()
             if data.get("done"):
-                email = str(data.get("email") or "").strip()
-                if email:
-                    return email
-                last_error = str(data.get("error") or "Email fetch failed.").strip()
+                value = str(data.get(value_key) or "").strip()
+                elapsed = time.monotonic() - started_at
+                if value:
+                    logger.info(
+                        f"[SNAPBOARD_TIMING] Got {label} for {normalized_row_key} "
+                        f"in {elapsed:.1f}s total (req={request_elapsed:.1f}s, polls={poll_count})"
+                    )
+                    return value
+                last_error = str(data.get("error") or f"SnapBoard {label} fetch returned no value.").strip()
+                logger.warning(
+                    f"[SNAPBOARD_TIMING] SnapBoard {label} fetch returned empty for "
+                    f"{normalized_row_key} after {_elapsed_label(started_at)} "
+                    f"(polls={poll_count}): {last_error}"
+                )
+                return ""
+            last_error = str(data.get("error") or "").strip()
+            if data.get("requested") and not data.get("dispatched"):
+                try:
+                    request_age = float(data.get("age_seconds") or 0.0)
+                except Exception:
+                    request_age = 0.0
+                request_age = max(request_age, time.monotonic() - started_at)
+                if request_age >= dispatch_timeout:
+                    logger.warning(
+                        f"[SNAPBOARD_TIMING] SnapBoard {label} fetch for {normalized_row_key} "
+                        f"was not picked up by the SnapBoard bridge after {request_age:.1f}s; "
+                        "check the Chrome SnapBoard tab/extension connection."
+                    )
+                    return ""
         except Exception as exc:
             last_error = str(exc)
 
     logger.warning(
-        f"Timed out waiting for SnapBoard email fetch for {normalized_row_key}"
-        + (f": {last_error}" if last_error else ".")
+        f"[SNAPBOARD_TIMING] Timed out waiting for SnapBoard {label} fetch for {normalized_row_key}"
+        + f": {_elapsed_label(started_at)}, {poll_count} polls"
+        + (f", last_error={last_error}" if last_error else ".")
     )
     return ""
+
+
+async def _request_snapboard_email(row_key, timeout_seconds=75, force_new=False):
+    return await _request_snapboard_value(
+        row_key,
+        request_path="/email/request",
+        status_path="/email/status",
+        value_key="email",
+        label="email",
+        timeout_seconds=timeout_seconds,
+        force_new=force_new,
+    )
 
 
 async def _request_snapboard_phone(row_key, timeout_seconds=120, force_new=False):
-    normalized_row_key = str(row_key or "").strip()
-    if not normalized_row_key:
-        return ""
-
-    token = _ensure_local_api_token()
-    headers = {}
-    payload = {"row_key": normalized_row_key, "force_new": bool(force_new)}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload["token"] = token
-    try:
-        response = _requests.post(
-            f"{NYXIFY_LOCAL_API_URL}/phone/request",
-            json=payload,
-            headers=headers or None,
-            timeout=5,
-        )
-        if not response.ok:
-            logger.warning(f"Could not request SnapBoard phone fetch for {normalized_row_key}: HTTP {response.status_code}")
-            return ""
-    except Exception as exc:
-        logger.warning(f"Could not request SnapBoard phone fetch for {normalized_row_key}: {exc}")
-        return ""
-
-    deadline = time.monotonic() + max(1, int(timeout_seconds or 120))
-    last_error = ""
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1)
-        try:
-            response = _requests.get(
-                f"{NYXIFY_LOCAL_API_URL}/phone/status",
-                params={"row_key": normalized_row_key},
-                timeout=5,
-            )
-            if not response.ok:
-                last_error = f"HTTP {response.status_code}"
-                continue
-            data = response.json()
-            if data.get("done"):
-                phone = str(data.get("phone") or "").strip()
-                if phone:
-                    return phone
-                last_error = str(data.get("error") or "Phone fetch failed.").strip()
-        except Exception as exc:
-            last_error = str(exc)
-
-    logger.warning(
-        f"Timed out waiting for SnapBoard phone fetch for {normalized_row_key}"
-        + (f": {last_error}" if last_error else ".")
+    return await _request_snapboard_value(
+        row_key,
+        request_path="/phone/request",
+        status_path="/phone/status",
+        value_key="phone",
+        label="phone",
+        timeout_seconds=timeout_seconds,
+        force_new=force_new,
     )
-    return ""
 
 
 async def _request_snapboard_sms(row_key, timeout_seconds=150):
-    normalized_row_key = str(row_key or "").strip()
-    if not normalized_row_key:
-        return ""
-
-    token = _ensure_local_api_token()
-    headers = {}
-    payload = {"row_key": normalized_row_key}
-    if token:
-        headers["X-Nyxify-Token"] = token
-        payload["token"] = token
-    try:
-        response = _requests.post(
-            f"{NYXIFY_LOCAL_API_URL}/sms/request",
-            json=payload,
-            headers=headers or None,
-            timeout=5,
-        )
-        if not response.ok:
-            logger.warning(f"Could not request SnapBoard SMS fetch for {normalized_row_key}: HTTP {response.status_code}")
-            return ""
-    except Exception as exc:
-        logger.warning(f"Could not request SnapBoard SMS fetch for {normalized_row_key}: {exc}")
-        return ""
-
-    deadline = time.monotonic() + max(1, int(timeout_seconds or 150))
-    last_error = ""
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1)
-        try:
-            response = _requests.get(
-                f"{NYXIFY_LOCAL_API_URL}/sms/status",
-                params={"row_key": normalized_row_key},
-                timeout=5,
-            )
-            if not response.ok:
-                last_error = f"HTTP {response.status_code}"
-                continue
-            data = response.json()
-            if data.get("done"):
-                code = str(data.get("code") or "").strip()
-                if code:
-                    return code
-                last_error = str(data.get("error") or "SMS fetch failed.").strip()
-        except Exception as exc:
-            last_error = str(exc)
-
-    logger.warning(
-        f"Timed out waiting for SnapBoard SMS fetch for {normalized_row_key}"
-        + (f": {last_error}" if last_error else ".")
+    return await _request_snapboard_value(
+        row_key,
+        request_path="/sms/request",
+        status_path="/sms/status",
+        value_key="code",
+        label="SMS",
+        timeout_seconds=timeout_seconds,
+        force_new=None,
     )
-    return ""
 
 
 def _build_final_adspower_name(final_username):

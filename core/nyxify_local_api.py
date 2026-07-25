@@ -106,7 +106,6 @@ class _UsernameUpdateStore:
         with self._lock:
             return dict(self._results[row_key]) if row_key in self._results else None
 
-
 class _AdspowerUpdateStore:
     def __init__(self):
         self._lock = threading.Lock()
@@ -150,7 +149,6 @@ class _AdspowerUpdateStore:
     def get_result(self, row_key):
         with self._lock:
             return dict(self._results[row_key]) if row_key in self._results else None
-
 
 class _AdspowerNameUpdateStore:
     def __init__(self):
@@ -295,6 +293,25 @@ class _EmailFetchStore:
         with self._lock:
             return dict(self._results[row_key]) if row_key in self._results else None
 
+    def get_pending_info(self, row_key):
+        with self._lock:
+            payload = self._pending.get(row_key)
+            if not payload:
+                return None
+            now = time.monotonic()
+            created_at = float(payload.get("created_at") or now)
+            dispatched_at = float(payload.get("dispatched_at") or 0.0)
+            dispatched = bool(payload.get("dispatched"))
+            info = {
+                "requested": True,
+                "dispatched": dispatched,
+                "age_seconds": max(0.0, now - created_at),
+                "force_new": bool(payload.get("force_new")),
+            }
+            if dispatched and dispatched_at:
+                info["dispatched_age_seconds"] = max(0.0, now - dispatched_at)
+            return info
+
 
 class _PhoneFetchStore:
     def __init__(self):
@@ -341,6 +358,25 @@ class _PhoneFetchStore:
         with self._lock:
             return dict(self._results[row_key]) if row_key in self._results else None
 
+    def get_pending_info(self, row_key):
+        with self._lock:
+            payload = self._pending.get(row_key)
+            if not payload:
+                return None
+            now = time.monotonic()
+            created_at = float(payload.get("created_at") or now)
+            dispatched_at = float(payload.get("dispatched_at") or 0.0)
+            dispatched = bool(payload.get("dispatched"))
+            info = {
+                "requested": True,
+                "dispatched": dispatched,
+                "age_seconds": max(0.0, now - created_at),
+                "force_new": bool(payload.get("force_new")),
+            }
+            if dispatched and dispatched_at:
+                info["dispatched_age_seconds"] = max(0.0, now - dispatched_at)
+            return info
+
 
 class _SmsFetchStore:
     def __init__(self):
@@ -385,6 +421,24 @@ class _SmsFetchStore:
     def get_result(self, row_key):
         with self._lock:
             return dict(self._results[row_key]) if row_key in self._results else None
+
+    def get_pending_info(self, row_key):
+        with self._lock:
+            payload = self._pending.get(row_key)
+            if not payload:
+                return None
+            now = time.monotonic()
+            created_at = float(payload.get("created_at") or now)
+            dispatched_at = float(payload.get("dispatched_at") or 0.0)
+            dispatched = bool(payload.get("dispatched"))
+            info = {
+                "requested": True,
+                "dispatched": dispatched,
+                "age_seconds": max(0.0, now - created_at),
+            }
+            if dispatched and dispatched_at:
+                info["dispatched_age_seconds"] = max(0.0, now - dispatched_at)
+            return info
 
 
 class _ReplaceBannedScanStore:
@@ -896,7 +950,11 @@ class NyxifyLocalApiServer:
                             },
                         )
                     else:
-                        self._write_json(200, {"ok": True, "done": False})
+                        pending = outer.email_fetch_store.get_pending_info(row_key) if row_key else None
+                        payload = {"ok": True, "done": False}
+                        if pending:
+                            payload.update(pending)
+                        self._write_json(200, payload)
                     return
 
                 if parsed_path.path == "/phone/status":
@@ -915,7 +973,11 @@ class NyxifyLocalApiServer:
                             },
                         )
                     else:
-                        self._write_json(200, {"ok": True, "done": False})
+                        pending = outer.phone_fetch_store.get_pending_info(row_key) if row_key else None
+                        payload = {"ok": True, "done": False}
+                        if pending:
+                            payload.update(pending)
+                        self._write_json(200, payload)
                     return
 
                 if parsed_path.path == "/sms/status":
@@ -934,7 +996,11 @@ class NyxifyLocalApiServer:
                             },
                         )
                     else:
-                        self._write_json(200, {"ok": True, "done": False})
+                        pending = outer.sms_fetch_store.get_pending_info(row_key) if row_key else None
+                        payload = {"ok": True, "done": False}
+                        if pending:
+                            payload.update(pending)
+                        self._write_json(200, payload)
                     return
 
                 if parsed_path.path == "/models":
