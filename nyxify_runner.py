@@ -1443,7 +1443,12 @@ async def process_task(task, store, adspower):
                             "username",
                         )
                     if normalized:
-                        if _request_snapboard_adspower_name_update(row_key_value, normalized):
+                        snapboard_adspower_name = (
+                            final_adspower_name
+                            or _build_final_adspower_name(normalized)
+                            or normalized
+                        )
+                        if _request_snapboard_adspower_name_update(row_key_value, snapboard_adspower_name):
                             snapboard_adspower_name_synced = await _wait_for_snapboard_update(
                                 "/adspower_name_update/status",
                                 row_key_value,
@@ -1515,6 +1520,24 @@ async def process_task(task, store, adspower):
                 )
                 return True
 
+            async def _release_playwright_before_nyx_handoff():
+                nonlocal playwright_instance
+                profile_id_value = str(created.get("profile_id") or "").strip()
+                if playwright_instance is None:
+                    return
+                try:
+                    await playwright_instance.stop()
+                    playwright_instance = None
+                    logger.info(
+                        f"Task {task_id}: released Nyxify browser connection before Nyx handoff "
+                        f"for AdsPower profile {profile_id_value}."
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"Task {task_id}: could not release Nyxify browser connection before Nyx handoff "
+                        f"for AdsPower profile {profile_id_value}: {exc}"
+                    )
+
             async def _signup_progress(step: str):
                 nonlocal last_step
                 normalized_step = str(step or "").strip()
@@ -1567,6 +1590,7 @@ async def process_task(task, store, adspower):
                 and final_username_applied
                 and final_profile_rename_pending
             ):
+                await _release_playwright_before_nyx_handoff()
                 store.update_task_state(task_id, last_step="renaming_profile_for_nyx")
                 if await _rename_final_profile_if_pending("before Nyx handoff"):
                     store.update_task_state(task_id, last_step=last_step)
@@ -1602,19 +1626,7 @@ async def process_task(task, store, adspower):
             ):
                 profile_id_value = str(created.get("profile_id") or "").strip()
                 handoff_model = model_tag or str(task.get("model") or "").strip()
-                if playwright_instance is not None:
-                    try:
-                        await playwright_instance.stop()
-                        playwright_instance = None
-                        logger.info(
-                            f"Task {task_id}: released Nyxify browser connection before Nyx handoff "
-                            f"for AdsPower profile {profile_id_value}."
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            f"Task {task_id}: could not release Nyxify browser connection before Nyx handoff "
-                            f"for AdsPower profile {profile_id_value}: {exc}"
-                        )
+                await _release_playwright_before_nyx_handoff()
                 store.update_task_state(task_id, last_step="queueing_nyx")
                 handoff_result = await asyncio.to_thread(
                     enqueue_profile_for_nyx,

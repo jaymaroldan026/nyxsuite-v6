@@ -88,7 +88,7 @@ class _FakeStore:
 
 
 class _FakeAdsPower:
-    def __init__(self, rename_error=None, rotate_during_create=False):
+    def __init__(self, rename_error=None, rotate_during_create=False, events=None):
         self.closed = []
         self.deleted = []
         self.renamed = []
@@ -96,6 +96,7 @@ class _FakeAdsPower:
         self.rotated_proxy = ""
         self.rename_error = rename_error
         self.rotate_during_create = rotate_during_create
+        self.events = events if events is not None else []
 
     def create_profile(self, **kwargs):
         self.create_calls.append(dict(kwargs))
@@ -118,6 +119,7 @@ class _FakeAdsPower:
     def rename_profile(self, profile_id, new_name):
         if self.rename_error:
             raise self.rename_error
+        self.events.append(f"rename:{profile_id}:{new_name}")
         self.renamed.append((profile_id, new_name))
         return {"profile_id": profile_id, "name": new_name}
 
@@ -153,10 +155,12 @@ class _FakeContext:
 
 
 class _FakePlaywright:
-    def __init__(self):
+    def __init__(self, events=None):
         self.stopped = False
+        self.events = events if events is not None else []
 
     async def stop(self):
+        self.events.append("playwright_stop")
         self.stopped = True
 
 
@@ -196,14 +200,17 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         rotate_during_create=False,
         snapboard_rotation="",
         capture_handoff_state=False,
+        capture_events=False,
     ):
         store = _FakeStore()
+        events = []
         adspower = _FakeAdsPower(
             rename_error=rename_error,
             rotate_during_create=rotate_during_create,
+            events=events,
         )
         context = _FakeContext()
-        playwright = _FakePlaywright()
+        playwright = _FakePlaywright(events=events)
         handoffs = []
         handoff_observations = []
         adspower_id_update = adspower_id_update or (lambda *_args, **_kwargs: True)
@@ -230,12 +237,17 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         }
 
         def fake_handoff(profile_id, model, logger=None, username="", password=""):
+            events.append(f"handoff:{profile_id}")
             handoff_observations.append({
                 "signup_closed": context.signup_page.closed,
                 "playwright_stopped": playwright.stopped,
             })
             handoffs.append((profile_id, model, username, password))
             return {"ok": True, "method": "api"}
+
+        def record_adspower_name_update(_row_key, adspower_name):
+            events.append(f"snapboard_name:{adspower_name}")
+            return True
 
         async def fake_snapboard_rotation(*_args, **_kwargs):
             return snapboard_rotation
@@ -265,13 +277,15 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(nyxify_runner, "_wait_for_snapboard_update", side_effect=_fake_snapboard_wait), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_username_update", return_value=True), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_adspower_id_update", side_effect=adspower_id_update), \
-                mock.patch.object(nyxify_runner, "_request_snapboard_adspower_name_update", return_value=True), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_adspower_name_update", side_effect=record_adspower_name_update), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_rotation_sync", return_value=snapboard_rotation, create=True), \
                 mock.patch.object(nyxify_runner, "_request_snapboard_rotation", side_effect=fake_snapboard_rotation), \
                 mock.patch.object(nyxify_runner, "_play_completion_sound"), \
                 mock.patch.object(nyxify_runner, "enqueue_profile_for_nyx", side_effect=fake_handoff):
             await nyxify_runner.process_task(task, store, adspower)
 
+        if capture_events:
+            return store, adspower, handoffs, events
         if capture_handoff_state:
             return store, adspower, handoffs, handoff_observations, context, playwright
         return store, adspower, handoffs
@@ -307,6 +321,32 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(context.signup_page.closed)
         self.assertFalse(context.start_page.closed)
         self.assertTrue(playwright.stopped)
+
+    async def test_continuous_mode_releases_playwright_before_rename_and_handoff(self):
+        _store, adspower, handoffs, events = await self._run_task(
+            True,
+            capture_events=True,
+        )
+
+        self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+        self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
+        self.assertLess(
+            events.index("playwright_stop"),
+            events.index("rename:k1new:Snapchat: cleepink"),
+        )
+        self.assertLess(
+            events.index("rename:k1new:Snapchat: cleepink"),
+            events.index("handoff:k1new"),
+        )
+
+    async def test_final_username_syncs_full_adspower_name_to_snapboard(self):
+        _store, _adspower, _handoffs, events = await self._run_task(
+            True,
+            capture_events=True,
+        )
+
+        self.assertIn("snapboard_name:Snapchat: cleepink", events)
+        self.assertNotIn("snapboard_name:cleepink", events)
 
     async def test_toggle_off_keeps_existing_close_after_signup_behavior(self):
         _store, adspower, handoffs = await self._run_task(False)

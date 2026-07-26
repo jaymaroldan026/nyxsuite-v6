@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,15 +75,22 @@ def test_nyxify_popup_queue_is_removed_and_setup_install_is_available():
     assert (ROOT / "nyxify_extension" / "setup.js").exists()
 
 
-def test_v640_version_metadata_is_synced():
+def version_decl(name, text):
+    match = re.search(rf'^{name}\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, f"{name} declaration not found"
+    return match.group(1)
+
+
+def test_extension_version_metadata_is_synced():
     version_py = read("core/version.py")
     nyx_manifest = json.loads(read("nyx_extension/manifest.json"))
     nyxify_manifest = json.loads(read("nyxify_extension/manifest.json"))
+    nyx_version = version_decl("NYX_VERSION", version_py)
+    nyxify_version = version_decl("NYXIFY_VERSION", version_py)
 
-    assert 'NYX_VERSION = "6.4.0"' in version_py
-    assert 'NYXIFY_VERSION = "6.4.0"' in version_py
-    assert read("VERSION").strip() == "6.4.0"
-    assert nyx_manifest["version"] == "6.4.0"
-    assert nyx_manifest["version_name"] == "6.4.0"
-    assert nyxify_manifest["version"] == "6.4.0"
-    assert nyxify_manifest["version_name"] == "6.4.0"
+    assert read("VERSION").strip() == nyx_version
+    assert nyxify_version == nyx_version
+    assert nyx_manifest["version"] == nyx_version
+    assert nyx_manifest["version_name"] == nyx_version
+    assert nyxify_manifest["version"] == nyxify_version
+    assert nyxify_manifest["version_name"] == nyxify_version
