@@ -9,6 +9,30 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.3
+
+- SnapBoard AdsPower-name sync no longer writes the full
+  `Snapchat: <username>` AdsPower profile name into the visible SnapBoard
+  username/name field.
+- Nyxify now targets only explicit AdsPower-name SnapBoard fields when syncing
+  the profile name, avoiding generic `name` fields on SnapBoard layouts.
+- Added regression coverage to prevent AdsPower-name sync from touching
+  SnapBoard username/name fields.
+- Expanded the release guide with hard-stop rules, exact version checks, and a
+  committed-`HEAD` ZIP build flow to prevent dirty or wrong-version releases.
+
+### NyxSuite v6.4.2
+
+- Nyxify now releases its Playwright/CDP browser connection before the final
+  Continuous Mode AdsPower profile rename, reducing rename misses when the
+  freshly finished account is handed to Nyx immediately.
+- SnapBoard AdsPower-name sync now sends the full profile name
+  `Snapchat: <username>` instead of only the bare Snapchat username.
+- Signup username retry now stops typing if Snapchat has already moved to
+  email, phone, OTP, or welcome verification.
+- Added regression coverage for final profile rename ordering, SnapBoard
+  AdsPower-name payloads, and stale signup retry transitions.
+
 ### NyxSuite v6.4.1
 
 - Fixed a Nyxify delay on Snapchat Step 2 where the page already showed
@@ -225,40 +249,186 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Create a New Release
 
-1. Update the version in `core/version.py`.
-2. Run:
+Follow this checklist exactly. It is written to prevent dirty, stale, or
+wrong-version release assets even when the release is done by a basic agent.
 
-   ```bash
-   python scripts/sync_version.py
-   ```
+### Hard Stop Rules
 
-3. Build the source update ZIP.
+- Do not build a release ZIP directly from the live working tree.
+- Do not use `git add -A` when unrelated files are dirty.
+- Do not publish a ZIP built before the final release commit.
+- Do not publish when `VERSION`, `core/version.py`, both extension manifests,
+  the Git tag, and the ZIP filename disagree.
+- Do not reuse an existing version unless the task explicitly says to rebuild
+  that same version.
+- Do not upload a release asset until GitHub `master` and the release tag point
+  to the intended commit.
 
-   macOS/Linux:
+### 1. Confirm Release Scope
 
-   ```bash
-   bash packaging/create_release_zip.sh --version <version>
-   ```
+Check the worktree and decide exactly which files belong in the release:
 
-   Windows:
+```bash
+git status -sb
+git diff --name-only
+```
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\packaging\create_release_zip.ps1 -Version <version>
-   ```
+If unrelated files are listed, leave them alone. Do not commit yet; first finish
+the version and test gates below.
 
-4. Confirm the ZIP contains one top-level folder named `NyxSuite-v<version>/`.
-5. Create the release and upload the asset:
+When it is time to commit in step 4, stage only the intended files explicitly.
+Never use `git add -A` unless the full worktree is intentionally part of the
+release.
 
-   ```bash
-   gh release create v<version> dist/NyxSuite-v<version>.zip \
-     --repo jaymaroldan026/nyxsuite-v6 \
-     --title "NyxSuite v<version>" \
-     --notes "Describe the user-facing changes."
-   ```
+### 2. Set and Sync the Version
 
-6. Verify update from an older install:
-   - Windows: Dashboard -> Settings -> Check for Update -> Apply Update.
-   - macOS: run `run_nyx_suite.command`, then Dashboard -> Settings -> Check for Update -> Apply Update.
+For a new version, update `core/version.py` first. Then run:
+
+```bash
+python scripts/sync_version.py
+```
+
+Manually update root `VERSION` if needed. Confirm all code-side declarations
+match:
+
+```bash
+VERSION_EXPECTED=<version>
+test "$(tr -d '\r\n' < VERSION)" = "$VERSION_EXPECTED"
+grep -q "NYX_VERSION = \"$VERSION_EXPECTED\"" core/version.py
+grep -q "NYXIFY_VERSION = \"$VERSION_EXPECTED\"" core/version.py
+grep -q "\"version\": \"$VERSION_EXPECTED\"" nyx_extension/manifest.json
+grep -q "\"version\": \"$VERSION_EXPECTED\"" nyxify_extension/manifest.json
+```
+
+### 3. Run Verification Before Committing
+
+Run at least the focused release checks plus the full test suite:
+
+```bash
+.venv/bin/python -m pytest tests/test_nyxify_continuous_mode.py tests/test_signup_blockers.py tests/test_release_packaging.py tests/test_release_updater_sync.py -q
+.venv/bin/python -m pytest tests -q
+```
+
+If `.venv/bin/python` is unavailable, use the project Python that has
+dependencies installed. Do not claim the release is validated from a Python that
+cannot collect the suite.
+
+### 4. Commit and Push the Exact Release Commit
+
+Stage only the intended release files, commit them, push the branch, and verify
+that GitHub `master` matches local `HEAD`:
+
+```bash
+git add <file-1> <file-2> <file-3>
+git diff --cached --stat
+git diff --cached --check
+git commit -m "<short release/fix message>"
+git push origin master
+LOCAL_HEAD="$(git rev-parse HEAD)"
+REMOTE_MASTER="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+test "$LOCAL_HEAD" = "$REMOTE_MASTER"
+```
+
+After committing, `git status -sb` may still show unrelated local files. That is
+allowed only because the release ZIP is built from the committed `HEAD` archive
+in step 5, not from the live working tree.
+
+### 5. Build the ZIP From Committed `HEAD`, Not the Dirty Tree
+
+Always build from `git archive HEAD`. This prevents local databases, edited
+username lists, machine-specific manifests, or half-finished files from leaking
+into the release ZIP.
+
+macOS/Linux:
+
+```bash
+VERSION_EXPECTED=<version>
+BUILD_ROOT="$(mktemp -d /tmp/nyxsuite-release-build.XXXXXX)"
+git archive HEAD | tar -x -C "$BUILD_ROOT"
+bash "$BUILD_ROOT/packaging/create_release_zip.sh" \
+  --version "$VERSION_EXPECTED" \
+  --output-dir "$PWD/dist"
+```
+
+Windows PowerShell:
+
+```powershell
+$VersionExpected = "<version>"
+$BuildRoot = Join-Path $env:TEMP ("nyxsuite-release-build-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
+git archive HEAD | tar -x -C $BuildRoot
+powershell -ExecutionPolicy Bypass -File "$BuildRoot\packaging\create_release_zip.ps1" `
+  -Version $VersionExpected `
+  -OutputDir "$PWD\dist"
+```
+
+### 6. Verify the ZIP Before Uploading
+
+Confirm structure, version, manifest safety, and checksum:
+
+```bash
+ZIP="dist/NyxSuite-v<version>.zip"
+unzip -l "$ZIP" | awk 'NR > 3 {print $4}' | awk -F/ 'NF && $1 != "" {print $1}' | sort -u
+unzip -p "$ZIP" "NyxSuite-v<version>/VERSION"
+unzip -p "$ZIP" "NyxSuite-v<version>/agent_host/com.nyxsuite.agent.json" | grep -q '"path": "agent_host/host_main.py"'
+shasum -a 256 "$ZIP"
+```
+
+The top-level-folder command must print exactly:
+
+```text
+NyxSuite-v<version>
+```
+
+If the ZIP contains `.env`, `*.db`, logs, local update backups, `.obsidian`,
+license/signing secrets, or a machine-specific native-host path, stop and fix
+the packaging before uploading.
+
+### 7. Create or Replace the GitHub Release
+
+For a new version:
+
+```bash
+git tag v<version> HEAD
+git push origin refs/tags/v<version>
+gh release create v<version> dist/NyxSuite-v<version>.zip \
+  --repo jaymaroldan026/nyxsuite-v6 \
+  --title "NyxSuite v<version>" \
+  --notes "Describe the user-facing changes."
+```
+
+For an explicitly authorized same-version rebuild:
+
+```bash
+git tag -f v<version> HEAD
+git push origin refs/tags/v<version> --force
+gh release upload v<version> dist/NyxSuite-v<version>.zip \
+  --repo jaymaroldan026/nyxsuite-v6 \
+  --clobber
+```
+
+### 8. Verify GitHub After Upload
+
+Check that remote `master`, the tag, and the release asset all match the
+intended release:
+
+```bash
+git ls-remote origin refs/heads/master
+git ls-remote --tags origin "v<version>"
+gh release view v<version> --repo jaymaroldan026/nyxsuite-v6 \
+  --json tagName,targetCommitish,assets,url
+```
+
+The release asset digest from GitHub must match the local `shasum -a 256`
+checksum. If it does not match, upload the correct ZIP with `--clobber` before
+announcing the release.
+
+### 9. Verify Update From an Older Install
+
+- Windows: Dashboard -> Settings -> Check for Update -> Apply Update.
+- macOS: run `run_nyx_suite.command`, then Dashboard -> Settings -> Check for Update -> Apply Update.
+- Confirm the installed `VERSION` file, dashboard version text, native messaging,
+  preserved runtime data, and bridge restart behavior.
 
 ## Update Package Rules
 
@@ -267,6 +437,8 @@ repo, and downloads the newest non-draft release asset matching
 - Do not ship runtime databases, local `.env`, logs, local update backups, or license/signing secrets.
 - The release ZIP preserves runtime DB/config/log paths during update.
 - The native-messaging manifest in the ZIP must use `agent_host/host_main.py`, not a machine-specific absolute path.
+- Build release ZIPs from committed `HEAD` using `git archive`, never from the
+  live dirty working tree.
 
 ## SnapBoard Password Behavior
 

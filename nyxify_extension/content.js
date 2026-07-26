@@ -1307,11 +1307,8 @@
     "input.input-adspowerName",
     "input.cell-input.input-adspower-name",
     "input.input-adspower-name",
-    "input.cell-input.input-name",
-    "input.input-name",
     "input[onchange*=\"updateField\"][onchange*=\"adspowerName\"]",
-    "input[onchange*=\"updateField\"][onchange*=\"name\"]",
-    "input[placeholder*='name' i]",
+    "input[placeholder*='AdsPower name' i]",
   ];
 
   // Sync write so the bridge poll cycle (OTP, username, proxy, adspower)
@@ -1355,7 +1352,6 @@
 
     setElementValue(input, adspowerName);
     callPageUpdateField(rowId, "adspowerName", adspowerName);
-    callPageUpdateField(rowId, "name", adspowerName);
 
     return normalizeText(input.value || "") === normalizeText(adspowerName);
   }

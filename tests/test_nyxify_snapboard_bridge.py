@@ -17,6 +17,16 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn('"/adspower_update/result"', content)
         self.assertIn("startAdspowerUpdatePoll();", content)
 
+    def test_adspower_name_bridge_does_not_write_snapboard_username_field(self):
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+        fn = content.split("function requestAdspowerNameUpdate", 1)[1].split("function ", 1)[0]
+
+        self.assertIn('callPageUpdateField(rowId, "adspowerName", adspowerName);', fn)
+        self.assertNotIn('callPageUpdateField(rowId, "name", adspowerName);', fn)
+        self.assertNotIn('"input.cell-input.input-name"', content)
+        self.assertNotIn('"input.input-name"', content)
+        self.assertNotIn('onchange*=\\"name\\"', content)
+
     def test_task_store_persists_snapboard_row_password(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = NyxifyTaskStore(Path(tmp) / "tasks.db")
