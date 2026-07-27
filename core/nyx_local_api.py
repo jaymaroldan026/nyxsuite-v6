@@ -46,7 +46,7 @@ class NyxLocalApiServer:
                 if not outer.token:
                     return True
 
-                payload = payload or {}
+                payload = payload if isinstance(payload, dict) else {}
                 token = str(payload.get("token", "") or self.headers.get("X-Nyx-Token", "")).strip()
                 return token == outer.token
 
@@ -414,7 +414,15 @@ class NyxLocalApiServer:
 
                 if self.path == "/bitmoji/models":
                     from core.bitmoji_config import save_models
-                    saved = save_models(payload.get("models") or {})
+                    models = payload.get("models") if isinstance(payload, dict) else None
+                    if not isinstance(models, dict):
+                        self._write_json(400, {"ok": False, "error": "models must be a mapping."})
+                        return
+                    try:
+                        saved = save_models(models)
+                    except ValueError as exc:
+                        self._write_json(400, {"ok": False, "error": str(exc) or "Invalid models payload."})
+                        return
                     self._write_json(200, {"ok": True, "models": saved, "message": "Bitmoji models saved."})
                     return
 

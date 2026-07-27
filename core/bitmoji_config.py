@@ -21,6 +21,7 @@ import json
 import random
 import re
 import threading
+from copy import deepcopy
 from pathlib import Path
 
 from core.process_utils import APP_DATA_DIR
@@ -152,27 +153,27 @@ FEATURES: dict[str, dict] = {
     "outfits": {
         "label": "Outfits", "file": "outfits", "kind": "outfit", "path": "top", "param": "top", "color_param": "top_tone1",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'top={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/top?') and contains(concat('&',substring-after(@src,'?'),'&'),'&top={id}&')]]",
     },
     "tops": {
         "label": "Tops", "file": "tops", "kind": "outfit", "path": "top", "param": "top", "color_param": "top_tone",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'top={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/top?') and contains(concat('&',substring-after(@src,'?'),'&'),'&top={id}&')]]",
     },
     "bottoms": {
         "label": "Bottoms", "file": "bottoms", "kind": "outfit", "path": "bottom", "param": "bottom", "color_param": "bottom_tone",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'bottom={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/bottom?') and contains(concat('&',substring-after(@src,'?'),'&'),'&bottom={id}&')]]",
     },
     "dresses": {
         "label": "Dresses", "file": "dresses", "kind": "outfit", "path": "one_piece", "param": "bottom", "color_param": "bottom_tone1",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'bottom={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/one_piece?') and contains(concat('&',substring-after(@src,'?'),'&'),'&bottom={id}&')]]",
     },
     "footwear": {
         "label": "Footwear", "file": "footwear", "kind": "outfit", "path": "footwear", "param": "footwear", "color_param": "footwear_tone",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'footwear={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/footwear?') and contains(concat('&',substring-after(@src,'?'),'&'),'&footwear={id}&')]]",
     },
     "headwear": {
         "label": "Headwear", "file": "headwear", "kind": "img", "path": "hat", "param": "hat",
@@ -182,7 +183,7 @@ FEATURES: dict[str, dict] = {
     "outerwear": {
         "label": "Outerwear", "file": "outerwear", "kind": "outfit", "path": "outerwear", "param": "outerwear", "color_param": "outerwear_tone",
         "group": "Outfit",
-        "pattern": "xpath=//div[contains(@class,'head-trait-container') and @tabindex='0' and .//img[contains(@src,'outerwear={id}')]]",
+        "pattern": "xpath=//div[contains(@class,'mix-and-match-container') and @tabindex='0' and .//img[contains(@src,'/avatar/outerwear?') and contains(concat('&',substring-after(@src,'?'),'&'),'&outerwear={id}&')]]",
     },
     "sock": {
         "label": "Socks", "file": "sock", "kind": "img", "path": "sock", "param": "sock",
@@ -270,9 +271,8 @@ RENDER_PARAMS: dict[str, tuple[str, bool]] = {
     "browring_left": ("browringL_BRing", False),
     "browring_right": ("browringR_BRing", False),
     "mouthring": ("mouthring_bottomRingC1", False),
-    # ``outfits`` is a duplicate of ``tops`` in the catalog (same ids, same top
-    # slot). The ``/avatar/body`` preview ignores an ``outfit=`` param, so map it
-    # onto ``top`` like Tops does — otherwise the Outfits preview never renders.
+    # Outfits use the same body-render slot name as a top, but retain independent
+    # live catalog records and per-item colour availability.
     "outfits": ("top", False),
     "tops": ("top", False),
     "bottoms": ("bottom", False),
@@ -388,35 +388,176 @@ def _read_json(path: Path) -> dict:
 
 
 def _normalize_catalog(data: dict) -> dict:
-    """Fix up the raw catalog before it reaches the editor.
+    """Return a defensive, item-faithful catalog.
 
-    The scanner captured ``outfits`` as a byte-copy of ``tops`` (identical ids,
-    same ``top=`` render endpoint) but with empty per-option ``colors``. We keep
-    both categories, so here we (1) relabel Outfits to make the overlap explicit
-    and (2) backfill its colors from the matching ``tops`` option (same id) so
-    its swatches — and end-to-end colour apply — work like Tops. Idempotent."""
+    In particular, do not infer an outfit's colours or label from Tops (or any
+    other feature): a live garment's record is authoritative, including an
+    intentionally empty ``colors`` list.  The function remains intentionally
+    idempotent so callers can safely normalize catalog data at every boundary.
+    """
     if not isinstance(data, dict):
         return {}
-    features = data.get("features")
-    if not isinstance(features, dict):
-        return data
-    outfits = features.get("outfits")
-    tops = features.get("tops")
-    if isinstance(outfits, dict):
-        label = str(outfits.get("label") or "Outfits")
-        if "Tops" not in label:
-            outfits["label"] = f"{label} (Tops slot)"
-        tops_colors = {}
-        if isinstance(tops, dict):
-            for opt in tops.get("options") or []:
-                if isinstance(opt, dict) and opt.get("id") is not None:
-                    tops_colors[str(opt["id"])] = opt.get("colors") or []
-        for opt in outfits.get("options") or []:
-            if isinstance(opt, dict) and not opt.get("colors"):
-                backfill = tops_colors.get(str(opt.get("id")))
-                if backfill:
-                    opt["colors"] = list(backfill)
     return data
+
+
+def _catalog_features(catalog: object) -> dict:
+    """Return a feature map from either supported catalog shape."""
+    if not isinstance(catalog, dict):
+        return {}
+    nested = catalog.get("features")
+    if isinstance(nested, dict):
+        return nested
+    return catalog if "features" not in catalog else {}
+
+
+def catalog_option(feature: str, option_id: str, catalog: dict | None = None) -> dict | None:
+    """Return exactly one option record from a raw catalog or feature map."""
+    source = load_catalog_raw() if catalog is None else catalog
+    feature_data = _catalog_features(source).get(feature)
+    options = feature_data.get("options") if isinstance(feature_data, dict) else None
+    target = "" if option_id is None else str(option_id).strip()
+    if not target or not isinstance(options, (list, tuple)):
+        return None
+    for item in options:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(item, dict) and item_id is not None and str(item_id).strip() == target:
+            return item
+    return None
+
+
+def option_colors(feature: str, option_id: str, catalog: dict | None = None) -> list[str]:
+    """Return only the supplied option's own non-empty colour values."""
+    item = catalog_option(feature, option_id, catalog)
+    colors = item.get("colors") if isinstance(item, dict) else None
+    if not isinstance(colors, (list, tuple)):
+        return []
+    return [str(color).strip() for color in colors if color is not None and str(color).strip()]
+
+
+def option_render(
+    feature: str,
+    option_id: str,
+    color: str | dict | None = None,
+    catalog: dict | None = None,
+) -> dict:
+    """Return the supplied option's body params plus its selected colour variant.
+
+    ``catalog`` used to be the third positional argument.  Accept a mapping in
+    ``color`` to retain that call form while supporting the new selected-colour
+    argument as ``option_render(feature, id, color, catalog)``.
+    """
+    if isinstance(color, dict) and catalog is None:
+        catalog, color = color, None
+    item = catalog_option(feature, option_id, catalog)
+    render = item.get("render") if isinstance(item, dict) else None
+    if not isinstance(render, dict):
+        return {}
+
+    params = deepcopy(render.get("params"))
+    if not isinstance(params, dict):
+        params = {}
+    selected = _normalised_colour(color)
+    if not selected:
+        return params
+
+    for variant_key in ("colour_variants", "color_variants"):
+        variants = render.get(variant_key)
+        if not isinstance(variants, dict):
+            continue
+        for variant_color, variant_params in variants.items():
+            if _normalised_colour(variant_color) == selected and isinstance(variant_params, dict):
+                params.update(deepcopy(variant_params))
+                return params
+    return params
+
+
+def _catalog_has_option_list(feature: str, catalog: object) -> bool:
+    feature_data = _catalog_features(catalog).get(feature)
+    return isinstance(feature_data, dict) and isinstance(feature_data.get("options"), (list, tuple))
+
+
+def _normalised_colour(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _string_collection(value: object) -> list[str]:
+    """Normalize a JSON list/tuple of non-empty strings without iterating scalars."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if item is not None and str(item).strip()]
+
+
+def _valid_selection_colours(feature: str, option_ids: list[str], catalog: object) -> set[str] | None:
+    """Return the union of colours offered by a fully-known option pool.
+
+    ``None`` means that at least one selected option is unavailable in the
+    catalog, or has not completed a live colour audit, so callers preserve
+    configuration rather than discard it.  The scanner records
+    ``colors_verified: true`` for every option whose swatches it has audited;
+    only then is either a non-empty or empty list authoritative.
+    """
+    if not _catalog_has_option_list(feature, catalog):
+        return None
+    known: list[set[str]] = []
+    for option_id in option_ids:
+        item = catalog_option(feature, option_id, catalog)
+        if item is None:
+            return None
+        if item.get("colors_verified") is not True:
+            return None
+        colors = {_normalised_colour(color) for color in option_colors(feature, option_id, catalog)}
+        known.append(colors)
+    if not known:
+        return None
+    return set().union(*known)
+
+
+def sanitize_models(models: object, catalog: dict | None = None) -> dict:
+    """Normalize model overrides and retain colours only when live data supports them.
+
+    A missing catalog or an unknown option remains non-destructive: normal
+    operator configuration is retained.  When an option is known, an empty
+    colour list is authoritative and removes fixed/random colour settings.
+    """
+    if not isinstance(models, dict):
+        raise ValueError("models must be a mapping")
+    source = load_catalog_raw() if catalog is None else catalog
+    normalized: dict[str, dict] = {}
+    for model, feature_map in models.items():
+        if not isinstance(feature_map, dict):
+            continue
+        entries: dict[str, dict] = {}
+        for feature, selection in feature_map.items():
+            if feature not in FEATURES or not isinstance(selection, dict):
+                continue
+            mode = str(selection.get("mode") or "").strip().lower()
+            if mode == "fixed":
+                option_id = str(selection.get("id") or "").strip()
+                if not option_id:
+                    continue
+                entry = {"mode": "fixed", "id": option_id}
+                configured = str(selection.get("color") or "").strip()
+                allowed = _valid_selection_colours(feature, [option_id], source)
+                if configured and (allowed is None or _normalised_colour(configured) in allowed):
+                    entry["color"] = configured
+                entries[feature] = entry
+            elif mode == "random":
+                pool = _string_collection(selection.get("pool"))
+                if not pool:
+                    continue
+                entry = {"mode": "random", "pool": pool}
+                allowed = _valid_selection_colours(feature, pool, source)
+                colors = _string_collection(selection.get("colors"))
+                if allowed is None:
+                    valid_colors = colors
+                else:
+                    valid_colors = [color for color in colors if _normalised_colour(color) in allowed]
+                if valid_colors:
+                    entry["colors"] = valid_colors
+                entries[feature] = entry
+        if entries:
+            normalized[model] = entries
+    return normalized
 
 
 def load_catalog_raw() -> dict:
@@ -436,36 +577,9 @@ def load_models() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def save_models(models: dict) -> dict:
+def save_models(models: object) -> dict:
     """Persist the full per-model override map (validated/normalized)."""
-    normalized: dict[str, dict] = {}
-    for model, features in (models or {}).items():
-        if not isinstance(features, dict):
-            continue
-        model_cfg: dict[str, dict] = {}
-        for feature, sel in features.items():
-            if feature not in FEATURES or not isinstance(sel, dict):
-                continue
-            mode = str(sel.get("mode", "")).strip().lower()
-            if mode == "fixed":
-                value = str(sel.get("id", "")).strip()
-                if value:
-                    entry = {"mode": "fixed", "id": value}
-                    color_val = str(sel.get("color", "")).strip()
-                    if color_val:
-                        entry["color"] = color_val
-                    model_cfg[feature] = entry
-            elif mode == "random":
-                pool = [str(v).strip() for v in (sel.get("pool") or []) if str(v).strip()]
-                if pool:
-                    entry = {"mode": "random", "pool": pool}
-                    colors = [str(v).strip() for v in (sel.get("colors") or []) if str(v).strip()]
-                    if colors:
-                        entry["colors"] = colors
-                    model_cfg[feature] = entry
-            # mode "default"/unknown -> omit (fall back to preset)
-        if model_cfg:
-            normalized[model] = model_cfg
+    normalized = sanitize_models(models)
     with _lock:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         MODELS_PATH.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
@@ -476,37 +590,105 @@ def resolve_option(model: str, feature: str, models: dict | None = None) -> str 
     """Return the configured option id for ``(model, feature)`` — the fixed id, a
     random pick from the pool, or ``None`` if the feature isn't configured (use
     the hardcoded preset)."""
-    cfg = (models if models is not None else load_models()).get(model, {})
+    source = models if isinstance(models, dict) else (load_models() if models is None else {})
+    cfg = source.get(model, {})
     sel = cfg.get(feature) if isinstance(cfg, dict) else None
     if not isinstance(sel, dict):
         return None
     if sel.get("mode") == "fixed":
         return str(sel.get("id") or "").strip() or None
     if sel.get("mode") == "random":
-        pool = [str(v).strip() for v in (sel.get("pool") or []) if str(v).strip()]
+        pool = _string_collection(sel.get("pool"))
         return random.choice(pool) if pool else None
     return None
 
 
-def resolve_option_color(model: str, feature: str, models: dict | None = None) -> str | None:
-    """Return the configured color for an outfit feature, or ``None``."""
-    cfg = (models if models is not None else load_models()).get(model, {})
+def resolve_option_color(
+    model: str,
+    feature: str,
+    models: dict | str | None = None,
+    option_id: str | dict | None = None,
+    catalog: dict | None = None,
+) -> str | None:
+    """Return a configured colour, constrained to an actual selected item when known.
+
+    The historic third positional ``models`` argument remains supported.  New
+    callers can pass ``option_id`` after ``resolve_option`` (and optionally a
+    catalog) so random colour selection cannot choose a swatch belonging only
+    to a different garment in the pool.
+    """
+    if isinstance(models, str) and isinstance(option_id, dict):
+        models, option_id = option_id, models
+    elif isinstance(models, str) and option_id is None:
+        models, option_id = None, models
+
+    cfg = (models if isinstance(models, dict) else load_models()).get(model, {})
     sel = cfg.get(feature) if isinstance(cfg, dict) else None
     if not isinstance(sel, dict):
         return None
+    allowed: set[str] | None = None
+    if option_id is not None:
+        source = load_catalog_raw() if catalog is None else catalog
+        allowed = _valid_selection_colours(feature, [str(option_id).strip()], source)
     if sel.get("mode") == "fixed":
-        return str(sel.get("color") or "").strip() or None
+        color = str(sel.get("color") or "").strip()
+        if not color:
+            return None
+        return color if allowed is None or _normalised_colour(color) in allowed else None
     if sel.get("mode") == "random":
-        colors = [str(v).strip() for v in (sel.get("colors") or []) if str(v).strip()]
+        colors = _string_collection(sel.get("colors"))
+        if allowed is not None:
+            colors = [color for color in colors if _normalised_colour(color) in allowed]
         return random.choice(colors) if colors else None
     return None
+
+
+def _xpath_string_literal(value: str) -> str:
+    """Quote ``value`` as one safe XPath 1.0 string expression."""
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+
+    parts: list[str] = []
+    for index, part in enumerate(value.split("'")):
+        if part:
+            parts.append(f"'{part}'")
+        if index < value.count("'"):
+            parts.append('"\'"')
+    if len(parts) == 1:
+        return parts[0]
+    return f"concat({', '.join(parts)})"
+
+
+def _xpath_concat(*expressions: str) -> str:
+    """Combine non-empty XPath string expressions without a single argument concat."""
+    values = [expression for expression in expressions if expression]
+    return values[0] if len(values) == 1 else f"concat({', '.join(values)})"
+
+
+def _inject_xpath_option_id(pattern: str, option_id: str) -> str | None:
+    """Replace ``{id}`` inside XPath literals without raw string interpolation."""
+    literal = _xpath_string_literal(option_id)
+
+    def replace_literal(match: re.Match[str]) -> str:
+        prefix, suffix = match.groups()
+        return _xpath_concat(
+            _xpath_string_literal(prefix) if prefix else "",
+            literal,
+            _xpath_string_literal(suffix) if suffix else "",
+        )
+
+    selector = re.sub(r"'([^']*)\{id\}([^']*)'", replace_literal, pattern)
+    return None if "{id}" in selector else selector
 
 
 def build_selector(feature: str, option_id: str, color_id: str | None = None) -> str | None:
     """Build the live-editor click selector for a chosen option id, or ``None``.
     For outfit features, ``color_id`` selects the color swatch."""
     meta = FEATURES.get(feature)
-    value = str(option_id or "").strip()
+    value = "" if option_id is None else str(option_id).strip()
     if not meta or not value:
         return None
-    return meta["pattern"].replace("{id}", value)
+    pattern = meta.get("pattern")
+    return _inject_xpath_option_id(pattern, value) if isinstance(pattern, str) else None
