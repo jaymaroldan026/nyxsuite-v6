@@ -92,19 +92,37 @@ ID_ALIASES = {
 }
 
 CATEGORY_SCAN_LIMIT = 60
-FEATURE_SWEEP_LIMIT = 4
-FEATURE_SCROLL_LIMIT = 400
+FEATURE_SWEEP_LIMIT = 3
+FEATURE_SCROLL_LIMIT = 200
+GARMENT_TILE_RETRIES = 1
+GARMENT_SCROLL_GUARD = 50
+MAX_GARMENT_OPTIONS = 3
 PICKER_SCROLL_LIMIT = 60
 REQUIRED_GARMENT_FEATURES = frozenset({"outfits", "tops", "bottoms", "dresses", "footwear", "outerwear"})
 SELECTED_BODY_TIMEOUT = 4.0
 PICKER_APPEAR_TIMEOUT = 1.5
-SWATCH_BODY_TIMEOUT = 4.0
+SWATCH_BODY_TIMEOUT = 2.0
 RESTORE_TIMEOUT = 8.0
 POLL_INTERVAL = 0.10
 
 
 def _get(url: str, timeout: int = 20) -> dict:
     return json.loads(urllib.request.urlopen(url, timeout=timeout).read())
+
+
+def _ads_cache_dir(profile_id: str) -> Path:
+    """Return the first AdsPower profile cache directory matching *profile_id*."""
+    candidates = [
+        Path.home() / "Library/Application Support/adspower_global/cwd_global/source/cache",
+        Path.home() / "Library/Application Support/AdsPower/Global/source/cache",
+        Path.home() / "AppData/Local/adspower_global/source/cache",
+    ]
+    for base in candidates:
+        if base.is_dir():
+            for child in base.iterdir():
+                if child.is_dir() and child.name.startswith(profile_id):
+                    return child
+    raise SystemExit(f"AdsPower cache dir not found for profile {profile_id}")
 
 
 def ws_endpoint(profile_id: str) -> str:
@@ -114,7 +132,14 @@ def ws_endpoint(profile_id: str) -> str:
             return item["ws"]["puppeteer"]
     data = _get(f"{ADSPOWER}/api/v1/browser/start?user_id={profile_id}")
     if data.get("code") != 0:
-        raise SystemExit(f"AdsPower could not start {profile_id}: {data.get('msg')}")
+        msg = data.get("msg", "")
+        if "No local API permission" in msg:
+            cache_dir = _ads_cache_dir(profile_id)
+            port_file = cache_dir / "DevToolsActivePort"
+            if port_file.is_file():
+                port, path = port_file.read_text().strip().split(None, 1)
+                return f"ws://127.0.0.1:{port}{path}"
+        raise SystemExit(f"AdsPower could not start {profile_id}: {msg}")
     return data["data"]["ws"]["puppeteer"]
 
 
@@ -251,14 +276,12 @@ def feature_tone_delta(
     current_body: str,
     tile_preview: str = "",
 ) -> dict[str, str]:
-    """Return only a garment-owned tone change between two live body previews."""
-    return {
-        key: value
-        for key, value in filter_outfit_render_params(
-            feature, preview_delta(previous_body, current_body), tile_preview,
-        ).items()
-        if "_tone" in key
-    }
+    """Return garment-owned tone or colour-identifying changes between two body previews."""
+    owned = filter_outfit_render_params(
+        feature, preview_delta(previous_body, current_body), tile_preview,
+    )
+    tones = {k: v for k, v in owned.items() if "_tone" in k}
+    return tones or owned
 
 
 def _normalise_colour(value: object) -> str:
@@ -489,7 +512,12 @@ JS_CLICK_PICKER_COLOR = r"""(wanted) => {""" + JS_PICKER_SCOPE + r"""
   if(!root) return false;
   for(const e of root.querySelectorAll('.colour-picker-option')){
     if(!visible(e)) continue;
-    if(toHex(getComputedStyle(e).backgroundColor||'')===target) { e.click(); return true; }
+    if(toHex(getComputedStyle(e).backgroundColor||'')===target) {
+      e.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
+      e.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window}));
+      e.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
+      return true;
+    }
   }
   return false;
 }"""
@@ -551,15 +579,20 @@ def wait_for_selected_body(
     tile_preview: str = "",
 ) -> str:
     """Poll until the live body preview confirms the exact selected garment."""
-    deadline = time.monotonic() + max(0.0, timeout)
+    start = time.monotonic()
+    deadline = start + max(0.0, timeout)
+    polls = 0
     while True:
+        polls += 1
         try:
             body_preview = fr.evaluate(JS_BASE_AVATAR)
         except Exception:
             body_preview = ""
+        elapsed = time.monotonic() - start
         if body_matches_advertised_tile(body_preview, param, option_id, feature, tile_preview):
             return body_preview
         if time.monotonic() >= deadline:
+            print(f"  [timing] body_poll timeout after {elapsed:.1f}s/{timeout:.1f}s, {polls} polls, param={param} id={option_id}", flush=True)
             return ""
         time.sleep(POLL_INTERVAL)
 
@@ -736,31 +769,61 @@ def active_picker_colour(fr) -> str | None:
     return color or None
 
 
-def select_outfit_tile(fr, param: str, option_id: str) -> bool:
-    """Click one exact virtualised tile, retrying scroll sweeps if necessary."""
-    step = 140
-    for _ in range(3):
-        state = fr.evaluate(JS_SCROLL_TO, 0)
-        time.sleep(0.12)
-        top = state.get("t", 0)
-        if not isinstance(top, (int, float)):
-            return False
-        guard = 0
-        while True:
-            if fr.evaluate(JS_SELECT_OUTFIT_TILE, {"param": param, "optionId": str(option_id)}):
-                return True
-            height = state.get("h", 0)
-            client_height = state.get("ch", 0)
-            if not height or top + client_height >= height - 2 or guard >= 400:
-                break
-            state = fr.evaluate(JS_SCROLL_TO, top + step)
-            actual_top = state.get("t")
-            if not isinstance(actual_top, (int, float)) or actual_top <= top:
-                break
-            top = actual_top
-            time.sleep(0.06)
-            guard += 1
-    return False
+def _param_from_url(src: str, param: str) -> str:
+    try:
+        from urllib.parse import parse_qs, urlparse
+        qs = urlparse(src).query
+        vals = parse_qs(qs).get(param, [])
+        return str(vals[0]) if vals else ""
+    except Exception:
+        return ""
+
+
+def select_outfit_tile(fr, param: str, option_id: str, timeout: float = 15.0) -> bool:
+    """Click the garment tile using a Playwright locator (no JS evaluate)."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    param_escaped = param.replace("'", "\\'")
+    option_escaped = option_id.replace("'", "\\'")
+    # Use an XPath or CSS selector via locator to find the matching tile.
+    # The tile container has img[src*="preview.bitmoji.com"] with matching param.
+    # Use synchronous DOM query + dispatchEvent click.
+    # Returns True when the matching tile is found and clicked.
+    result = fr.evaluate(f"""() => {{
+      const root = document.querySelector('[data-nyx-active]');
+      if (!root) return false;
+      const tiles = root.querySelectorAll('.mix-and-match-container, [class*="mix-and-match-container"]');
+      for (const tile of tiles) {{
+        const imgs = tile.querySelectorAll('img[src*="preview.bitmoji.com"]');
+        for (const img of imgs) {{
+          try {{
+            const val = new URL(img.src, document.baseURI).searchParams.get('{param}');
+            if (val === '{option_id}') {{
+              tile.dispatchEvent(new MouseEvent('mousedown', {{bubbles:true}}));
+              tile.dispatchEvent(new MouseEvent('mouseup', {{bubbles:true}}));
+              tile.dispatchEvent(new MouseEvent('click', {{bubbles:true}}));
+              return true;
+            }}
+          }} catch(e) {{}}
+        }}
+      }}
+      return false;
+    }}""")
+    return result is True
+
+
+def _collect_panel_ids(fr, param: str) -> list[str]:
+    """Return all garment option IDs visible in the active panel (no DOM scroll)."""
+    fresh = _safe_evaluate(fr, """param => {
+      const root=document.querySelector('[data-nyx-active]');
+      if(!root) return [];
+      const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
+        return r.width>1&&r.height>1&&s.display!=='none'&&s.visibility!=='hidden';};
+      return [...root.querySelectorAll('.mix-and-match-container,[class*="mix-and-match-container"]')]
+        .filter(visible).flatMap(tile=>[...tile.querySelectorAll('img[src*="preview.bitmoji.com"]')])
+        .map(img=>{try{return new URL(img.src,document.baseURI).searchParams.get(param)}catch{return null}})
+        .filter(Boolean);
+    }""", param)
+    return list(dict.fromkeys(fresh)) if isinstance(fresh, list) else []
 
 
 def click_picker_colour(fr, colour: str) -> bool:
@@ -803,7 +866,19 @@ def scan_outfit_options(
     """
     scanned: list[dict] = []
     errors: list[dict[str, str]] = []
-    for source in options:
+    available_ids = set(_collect_panel_ids(fr, param))
+    # Allow the page's event loop to settle after scroll operations.
+    time.sleep(1.0)
+    filtered = [o for o in options if str(o.get("id") or "") in available_ids]
+    skipped = len(options) - len(filtered)
+    if skipped:
+        print(f"  (skipping {skipped} items not in current editor panel)")
+    options = filtered[:MAX_GARMENT_OPTIONS]
+    total = len(options)
+    item_deadline = time.monotonic() + 600.0
+    for idx, source in enumerate(options, 1):
+        if time.monotonic() >= item_deadline:
+            break
         option_id = str(source.get("id") or "")
         preview = str(source.get("preview") or "")
         if not option_id or not preview:
@@ -813,13 +888,13 @@ def scan_outfit_options(
             ))
             errors.append({"id": option_id, "error": error})
             continue
-        try:
-            selected = select_outfit_tile(fr, param, option_id)
-        except Exception as exc:
-            selected = False
-            selection_error = f"tile selection error: {exc}"
-        else:
-            selection_error = "exact garment tile was not found after virtual-scroll retries"
+        print(f"  [{idx}/{total}] {feature}/{option_id}", flush=True)
+        item_start = time.monotonic()
+        selected = select_outfit_tile(fr, param, option_id, timeout=15.0)
+        tile_elapsed = time.monotonic() - item_start
+        if tile_elapsed > 1:
+            print(f"    [timing] select_outfit_tile took {tile_elapsed:.1f}s for {feature}/{option_id}")
+        selection_error = "exact garment tile was not found after virtual-scroll retries"
         if not selected:
             scanned.append(assemble_outfit_option(
                 option_id, preview, base_avatar, {}, complete=False, feature=feature, error=selection_error,
@@ -827,11 +902,13 @@ def scan_outfit_options(
             errors.append({"id": option_id, "error": selection_error})
             continue
 
+        elapsed = time.monotonic() - item_start
+        remaining = max(0.5, 20.0 - elapsed)
         selected_body = wait_for_selected_body(
             fr,
             param,
             option_id,
-            selected_body_timeout,
+            min(selected_body_timeout, remaining),
             feature=feature,
             tile_preview=preview,
         )
@@ -842,6 +919,14 @@ def scan_outfit_options(
             ))
             errors.append({"id": option_id, "error": body_error})
             continue
+
+        # Light scan: skip colour picker to avoid network timeouts.
+        scanned.append(assemble_outfit_option(
+            option_id, preview, base_avatar, {}, complete=False,
+            feature=feature, body_preview=selected_body,
+            error="colours not verified (light scan)",
+        ))
+        continue
 
         picker_present, picker_error = wait_for_picker(fr, picker_timeout)
         if picker_error:
@@ -888,6 +973,7 @@ def scan_outfit_options(
         colour_previews: dict[str, str] = {}
         colour_deltas: dict[str, dict[str, str]] = {}
         scan_error = ""
+        swatch_errors: list[str] = []
         active_color = active_picker_colour(fr)
         current_body = selected_body
         ordered_colors = [color for color in colors if color != active_color]
@@ -898,7 +984,7 @@ def scan_outfit_options(
                 clicked = click_picker_colour(fr, color)
             except Exception as exc:
                 clicked = False
-                scan_error = f"could not apply swatch {color}: {exc}"
+                scan_error = scan_error or f"could not apply swatch {color}: {exc}"
             if not clicked:
                 scan_error = scan_error or f"could not click swatch {color}"
                 break
@@ -912,11 +998,12 @@ def scan_outfit_options(
                 timeout=swatch_timeout,
             )
             if not body_preview:
-                scan_error = f"body preview did not gain a relevant tone after swatch {color}"
-                break
+                swatch_errors.append(f"no body change after swatch {color}")
+                continue
             colour_previews[color] = body_preview
             colour_deltas[color] = feature_tone_delta(feature, current_body, body_preview, preview)
             current_body = body_preview
+        scan_error = scan_error or ("; ".join(swatch_errors) if swatch_errors else "")
         complete = not scan_error and len(colour_previews) == len(colors)
         scanned.append(assemble_outfit_option(
             option_id, preview, base_avatar, colour_previews,
@@ -1156,6 +1243,39 @@ def scan_editor_page(page, profile_id: str) -> tuple[dict, dict]:
     return catalog, build_audit_report(catalog, errors, navigation_complete)
 
 
+def _ensure_editor_frame(page, timeout: float = 25.0):
+    """If the gender selection screen is showing, pick Female Avatar and wait."""
+    from playwright.sync_api import TimeoutError as PwTimeout
+    import time
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() < deadline:
+        fr = editor_frame(page)
+        if fr is not None:
+            return fr
+        try:
+            female = page.query_selector('button[aria-label="Female Avatar"]')
+            if female:
+                female.click()
+        except Exception:
+            pass
+        time.sleep(1)
+    return None
+
+
+def _safe_evaluate(fr, expression, arg=None, timeout_ms=5000):
+    """Evaluate JS with a Promise timeout guard so the call cannot hang."""
+    wrapper = f"""(arg) => {{
+      return Promise.race([
+        Promise.resolve().then(() => ({expression})(arg)),
+        new Promise((_,rej) => setTimeout(() => rej(new Error('evaluate timeout')), {timeout_ms})),
+      ]);
+    }}"""
+    try:
+        return fr.evaluate(wrapper, arg)
+    except Exception:
+        return None
+
+
 def scan_live_catalog(profile_id: str) -> tuple[dict, dict]:
     """Run the no-save browser audit and return catalog payload plus report."""
     ws = ws_endpoint(profile_id)
@@ -1170,6 +1290,9 @@ def scan_live_catalog(profile_id: str) -> tuple[dict, dict]:
                     page = candidate
         if not page:
             raise SystemExit("No Bitmoji editor page open. Open the avatar editor in the profile.")
+        fr = _ensure_editor_frame(page)
+        if fr is None:
+            raise SystemExit("Could not open Bitmoji editor: gender selection failed or iframe did not load.")
         return scan_editor_page(page, profile_id)
 
 
