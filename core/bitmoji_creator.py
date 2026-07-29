@@ -776,6 +776,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         max_continue_retries = 3
         relogin_attempts = 0
         max_relogin_attempts = 2
+        transient_load_retries = 0
+        max_transient_load_retries = 3
 
         for _ in range(int(timeout_seconds)):
             await self.wait_if_paused()
@@ -828,6 +830,24 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                     await self.handle_oauth_continue()
                 continue
 
+            if state == "TRANSIENT_LOAD_ERROR":
+                if transient_load_retries >= max_transient_load_retries:
+                    raise Exception(
+                        "Bitmoji transient load error persisted after "
+                        f"{max_transient_load_retries} refreshes."
+                    )
+                transient_load_retries += 1
+                print(
+                    "Bitmoji transient load error after login redirect "
+                    f"(refresh {transient_load_retries}/{max_transient_load_retries}); refreshing..."
+                )
+                refreshed = await self.refresh_bitmoji_transient_load_error(
+                    "after login redirect"
+                )
+                if not refreshed:
+                    raise Exception("Bitmoji transient load error could not be refreshed.")
+                continue
+
             if state in ["GENDER", "EDITOR", "ACCOUNT_HOME"]:
                 print(f"Arrived at: {state}")
                 return state
@@ -877,6 +897,8 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
         oauth_retries = 0
         relogin_attempts = 0
         login_redirect_retries = 0
+        transient_load_retries = 0
+        max_transient_load_retries = 3
 
         while asyncio.get_event_loop().time() < end_time:
             await self.wait_if_paused()
@@ -958,6 +980,25 @@ class BitmojiCreator(BitmojiInteractionMixin, BitmojiOutfitMixin, BitmojiSaveMix
                 # Proxy recovered (otherwise the call above raised). Give the
                 # editor a fresh wait window since recovery may have consumed
                 # most of the original one.
+                end_time = asyncio.get_event_loop().time() + float(self.long_wait_seconds)
+                continue
+
+            if state == "TRANSIENT_LOAD_ERROR":
+                if transient_load_retries >= max_transient_load_retries:
+                    raise Exception(
+                        "Bitmoji transient load error persisted after "
+                        f"{max_transient_load_retries} refreshes."
+                    )
+                transient_load_retries += 1
+                print(
+                    "Bitmoji transient load error while waiting for editor "
+                    f"(refresh {transient_load_retries}/{max_transient_load_retries}); refreshing..."
+                )
+                refreshed = await self.refresh_bitmoji_transient_load_error(
+                    "while waiting for editor"
+                )
+                if not refreshed:
+                    raise Exception("Bitmoji transient load error could not be refreshed.")
                 end_time = asyncio.get_event_loop().time() + float(self.long_wait_seconds)
                 continue
 

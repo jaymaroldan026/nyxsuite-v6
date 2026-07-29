@@ -40,6 +40,9 @@ SIGNUP_FAST_SUBMIT_PAUSE_MAX_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE
 SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS = int(
     os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS", "1200")
 )
+SIGNUP_CAPTCHALESS_SUBMIT_ENABLED_TIMEOUT_MS = int(
+    os.getenv("NYXIFY_SIGNUP_CAPTCHALESS_SUBMIT_ENABLED_TIMEOUT_MS", "1000")
+)
 SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS = int(
     os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS", "1000")
 )
@@ -689,8 +692,16 @@ async def _click_signup_submit(page, logger=None, profile_id: str = "", *, fast:
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=pre_clear_ms)
     enabled_timeout_ms = SIGNUP_FAST_SUBMIT_ENABLED_TIMEOUT_MS if fast else 12000
     click_timeout_ms = SIGNUP_FAST_SUBMIT_CLICK_TIMEOUT_MS if fast else SIGNUP_JS_CLICK_TIMEOUT_MS
+    captcha_present = await _recaptcha_widget_present(page)
+    if not captcha_present:
+        enabled_timeout_ms = min(enabled_timeout_ms, SIGNUP_CAPTCHALESS_SUBMIT_ENABLED_TIMEOUT_MS)
     enabled = await _wait_enabled(page, submit_selector, timeout_ms=enabled_timeout_ms)
     logger and logger.info(f"[{profile_id}] Submit button enabled={enabled}")
+    if not enabled and not captcha_present:
+        logger and logger.warning(
+            f"[{profile_id}] Submit stayed disabled and no visible reCAPTCHA widget was found; refreshing signup."
+        )
+        return False
     await _human_pause(page, pause_min_ms, pause_max_ms)
     await _keep_signup_page_clear(page, logger, profile_id, duration_ms=post_clear_ms)
     clicked = await _js_click(page, submit_selector, timeout_ms=click_timeout_ms)
@@ -1051,15 +1062,24 @@ async def _recaptcha_widget_present(page) -> bool:
             await page.evaluate(
                 """
                 () => {
+                    const isVisible = (node) => {
+                        if (!node) return false;
+                        const style = window.getComputedStyle(node);
+                        if (!style) return false;
+                        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                            return false;
+                        }
+                        const rect = node.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    };
                     const badge = document.querySelector('.grecaptcha-badge');
-                    if (badge) {
-                        const rect = badge.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0) return true;
-                    }
-                    if (document.querySelector('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]')) {
+                    if (isVisible(badge)) {
                         return true;
                     }
-                    if (window.grecaptcha) return true;
+                    const frames = document.querySelectorAll('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]');
+                    for (const frame of frames) {
+                        if (isVisible(frame)) return true;
+                    }
                     return false;
                 }
                 """

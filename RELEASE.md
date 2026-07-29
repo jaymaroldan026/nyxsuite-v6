@@ -9,6 +9,21 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.7
+
+- Nyxify now refreshes the signup form after one second when "Agree and
+  Continue" stays disabled and no visible reCAPTCHA badge/iframe is present.
+- reCAPTCHA detection now requires a visible badge or frame, so a background
+  loader alone no longer blocks the fast signup refresh path.
+- Nyx now detects Chrome's Bitmoji SDK "webpage temporarily down / moved
+  permanently" error page and refreshes it during initial load, post-OAuth
+  redirect, and editor waits.
+- Persistent signup stalls still flow into the existing delete-profile,
+  proxy-rotate, and recreate-profile retry logic after the bounded refresh
+  budget is exhausted.
+- Added regression tests for captchaless disabled submits, visible reCAPTCHA
+  detection, and Bitmoji SDK transient-load refreshes.
+
 ### NyxSuite v6.4.6
 
 - Added a new Nyxmoji `cute_preset` outfit style with 40 curated cute/seductive

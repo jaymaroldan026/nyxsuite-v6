@@ -130,6 +130,13 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
         page = FakePage(text="Sign Up — Step 1 of 3")
         self.assertFalse(await signup_flow._is_recaptcha_connect_error_visible(page))
 
+    async def test_recaptcha_widget_absent_when_only_global_loader_exists(self):
+        class GlobalOnlyRecaptchaPage:
+            async def evaluate(self, js):
+                return "window.grecaptcha" in str(js)
+
+        self.assertFalse(await signup_flow._recaptcha_widget_present(GlobalOnlyRecaptchaPage()))
+
     async def test_account_creation_blocked_detected(self):
         page = FakePage(
             text="Account creation could not be completed at this time. Please try again on our mobile app."
@@ -651,6 +658,24 @@ class SignupUsernameRetryTests(unittest.IsolatedAsyncioTestCase):
             "button:has-text('Agree and Continue')",
             timeout_ms=1000,
         )
+
+    async def test_click_signup_submit_fast_refreshes_when_captcha_missing_and_submit_disabled(self):
+        page = FakePage(text="Sign Up Step 1 of 3", recaptcha=False)
+
+        with mock.patch.object(signup_flow, "_visible_any", mock.AsyncMock(side_effect=lambda _page, selectors: selectors[0])), \
+            mock.patch.object(signup_flow, "_keep_signup_page_clear", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_recaptcha_widget_present", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=False)) as wait_enabled, \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock()), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
+            self.assertFalse(await signup_flow._click_signup_submit(page, fast=True))
+
+        wait_enabled.assert_awaited_once_with(
+            page,
+            "button:has-text('Agree and Continue')",
+            timeout_ms=1000,
+        )
+        js_click.assert_not_awaited()
 
     async def test_js_click_uses_bounded_locator_fallback_timeout(self):
         class FakeLocator:

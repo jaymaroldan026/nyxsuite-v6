@@ -100,6 +100,36 @@ class _SnapchatWelcomeContext:
         return "Accounts | Snapchat\nManage Apps\nLogout"
 
 
+class _BitmojiSdkChromeErrorContext:
+    url = "https://sdk.bitmoji.com/web-builder/?flow_mode=create&gender=2&style=5"
+
+    def locator(self, selector):
+        return _FakeLocator(0)
+
+    async def evaluate(self, script):
+        return (
+            "The webpage at https://sdk.bitmoji.com/web-builder/?flow_mode=create&gender=2 "
+            "might be temporarily down or it may have moved permanently to a new web address."
+        )
+
+
+class _BitmojiEditorReadyContext:
+    url = "https://sdk.bitmoji.com/web-builder/?flow_mode=create&gender=2&style=5"
+    is_editor = True
+
+
+class _ReloadingBitmojiPage:
+    url = "https://www.bitmoji.com/avatar/create/?require_snapchat"
+
+    def __init__(self, flow):
+        self.flow = flow
+        self.reload_calls = 0
+
+    async def reload(self, *args, **kwargs):
+        self.reload_calls += 1
+        self.flow._contexts = [_BitmojiEditorReadyContext()]
+
+
 class _SessionStateFlow(BitmojiCreator):
     def __init__(self, contexts):
         self._contexts = list(contexts)
@@ -127,6 +157,51 @@ class _SessionStateFlow(BitmojiCreator):
         return False
 
     async def get_editor_context(self):
+        return None
+
+    async def get_bitmoji_proxy_failure_signal(self, extra_error=""):
+        return ""
+
+
+class _TransientEditorFlow(BitmojiCreator):
+    LOGIN_WITH_SNAPCHAT_SELECTORS = []
+    OAUTH_CONTINUE_SELECTORS = []
+
+    def __init__(self):
+        self._contexts = [_BitmojiSdkChromeErrorContext()]
+        self.page = _ReloadingBitmojiPage(self)
+        self.long_wait_seconds = 1
+        self.logger = None
+        self.last_result = "normal"
+
+    async def wait_if_paused(self):
+        return None
+
+    async def human_delay(self, *a, **k):
+        return None
+
+    async def detect_authorization_error(self):
+        return False
+
+    async def wait_for_account_home_heading(self, timeout_ms=3000):
+        return False
+
+    async def get_contexts(self):
+        return self._contexts
+
+    async def is_account_home_context(self, ctx):
+        return False
+
+    async def is_editor_context(self, ctx):
+        return bool(getattr(ctx, "is_editor", False))
+
+    async def get_editor_context(self):
+        return self._contexts[0] if self._contexts else None
+
+    async def find_female_avatar_locator(self, ctx):
+        return None
+
+    async def find_oauth_continue_locator(self, ctx):
         return None
 
     async def get_bitmoji_proxy_failure_signal(self, extra_error=""):
@@ -223,6 +298,21 @@ class OAuthConsentStateTests(unittest.TestCase):
         cleared = asyncio.run(flow.is_oauth_continue_cleared())
 
         self.assertTrue(cleared)
+
+
+class BitmojiTransientLoadErrorTests(unittest.TestCase):
+    def test_wait_for_initial_page_signal_rejects_sdk_chrome_error_page(self):
+        flow = _SessionStateFlow([_BitmojiSdkChromeErrorContext()])
+
+        with self.assertRaisesRegex(Exception, "Bitmoji transient load error"):
+            asyncio.run(flow.wait_for_initial_page_signal(timeout_ms=10, detect_proxy_failure=False))
+
+    def test_wait_for_editor_refreshes_sdk_chrome_error_page(self):
+        flow = _TransientEditorFlow()
+
+        asyncio.run(flow.wait_for_editor())
+
+        self.assertEqual(flow.page.reload_calls, 1)
 
 
 class _AutoLoginFlow(BitmojiInteractionMixin):

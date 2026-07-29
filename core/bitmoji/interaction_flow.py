@@ -18,11 +18,24 @@ AUTHORIZATION_ERROR_TOKENS = (
     "authorization error",
 )
 
+BITMOJI_TRANSIENT_LOAD_ERROR_URL_TOKENS = (
+    "bitmoji.com/avatar/create",
+    "sdk.bitmoji.com/web-builder",
+)
+BITMOJI_TRANSIENT_LOAD_ERROR_TEXT_TOKENS = (
+    "might be temporarily down",
+    "moved permanently to a new web address",
+)
+
 
 class BannedSnapError(Exception):
     """Raised when the Bitmoji flow detects a banned/locked Snapchat account
     (Snapchat OAuth ``Authorization Error``). The runner marks the row banned on
     SnapBoard and proceeds to the next AdsPower profile instead of retrying."""
+
+
+class BitmojiTransientLoadError(Exception):
+    """Raised when Chrome rendered a transient Bitmoji load-error page."""
 
 
 class BitmojiInteractionMixin:
@@ -107,6 +120,13 @@ class BitmojiInteractionMixin:
         states browser-wide priority before falling back to login.
         """
         contexts = list(contexts or [])
+
+        for ctx in contexts:
+            try:
+                if await self.is_bitmoji_transient_load_error_context(ctx):
+                    return "TRANSIENT_LOAD_ERROR"
+            except Exception:
+                continue
 
         for ctx in contexts:
             try:
@@ -262,6 +282,81 @@ class BitmojiInteractionMixin:
             return await ctx.evaluate("() => document.body ? document.body.innerText : ''")
         except Exception:
             return ""
+
+    async def is_bitmoji_transient_load_error_context(self, ctx):
+        try:
+            current_url = (ctx.url or "").strip().lower()
+        except Exception:
+            current_url = ""
+
+        if not any(token in current_url for token in BITMOJI_TRANSIENT_LOAD_ERROR_URL_TOKENS):
+            return False
+
+        text = (await self.get_context_text(ctx) or "").strip().lower()
+        if not text:
+            return False
+
+        if not any(token in text for token in BITMOJI_TRANSIENT_LOAD_ERROR_TEXT_TOKENS):
+            return False
+
+        return "the webpage at" in text or "sdk.bitmoji.com/web-builder" in text
+
+    async def get_bitmoji_transient_load_error_signal(self, contexts=None):
+        try:
+            scan_contexts = list(contexts if contexts is not None else await self.get_contexts())
+        except Exception:
+            scan_contexts = []
+
+        for ctx in scan_contexts:
+            try:
+                if not await self.is_bitmoji_transient_load_error_context(ctx):
+                    continue
+                try:
+                    current_url = (ctx.url or "").strip()
+                except Exception:
+                    current_url = ""
+                return f"Chrome transient load error at {current_url or 'unknown Bitmoji context'}"
+            except Exception:
+                continue
+
+        return ""
+
+    async def refresh_bitmoji_transient_load_error(self, where="", contexts=None):
+        signal = await self.get_bitmoji_transient_load_error_signal(contexts)
+        if not signal:
+            return False
+
+        if self.logger:
+            self.logger.warning(
+                f"Bitmoji transient load error detected"
+                f"{f' {where}' if where else ''}; refreshing page. signal={signal}"
+            )
+
+        target = getattr(self, "page", None)
+        if target is None:
+            try:
+                for ctx in list(contexts or []):
+                    if hasattr(ctx, "reload"):
+                        target = ctx
+                        break
+            except Exception:
+                target = None
+
+        if target is None:
+            return False
+
+        try:
+            await target.reload(timeout=30000, wait_until="domcontentloaded")
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(
+                    f"Refreshing Bitmoji transient load error failed"
+                    f"{f' {where}' if where else ''}: {exc}"
+                )
+            return False
+
+        await asyncio.sleep(0.8)
+        return True
 
     async def get_bitmoji_proxy_failure_signal(self, extra_error=""):
         signal = detect_proxy_failure_signal(error=extra_error)
@@ -1227,6 +1322,11 @@ class BitmojiInteractionMixin:
 
                 contexts = await self.get_contexts()
                 state = await self.prioritized_session_state_from_contexts(contexts)
+                if state == "TRANSIENT_LOAD_ERROR":
+                    signal = await self.get_bitmoji_transient_load_error_signal(contexts)
+                    raise BitmojiTransientLoadError(
+                        f"Bitmoji transient load error: {signal or 'Chrome error page'}"
+                    )
                 if state != "UNKNOWN":
                     return state
 
@@ -1247,6 +1347,8 @@ class BitmojiInteractionMixin:
                                 return "LOGIN"
                     except Exception:
                         continue
+            except BitmojiTransientLoadError:
+                raise
             except Exception:
                 pass
 
@@ -1261,8 +1363,15 @@ class BitmojiInteractionMixin:
 
         try:
             fallback_state = await self.check_session_state(fast=True)
+            if fallback_state == "TRANSIENT_LOAD_ERROR":
+                signal = await self.get_bitmoji_transient_load_error_signal()
+                raise BitmojiTransientLoadError(
+                    f"Bitmoji transient load error: {signal or 'Chrome error page'}"
+                )
             if fallback_state != "UNKNOWN":
                 return fallback_state
+        except BitmojiTransientLoadError:
+            raise
         except Exception:
             pass
 
@@ -1295,6 +1404,8 @@ class BitmojiInteractionMixin:
             if "bitmoji.com/home" in current_url:
                 return "ACCOUNT_HOME"
             if "sdk.bitmoji.com/web-builder" in current_url:
+                if await self.is_bitmoji_transient_load_error_context(ctx):
+                    continue
                 return "EDITOR"
             if "accounts.snapchat.com/accounts/oauth2" in current_url:
                 return "CONTINUE"
@@ -1303,6 +1414,8 @@ class BitmojiInteractionMixin:
             if "bitmoji.com/login" in current_url:
                 return "LOGIN_REDIRECT"
             if "bitmoji.com/avatar/create" in current_url:
+                if await self.is_bitmoji_transient_load_error_context(ctx):
+                    continue
                 return "GENDER"
 
         return "UNKNOWN"
@@ -1391,6 +1504,15 @@ class BitmojiInteractionMixin:
                 return await self.wait_for_initial_page_signal(timeout_ms=min(8000, self.page_load_timeout_ms))
             except BitmojiProxyFailureError as exc:
                 return await self.wait_for_bitmoji_proxy_recovery(url, initial_signal=str(exc))
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"Attached Bitmoji page was not interactive; refreshing before opening a fresh page: {exc}"
+                    )
+                try:
+                    await self.page.reload(timeout=30000, wait_until="domcontentloaded")
+                except Exception:
+                    pass
 
         self.page = await self.context.new_page()
         last_error = None

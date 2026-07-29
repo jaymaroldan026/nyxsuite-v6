@@ -1,5 +1,26 @@
 # Changelog
 
+## 6.4.7 - Signup and Bitmoji transient refresh recovery
+
+### Nyxify: recover disabled submit states faster when reCAPTCHA is missing
+- When Snapchat's "Agree and Continue" stays disabled and no visible reCAPTCHA
+  badge/iframe is present, Nyxify now waits only one second before refreshing
+  and refilling the signup form.
+- The reCAPTCHA detector now counts only visible widgets, so a background
+  `window.grecaptcha` loader no longer prevents the fast refresh path.
+- Repeated disabled-submit refreshes still use the existing cleanup/retry budget
+  so persistent failures delete the AdsPower profile, rotate/requeue, and create
+  a fresh profile.
+
+### Nyx: refresh Bitmoji SDK Chrome error pages
+- Chrome's Bitmoji SDK "webpage temporarily down / moved permanently" page is
+  now treated as a transient load error instead of being misclassified as the
+  avatar editor from the `sdk.bitmoji.com/web-builder` URL alone.
+- Nyx refreshes that Bitmoji load-error page up to three times while opening the
+  editor, after OAuth, and while waiting for the editor UI.
+- Added regression coverage for captchaless signup submit recovery, visible
+  reCAPTCHA detection, and Bitmoji SDK transient-load refreshes.
+
 ## 6.4.6 - Nyxmoji cute outfit preset
 
 ### Nyxmoji: curated cute/seductive preset combinations
