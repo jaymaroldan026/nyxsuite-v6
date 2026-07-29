@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.4.8 - Post-warmup tab cleanup before signup
+
+### Nyxify: prune unrelated browser tabs after cookie warm-up
+- After cookie warm-up completes, Nyxify now closes every non-AdsPower browser
+  tab before opening Snapchat signup.
+- The cleanup preserves `start.adspower.net` AdsPower tabs so the profile stays
+  anchored while stale warm-up, extension, or random website tabs are removed.
+- Added regression coverage for the warm-up -> tab cleanup -> signup handoff
+  ordering and the "keep AdsPower, close unrelated tabs" rule.
+
 ## 6.4.7 - Signup and Bitmoji transient refresh recovery
 
 ### Nyxify: recover disabled submit states faster when reCAPTCHA is missing

@@ -16,6 +16,7 @@ hide_macos_dock_icon()
 
 from core.adspower import AdsPowerManager
 from core.adspower_extension_cleanup import (
+    clear_unrelated_tabs_except_adspower,
     disable_profile_extensions,
     open_snapchat_signup,
     warm_ads_profile_cookies,
@@ -1357,6 +1358,7 @@ async def process_task(task, store, adspower):
         last_step = "cookie_warmup"
         store.update_task_state(task_id, last_step=last_step)
         await warm_ads_profile_cookies(context, logger, created.get("profile_id"))
+        await clear_unrelated_tabs_except_adspower(context, logger, created.get("profile_id"))
 
         last_step = "signup_handoff"
         store.update_task_state(task_id, last_step=last_step)

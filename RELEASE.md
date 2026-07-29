@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.8
+
+- Nyxify now clears unrelated browser tabs immediately after cookie warm-up and
+  before the Snapchat signup handoff.
+- The post-warmup cleanup keeps `start.adspower.net` AdsPower tabs open, while
+  closing stale warm-up pages, extension tabs, and other unrelated pages.
+- Signup now starts from a cleaner AdsPower browser state, reducing the chance
+  that stale tabs interfere with the handoff.
+- Added regression coverage for the exact warm-up -> cleanup -> signup ordering
+  and for preserving the AdsPower tab while closing unrelated tabs.
+
 ### NyxSuite v6.4.7
 
 - Nyxify now refreshes the signup form after one second when "Agree and

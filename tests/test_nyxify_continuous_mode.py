@@ -260,7 +260,16 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
                 "signup_url": "",
             }
 
+        async def fake_warmup(*_args, **_kwargs):
+            events.append("cookie_warmup")
+            return await _fake_warmup(*_args, **_kwargs)
+
+        async def fake_clear_tabs(*_args, **_kwargs):
+            events.append("clear_tabs")
+            return {"closed": 0, "kept": 1}
+
         async def fake_open_signup(*_args, **_kwargs):
+            events.append("open_signup")
             return {
                 "page": context.signup_page,
                 "url": "https://accounts.snapchat.com/v2/signup",
@@ -271,7 +280,8 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(nyxify_runner, "load_nyxify_config", return_value=config), \
                 mock.patch.object(nyxify_runner, "_rotate_proxy_until_usable", side_effect=_fake_rotate_proxy), \
                 mock.patch.object(nyxify_runner, "disable_profile_extensions", side_effect=fake_disable_extensions), \
-                mock.patch.object(nyxify_runner, "warm_ads_profile_cookies", side_effect=_fake_warmup), \
+                mock.patch.object(nyxify_runner, "warm_ads_profile_cookies", side_effect=fake_warmup), \
+                mock.patch.object(nyxify_runner, "clear_unrelated_tabs_except_adspower", side_effect=fake_clear_tabs, create=True), \
                 mock.patch.object(nyxify_runner, "open_snapchat_signup", side_effect=fake_open_signup), \
                 mock.patch.object(nyxify_runner, "perform_snapchat_signup", side_effect=signup_side_effect), \
                 mock.patch.object(nyxify_runner, "_wait_for_snapboard_update", side_effect=_fake_snapboard_wait), \
@@ -301,6 +311,15 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(steps.index(prep_step), steps.index("cookie_warmup"))
         self.assertLess(steps.index("cookie_warmup"), steps.index("signup_handoff"))
         self.assertLess(steps.index("signup_handoff"), steps.index("signup_opened"))
+
+    async def test_unrelated_tabs_are_cleared_after_cookie_warmup_before_signup(self):
+        _store, _adspower, _handoffs, events = await self._run_task(
+            True,
+            capture_events=True,
+        )
+
+        self.assertLess(events.index("cookie_warmup"), events.index("clear_tabs"))
+        self.assertLess(events.index("clear_tabs"), events.index("open_signup"))
 
     async def test_continuous_mode_renames_queues_nyx_and_does_not_close(self):
         store, adspower, handoffs = await self._run_task(True)

@@ -148,6 +148,24 @@ class CookieWarmupOrderingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(warmup_pages), 3)
         self.assertTrue(all(page.closed for page in warmup_pages))
 
+    async def test_post_warmup_cleanup_keeps_adspower_and_closes_unrelated_tabs(self):
+        adspower_page = _WarmupPage("https://start.adspower.net/?id=k1abc")
+        old_tab = _WarmupPage("https://example.com/")
+        extension_tab = _WarmupPage("chrome://extensions/")
+        context = _WarmupContext([old_tab, adspower_page, extension_tab])
+
+        result = await adspower_extension_cleanup.clear_unrelated_tabs_except_adspower(
+            context,
+            logger=None,
+            profile_id="k1abc",
+        )
+
+        self.assertFalse(adspower_page.closed)
+        self.assertTrue(old_tab.closed)
+        self.assertTrue(extension_tab.closed)
+        self.assertEqual(result["closed"], 2)
+        self.assertEqual(result["kept"], 1)
+
     async def test_cookie_warmup_worker_failure_does_not_stop_other_sites(self):
         calls = []
 

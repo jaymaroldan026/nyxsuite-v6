@@ -111,6 +111,10 @@ def _is_snapchat_signup_url(url):
     return "accounts.snapchat.com/v2/signup" in str(url or "")
 
 
+def _is_adspower_start_url(url):
+    return "start.adspower.net" in str(url or "").strip().lower()
+
+
 def _format_context_page_snapshot(context):
     pages = []
     for index, page in enumerate(getattr(context, "pages", []) or []):
@@ -499,6 +503,37 @@ async def _safe_close_page(page):
                 await asyncio.wait_for(page.close(), timeout=8)
     except Exception:
         pass
+
+
+async def clear_unrelated_tabs_except_adspower(context, logger=None, profile_id=""):
+    closed_urls = []
+    kept_urls = []
+
+    for page in list(getattr(context, "pages", []) or []):
+        try:
+            page_url = str(page.url or "")
+        except Exception:
+            page_url = ""
+
+        if _is_adspower_start_url(page_url):
+            kept_urls.append(page_url)
+            continue
+
+        await _safe_close_page(page)
+        closed_urls.append(page_url or "<unknown>")
+
+    if logger and closed_urls:
+        logger.info(
+            f"Cleared unrelated tabs before signup for AdsPower profile {profile_id}: "
+            f"closed={len(closed_urls)}, kept_adspower={len(kept_urls)}"
+        )
+
+    return {
+        "closed": len(closed_urls),
+        "kept": len(kept_urls),
+        "closed_urls": closed_urls,
+        "kept_urls": kept_urls,
+    }
 
 
 def _auto_dismiss_dialogs(page, logger=None, profile_id="", site_url=""):
