@@ -24,7 +24,7 @@ DEFAULTS = {
     "adspower_port": "",
 }
 
-VALID_OUTFIT_STYLES = {"default", "mixed", "casual", "sexy", "no_dresses"}
+VALID_OUTFIT_STYLES = {"default", "mixed", "casual", "sexy", "no_dresses", "cute_preset"}
 VALID_HUBSTAFF_STOP_MODES = {"queue_finished", "timer"}
 VALID_ADSPOWER_CONTROL_MODES = {"auto", "api", "gui"}
 

@@ -678,7 +678,7 @@ function renderNyxAdvanced() {
       <label class="adv-field"><span>Max parallel</span><input id="cfg-max_parallel_profiles" class="input" value="${escapeAttr(v.max_parallel_profiles || 5)}"></label>
       <label class="adv-field"><span>Automation speed (%)</span><input id="cfg-automation_speed" class="input" type="number" min="5" max="100" value="${escapeAttr(Math.round((Number(v.automation_speed) || 1) * 50))}"></label>
       <label class="adv-field"><span>Outfit style</span><select id="cfg-outfit_style" class="input">
-        ${opt("default", "Default")}${opt("mixed", "Mixed")}${opt("casual", "Casual")}${opt("sexy", "Sexy")}${opt("no_dresses", "No Dresses")}
+        ${opt("default", "Default")}${opt("mixed", "Mixed")}${opt("casual", "Casual")}${opt("sexy", "Sexy")}${opt("no_dresses", "No Dresses")}${opt("cute_preset", "Cute Preset")}
       </select></label>
       <div class="adv-field toggle-row"><span class="toggle-text">Hair randomizer</span><label class="toggle-switch"><input id="cfg-hair_randomizer_enabled" type="checkbox" ${v.hair_randomizer_enabled ? "checked" : ""}><span class="toggle-slider"></span></label></div>
 

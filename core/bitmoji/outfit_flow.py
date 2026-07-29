@@ -564,6 +564,21 @@ class BitmojiOutfitMixin:
             return entry
         return {"selector": entry}
 
+    def outfit_preferred_color_for_selection(self, requested_entry, selected_entry):
+        """Return colour metadata that belongs to the garment actually clicked."""
+        requested = self.normalize_outfit_entry(requested_entry)
+        selected = self.normalize_outfit_entry(selected_entry)
+        if selected.get("known") is False:
+            return None
+
+        requested_selector = str(requested.get("selector") or "")
+        selected_selector = str(selected.get("selector") or "")
+        if selected_selector and selected_selector != requested_selector:
+            return selected.get("preferred_color")
+        if "preferred_color" in selected:
+            return selected.get("preferred_color")
+        return requested.get("preferred_color")
+
     def extract_src_fragments(self, selector):
         if isinstance(selector, dict):
             selector = selector.get("selector", "")
@@ -1544,7 +1559,7 @@ class BitmojiOutfitMixin:
             )
             await self.pick_configured_color_option(
                 profile_id, model, ("dresses",), outfit_seed,
-                preferred_color=dress_entry.get("preferred_color"),
+                preferred_color=self.outfit_preferred_color_for_selection(dress_entry, selected_dress),
                 selected_option_id=self.outfit_option_id_from_selector(selected_dress, "dresses"),
             )
         else:
@@ -1561,7 +1576,7 @@ class BitmojiOutfitMixin:
             await self.enable_tuck_if_available()
             await self.pick_configured_color_option(
                 profile_id, model, ("tops", "outfits"), outfit_seed,
-                preferred_color=top_entry.get("preferred_color"),
+                preferred_color=self.outfit_preferred_color_for_selection(top_entry, selected_top),
                 selected_option_id=self.outfit_option_id_from_selector(selected_top, "tops"),
             )
             report("outfit_bottom")
@@ -1573,7 +1588,7 @@ class BitmojiOutfitMixin:
             )
             await self.pick_configured_color_option(
                 profile_id, model, ("bottoms",), outfit_seed,
-                preferred_color=bottom_entry.get("preferred_color"),
+                preferred_color=self.outfit_preferred_color_for_selection(bottom_entry, selected_bottom),
                 selected_option_id=self.outfit_option_id_from_selector(selected_bottom, "bottoms"),
             )
 
@@ -1588,7 +1603,7 @@ class BitmojiOutfitMixin:
         )
         await self.pick_configured_color_option(
             profile_id, model, ("footwear",), outfit_seed,
-            preferred_color=shoe_entry.get("preferred_color"),
+            preferred_color=self.outfit_preferred_color_for_selection(shoe_entry, selected_shoes),
             selected_option_id=self.outfit_option_id_from_selector(selected_shoes, "footwear"),
         )
         await self.human_delay()
@@ -1679,7 +1694,7 @@ class BitmojiOutfitMixin:
             if fallback_param and blocked and any(f"{fallback_param}={bid}" in text for bid in blocked):
                 continue
             seen.add(text)
-            alternates.append(text)
+            alternates.append((text, entry))
 
         if not alternates:
             return False
@@ -1692,7 +1707,7 @@ class BitmojiOutfitMixin:
         await self.reset_editor_panel_scroll(ctx)
         await self.wait_for_category_items(ctx)
 
-        for selector in alternates:
+        for selector, entry in alternates:
             try:
                 await self.safe_click(selector, profile_id, retries=1)
                 if self.logger:
@@ -1700,7 +1715,7 @@ class BitmojiOutfitMixin:
                         f"[{profile_id}] Configured item unavailable in catalog; "
                         f"selected another item from the same pool as fallback."
                     )
-                return selector
+                return entry if isinstance(entry, dict) else selector
             except Exception as exc:
                 if self.logger:
                     self.logger.warning(f"[{profile_id}] Pool fallback candidate failed: {exc}")
@@ -1772,14 +1787,16 @@ class BitmojiOutfitMixin:
             return False
 
         preferred_parts = []
+        preferred_hex = ""
         if isinstance(preferred_color, dict):
             preferred_parts = [
                 str(part) for part in preferred_color.get("background_contains", []) if str(part)
             ]
+            preferred_hex = str(preferred_color.get("hex") or "").strip()
         seed_source = str(outfit_seed).strip() or f"{profile_id}:{random.random()}"
         try:
             clicked = await ctx.evaluate(
-                r"""({ seed, preferredParts }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+                r"""({ seed, preferredParts, preferredHex }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
                     if (!activePanel) return false;
                     const isVisible = (el) => {
                         if (!el) return false;
@@ -1817,6 +1834,32 @@ class BitmojiOutfitMixin:
                         return h > 0.15 && h < 0.45 && s > 0.55 && l > 0.3;
                     };
 
+                    const toRGB = (value) => {
+                        let hex = String(value || '').trim().replace(/^#/, '');
+                        if (hex.length === 3) hex = hex.split('').map((char) => char + char).join('');
+                        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+                        return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+                    };
+                    const parseRGB = (value) => {
+                        const parts = String(value || '').match(/\d+/g);
+                        return parts && parts.length >= 3 ? parts.slice(0, 3).map(Number) : null;
+                    };
+                    const preferredByHex = (() => {
+                        const want = toRGB(preferredHex);
+                        if (!want) return null;
+                        let best = null;
+                        let bestDistance = Infinity;
+                        for (const option of options) {
+                            const rgb = parseRGB(getComputedStyle(option).backgroundColor || '');
+                            if (!rgb) continue;
+                            const distance = (rgb[0] - want[0]) ** 2 + (rgb[1] - want[1]) ** 2 + (rgb[2] - want[2]) ** 2;
+                            if (distance < bestDistance) {
+                                best = option;
+                                bestDistance = distance;
+                            }
+                        }
+                        return best && bestDistance <= 1600 ? best : null;
+                    })();
                     const preferred = options.find((option) => {
                         if (!preferredParts.length) return false;
                         const inlineBackground = option.style.background || '';
@@ -1825,7 +1868,7 @@ class BitmojiOutfitMixin:
                         return preferredParts.every((part) => background.includes(part));
                     });
                     const eligible = options.filter((option) => !isNeon(option));
-                    const selected = preferred || eligible[(() => {
+                    const selected = preferredByHex || preferred || eligible[(() => {
                         if (!eligible.length) return -1;
                         let hash = 2166136261;
                         for (const char of String(seed)) {
@@ -1839,7 +1882,7 @@ class BitmojiOutfitMixin:
                     selected.click();
                     return true;
                 }""",
-                {"seed": seed_source, "preferredParts": preferred_parts},
+                {"seed": seed_source, "preferredParts": preferred_parts, "preferredHex": preferred_hex},
             )
         except Exception:
             return False
@@ -1868,6 +1911,48 @@ class BitmojiOutfitMixin:
         count = len(visible_options)
         if count == 0:
             return False
+
+        preferred_hex = ""
+        if isinstance(preferred_color, dict):
+            preferred_hex = str(preferred_color.get("hex") or "").strip()
+        if preferred_hex:
+            best_option = None
+            best_distance = None
+            for index in range(count):
+                try:
+                    option = visible_options[index]
+                    distance = await option.evaluate(
+                        """(el, targetHex) => {
+                            const toRGB = (value) => {
+                                let hex = String(value || '').trim().replace(/^#/, '');
+                                if (hex.length === 3) hex = hex.split('').map((char) => char + char).join('');
+                                if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+                                return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+                            };
+                            const parse = (value) => {
+                                const parts = String(value || '').match(/\\d+/g);
+                                return parts && parts.length >= 3 ? parts.slice(0, 3).map(Number) : null;
+                            };
+                            const want = toRGB(targetHex);
+                            const actual = parse(window.getComputedStyle(el).backgroundColor || '');
+                            if (!want || !actual) return null;
+                            return (actual[0] - want[0]) ** 2 + (actual[1] - want[1]) ** 2 + (actual[2] - want[2]) ** 2;
+                        }""",
+                        preferred_hex,
+                    )
+                    if distance is None:
+                        continue
+                    if best_distance is None or distance < best_distance:
+                        best_distance = distance
+                        best_option = option
+                except Exception:
+                    continue
+            if best_option is not None and best_distance is not None and best_distance <= 1600:
+                await best_option.scroll_into_view_if_needed(timeout=4000)
+                await self.human_delay(0.2, 0.5, kind="think")
+                await best_option.click()
+                await self.human_delay(0.3, 0.7, kind="think")
+                return True
 
         if preferred_color and preferred_color.get("background_contains"):
             required_parts = preferred_color.get("background_contains", [])
@@ -2022,7 +2107,14 @@ class BitmojiOutfitMixin:
                         f"{selected_option_id}"
                     )
                 return False
-            return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
+            preferred_hex_requested = (
+                isinstance(preferred_color, dict)
+                and bool(str(preferred_color.get("hex") or "").strip())
+            )
+            return await self.pick_random_color_option(
+                profile_id, outfit_seed, preferred_color=preferred_color,
+                active_panel_only=preferred_hex_requested,
+            )
 
         preserve_verified_configured_colour = (
             selected_item_is_verified_color_capable and configured_colour_requested

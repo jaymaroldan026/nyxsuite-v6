@@ -207,6 +207,66 @@ console.log(JSON.stringify({{ready: eval(`(${{readySource}})`)()}}));
         )
         self.assertFalse(json.loads(completed.stdout)["ready"])
 
+    async def test_active_panel_random_colour_honours_preferred_hex(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is required for the preferred hex colour picker regression")
+
+        class PreferredHexCtx:
+            def __init__(self):
+                self.observed = None
+
+            async def evaluate(self, source, arg=None):
+                harness = f"""
+const source = {json.dumps(source)};
+const arg = {json.dumps(arg or {})};
+class Option {{
+  constructor(name, color) {{ this.name = name; this.color = color; this.clicks = 0; }}
+  getBoundingClientRect() {{ return {{width:20,height:20,bottom:20,right:20}}; }}
+  scrollIntoView() {{}}
+  click() {{ this.clicks += 1; }}
+}}
+class Picker {{
+  constructor(options) {{ this.options = options; }}
+  getBoundingClientRect() {{ return {{width:100,height:40,bottom:40,right:100}}; }}
+  querySelectorAll(query) {{ return query.includes('colour-picker-option') ? this.options : []; }}
+}}
+class Panel {{
+  constructor(picker) {{ this.picker = picker; }}
+  getBoundingClientRect() {{ return {{width:300,height:300,bottom:300,right:300}}; }}
+  querySelectorAll(query) {{
+    if (query.includes('colour-picker-container') || query.includes('.colour-picker')) return [this.picker];
+    return [];
+  }}
+}}
+const blue = new Option('blue', 'rgb(48, 115, 183)');
+const pink = new Option('pink', 'rgb(255, 154, 173)');
+const activePanel = new Panel(new Picker([blue, pink]));
+globalThis.document = {{
+  querySelectorAll(query) {{
+    if (query === '[data-nyx-active]') return [activePanel];
+    return [];
+  }},
+}};
+globalThis.getComputedStyle = (element) => ({{backgroundColor: element.color || '', background: element.color || ''}});
+const clicked = eval(`(${{source}})`)(arg);
+console.log(JSON.stringify({{clicked, blue: blue.clicks, pink: pink.clicks}}));
+"""
+                completed = await asyncio.to_thread(
+                    subprocess.run, [node, "-e", harness], check=True, text=True, capture_output=True,
+                )
+                self.observed = json.loads(completed.stdout)
+                return self.observed["clicked"]
+
+        ctx = PreferredHexCtx()
+        stub = _StubColor(ctx)
+        result = await stub._pick_random_color_option_from_active_panel(
+            "p1", "seed", preferred_color={"hex": "#ff9aad"}, ctx=ctx,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(ctx.observed, {"clicked": True, "blue": 0, "pink": 1})
+
     async def test_verified_configured_colour_does_not_fallback_when_active_picker_is_absent(self):
         ctx = _AbsentPanelPickerCtx()
         stub = _StubColor(ctx)
@@ -424,6 +484,22 @@ console.log(JSON.stringify({{ready, fallback, stale: staleOption.clicks}}));
         self.assertTrue(stub.random_called)
         self.assertEqual(stub.random_scope, (False, None))
         self.assertEqual(ctx.evaluated, [])  # never opened the colour wheel
+
+    async def test_preset_preferred_hex_uses_active_panel_when_no_model_colour_exists(self):
+        ctx = _FakeCtx(clicked=True)
+        stub = _StubColor(ctx)
+        preferred = {"hex": "#ff9aad"}
+        with mock.patch("core.bitmoji_config.load_models", return_value={}), \
+             mock.patch("core.bitmoji_config.resolve_option_color", return_value=None):
+            result = await stub.pick_configured_color_option(
+                "p1", "M", "tops", "seed", preferred_color=preferred,
+            )
+
+        self.assertEqual(result, "RANDOM")
+        self.assertTrue(stub.random_called)
+        self.assertEqual(stub.random_scope, (True, None))
+        self.assertEqual(stub.random_args, ("p1", "seed", preferred))
+        self.assertEqual(ctx.evaluated, [])
 
     async def test_string_feature_is_accepted(self):
         ctx = _FakeCtx(clicked=True)

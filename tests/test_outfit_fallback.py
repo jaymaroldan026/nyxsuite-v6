@@ -64,6 +64,7 @@ class _StubApplyOutfit(BitmojiOutfitMixin):
         self.logger = None
         self.selected_selectors = selected_selectors
         self.color_calls = []
+        self.preferred_color_calls = []
 
     async def wait_if_paused(self):
         return None
@@ -77,6 +78,7 @@ class _StubApplyOutfit(BitmojiOutfitMixin):
     async def pick_configured_color_option(self, profile_id, model, features, outfit_seed="", preferred_color=None,
                                            selected_option_id=None):
         self.color_calls.append((features, selected_option_id))
+        self.preferred_color_calls.append((features, preferred_color))
         return True
 
     async def human_delay(self, *args, **kwargs):
@@ -271,6 +273,25 @@ class OutfitFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ok, stub.clicked_items[0])
         # And it never resorted to the any-catalog net.
         self.assertEqual(stub.catalog_fallback_calls, [])
+
+    async def test_pool_fallback_preserves_entry_metadata(self):
+        fallback_entry = {
+            "selector": "top=alt",
+            "preferred_color": {"hex": "#ff9aad"},
+        }
+        pool = [
+            {"selector": "top=chosen", "preferred_color": {"hex": "#111111"}},
+            fallback_entry,
+        ]
+        stub = _StubOutfit(missing_selectors={"top=chosen"})
+        with mock.patch.object(outfit_flow, "_OUTFIT_ALLOW_FALLBACK", True):
+            selected = await stub._apply_outfit_piece(
+                "categories.tops", "top=chosen", "prof1",
+                fallback_param="top", fallback_pool=pool,
+            )
+
+        self.assertEqual(selected, fallback_entry)
+        self.assertEqual(stub.clicked_items, ["top=alt"])
 
     async def test_pool_fallback_is_deterministic_per_profile(self):
         pool = ["x=chosen", "x=a", "x=b", "x=c", "x=d"]
@@ -512,6 +533,33 @@ console.log(JSON.stringify({{resolved}}));
             (("bottoms",), "bottom-selected"),
             (("footwear",), "shoe-selected"),
         ])
+
+    async def test_apply_outfit_uses_selected_fallback_preferred_colour_metadata(self):
+        fallback_top = {
+            "selector": build_selector("tops", "top-fallback"),
+            "preferred_color": {"hex": "#ff9aad"},
+        }
+        stub = _StubApplyOutfit({
+            "categories.tops": fallback_top,
+            "categories.bottoms": build_selector("bottoms", "bottom-selected"),
+            "categories.footwear": build_selector("footwear", "shoe-selected"),
+        })
+        outfit = {
+            "mode": "separates",
+            "top": {
+                "selector": build_selector("tops", "top-requested"),
+                "preferred_color": {"hex": "#111111"},
+            },
+            "bottom": "bottom=requested",
+            "shoes": "footwear=requested",
+        }
+        with mock.patch.object(outfit_flow, "generate_outfit", return_value=outfit):
+            await stub.apply_outfit("profile-1", "M", "seed")
+
+        self.assertEqual(stub.preferred_color_calls[0], (
+            ("tops", "outfits"),
+            {"hex": "#ff9aad"},
+        ))
 
     async def test_catalog_net_used_when_pool_exhausted_and_enabled(self):
         # Whole pool retired; the opt-in catalog net dresses the avatar so the

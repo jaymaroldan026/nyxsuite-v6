@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.4.6 - Nyxmoji cute outfit preset
+
+### Nyxmoji: curated cute/seductive preset combinations
+- Added a new `cute_preset` outfit style with 40 curated silhouettes expanded
+  across three coordinated colorways: soft cute, seductive classic, and pretty
+  casual.
+- The preset now randomly chooses from 120 catalog-backed looks while keeping
+  existing default, mixed, casual, sexy, and no-dresses presets unchanged.
+- Cute preset colors are selected only from verified garment swatches, falling
+  back to the garment's natural color when a matching pretty color is not
+  available.
+- Tightened live color selection so preset preferred colors use the active
+  garment panel and fallback garment metadata instead of stale or mismatched
+  color pickers.
+
 ## 6.4.5 - Complete Nyxmoji apparel catalog
 
 ### Nyxmoji: apparel selectors now cover the full live Bitmoji inventory

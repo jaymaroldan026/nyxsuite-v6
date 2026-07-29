@@ -9,6 +9,19 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.6
+
+- Added a new Nyxmoji `cute_preset` outfit style with 40 curated cute/seductive
+  silhouettes expanded into 120 total looks across soft cute, seductive classic,
+  and pretty casual colorways.
+- Cute preset garments use only catalog-backed selectors and verified swatch
+  colors, leaving pieces in their natural color when a matching pretty color is
+  not available.
+- Existing outfit presets remain unchanged while the dashboard now exposes
+  "Cute Preset" as an outfit style option.
+- Live color application now scopes preferred preset colors to the active
+  garment panel and preserves fallback garment color metadata.
+
 ### NyxSuite v6.4.5
 
 - Completed the Nyxmoji apparel catalog from the real Bitmoji editor, expanding
