@@ -118,6 +118,21 @@ class _BitmojiEditorReadyContext:
     is_editor = True
 
 
+class _ClickableGenderLocator:
+    def __init__(self, flow):
+        self.flow = flow
+
+    async def scroll_into_view_if_needed(self, *args, **kwargs):
+        return None
+
+    async def hover(self, *args, **kwargs):
+        return None
+
+    async def click(self, *args, **kwargs):
+        self.flow.gender_clicks += 1
+        return None
+
+
 class _ReloadingBitmojiPage:
     url = "https://www.bitmoji.com/avatar/create/?require_snapchat"
 
@@ -206,6 +221,21 @@ class _TransientEditorFlow(BitmojiCreator):
 
     async def get_bitmoji_proxy_failure_signal(self, extra_error=""):
         return ""
+
+
+class _TransientGenderFlow(_TransientEditorFlow):
+    def __init__(self):
+        super().__init__()
+        self.navigation_timeout_ms = 1000
+        self.gender_clicks = 0
+
+    async def find_female_avatar_locator(self, ctx):
+        if getattr(ctx, "is_editor", False):
+            return _ClickableGenderLocator(self)
+        return None
+
+    async def click_female_avatar_by_layout(self):
+        return False
 
 
 def _ctx(url):
@@ -313,6 +343,14 @@ class BitmojiTransientLoadErrorTests(unittest.TestCase):
         asyncio.run(flow.wait_for_editor())
 
         self.assertEqual(flow.page.reload_calls, 1)
+
+    def test_select_gender_refreshes_sdk_chrome_error_page(self):
+        flow = _TransientGenderFlow()
+
+        asyncio.run(flow.select_gender())
+
+        self.assertEqual(flow.page.reload_calls, 1)
+        self.assertEqual(flow.gender_clicks, 1)
 
 
 class _AutoLoginFlow(BitmojiInteractionMixin):

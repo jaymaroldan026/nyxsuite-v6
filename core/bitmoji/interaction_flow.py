@@ -1573,14 +1573,41 @@ class BitmojiInteractionMixin:
 
         target = None
         end_time = asyncio.get_event_loop().time() + min(12.0, (self.navigation_timeout_ms / 1000.0))
+        transient_load_retries = 0
+        max_transient_load_retries = 3
 
         while asyncio.get_event_loop().time() < end_time:
-            for ctx in await self.get_contexts():
+            contexts = await self.get_contexts()
+            for ctx in contexts:
                 target = await self.find_female_avatar_locator(ctx)
                 if target is not None:
                     break
             if target is not None:
                 break
+
+            signal = await self.get_bitmoji_transient_load_error_signal(contexts)
+            if signal:
+                if transient_load_retries >= max_transient_load_retries:
+                    raise Exception(
+                        "Bitmoji transient load error persisted while selecting gender "
+                        f"after {max_transient_load_retries} refreshes."
+                    )
+                transient_load_retries += 1
+                print(
+                    "Bitmoji transient load error while selecting gender "
+                    f"(refresh {transient_load_retries}/{max_transient_load_retries}); refreshing..."
+                )
+                refreshed = await self.refresh_bitmoji_transient_load_error(
+                    "while selecting gender",
+                    contexts,
+                )
+                if not refreshed:
+                    raise Exception("Bitmoji transient load error could not be refreshed.")
+                end_time = asyncio.get_event_loop().time() + min(
+                    12.0,
+                    (self.navigation_timeout_ms / 1000.0),
+                )
+                continue
             await asyncio.sleep(0.08)
 
         if target is None:
