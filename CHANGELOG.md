@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.4.4 - Nyxmoji live selector/catalog repair
+
+### Nyxmoji: selectors and colours now come from a complete live Bitmoji audit
+- Repaired the live scanner so every required clothing selector is validated
+  against the real Bitmoji editor before the catalog can be written.
+- Broadened exact garment selection to cover both mix-and-match tiles and
+  Bitmoji's outfit image tiles while keeping stale-panel and wrong-selector
+  protections.
+- Fixed virtualized colour picker enumeration/clicking and verified colour
+  variants through the selected garment's real body render params.
+- Regenerated `data/bitmoji_catalog.json` from a complete live AdsPower
+  `k1f2la8v` scan covering 40 features with zero garment audit errors.
+- Added regression coverage for AdsPower CDP fallback, selector matching,
+  colour swatch verification, and scanner restoration.
+
 ## 6.4.1 - Nyxify phone-step handoff speed
 
 ### Nyxify: skip stale signup-submit retries once Step 2 is visible

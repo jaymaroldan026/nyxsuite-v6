@@ -52,6 +52,97 @@ _OUTFIT_ALLOW_FALLBACK = os.getenv("NYX_OUTFIT_FALLBACK_ANY", "1").strip().lower
 _OUTFIT_ALLOW_CATALOG_FALLBACK = os.getenv("NYX_OUTFIT_FALLBACK_CATALOG", "0").strip().lower() in ("1", "true", "yes")
 
 
+# Every garment path resolves one active editor panel before inspecting tiles.
+# A non-scrollable panel is valid, but an ambiguous collection of generic
+# containers is unsafe: stale panels can contain the same tile ids.
+_OUTFIT_ACTIVE_PANEL_RESOLVER = r"""
+    const activePanel = (() => {
+        const currentSelectors = [
+            '#current-category.traits-container.scrollable',
+            '#current-category.fashion-traits-container.scrollable',
+            '#current-category'
+        ];
+        const genericSelectors = [
+            '[class*="traits-container"]',
+            '[class*="fashion-traits"]',
+            '[class*="avatar-builder-category-container"]',
+            '[class*="scrollable"]'
+        ];
+        const itemSelector = [
+            '.mix-and-match-container',
+            '[class*="mix-and-match-container"]',
+            '.facial-feature-wrapper[tabindex="0"]',
+            '.colour-picker-option'
+        ].join(', ');
+        const isVisible = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
+        };
+        const visiblePanels = (selectors, requireItems) => {
+            const panels = [];
+            const seen = new Set();
+            for (const selector of selectors) {
+                for (const panel of document.querySelectorAll(selector)) {
+                    if (!panel || seen.has(panel) || !isVisible(panel)) continue;
+                    seen.add(panel);
+                    if (requireItems && !Array.from(panel.querySelectorAll(itemSelector)).some(isVisible)) continue;
+                    panels.push(panel);
+                }
+            }
+            return panels;
+        };
+
+        const activePanels = visiblePanels(['[data-nyx-active]'], false);
+        if (activePanels.length === 1) return activePanels[0];
+        if (activePanels.length > 1) return null;
+
+        const currentPanels = visiblePanels(currentSelectors, false);
+        if (currentPanels.length === 1) return currentPanels[0];
+        if (currentPanels.length > 1) return null;
+
+        const genericPanels = visiblePanels(genericSelectors, true);
+        // Generic selectors can name nested wrappers around one actual panel.
+        // Keep only innermost candidates; sibling candidates remain ambiguous.
+        const innermost = genericPanels.filter((panel) => !genericPanels.some(
+            (other) => other !== panel && typeof panel.contains === 'function' && panel.contains(other)
+        ));
+        return innermost.length === 1 ? innermost[0] : null;
+    })();
+"""
+
+_OUTFIT_CATEGORY_ITEMS_READY = """() => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+    if (!activePanel) return false;
+    const isVisible = (el) => {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
+    };
+    const selector = [
+        '.mix-and-match-container',
+        '[class*="mix-and-match-container"]',
+        '.facial-feature-wrapper[tabindex="0"]',
+        '.colour-picker-option'
+    ].join(', ');
+    return Array.from(activePanel.querySelectorAll(selector)).some(isVisible);
+}"""
+
+_OUTFIT_ACTIVE_PANEL_COLOR_PICKER_READY = """() => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+    if (!activePanel) return false;
+    const isVisible = (el) => {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
+    };
+    const pickers = Array.from(activePanel.querySelectorAll(
+        'div.colour-picker-container, div.colour-picker'
+    )).filter(isVisible);
+    return pickers.some((picker) => Array.from(
+        picker.querySelectorAll('.colour-picker-option')
+    ).some(isVisible));
+}"""
+
+
 class BitmojiOutfitMixin:
     async def get_visible_locators(self, locator, max_candidates=60):
         visible = []
@@ -83,20 +174,13 @@ class BitmojiOutfitMixin:
         if timeout is None:
             timeout = _PANEL_ITEMS_TIMEOUT
         deadline = asyncio.get_event_loop().time() + float(timeout)
-        item_selector = (
-            ".mix-and-match-container[tabindex='0'], "
-            ".facial-feature-wrapper[tabindex='0'], "
-            "[class*='mix-and-match-container'][tabindex='0'], "
-            ".colour-picker-option"
-        )
         while asyncio.get_event_loop().time() < deadline:
             await self.wait_if_paused()
             try:
                 if ctx is None:
                     ctx = await self.get_editor_context()
                 if ctx is not None:
-                    count = await ctx.locator(item_selector).count()
-                    if count and count > 0:
+                    if await ctx.evaluate(_OUTFIT_CATEGORY_ITEMS_READY):
                         return True
             except Exception:
                 pass
@@ -236,48 +320,11 @@ class BitmojiOutfitMixin:
 
     async def scroll_editor_panel(self, ctx, direction="down", amount=None):
         return await ctx.evaluate(
-            """({ direction, amount }) => {
-                const selectors = [
-                    '#current-category.traits-container.scrollable',
-                    '#current-category.fashion-traits-container.scrollable',
-                    '#current-category',
-                    '[class*="traits-container"]',
-                    '[class*="fashion-traits"]',
-                    '[class*="avatar-builder-category-container"]',
-                    '[class*="scrollable"]'
-                ];
-
-                const seen = new Set();
-                const candidates = [];
-                const isVisible = (el) => {
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
-                };
-                const isScrollable = (el) => el && el.scrollHeight > (el.clientHeight + 8);
-
-                for (const selector of selectors) {
-                    for (const el of document.querySelectorAll(selector)) {
-                        if (!el || seen.has(el) || !isVisible(el) || !isScrollable(el)) {
-                            continue;
-                        }
-                        seen.add(el);
-                        const label = `${el.id || ""} ${el.className || ""}`.toLowerCase();
-                        let score = 0;
-                        if (label.includes('current-category')) score += 6;
-                        if (label.includes('traits')) score += 5;
-                        if (label.includes('fashion')) score += 4;
-                        if (label.includes('category')) score += 3;
-                        score += Math.min(4, Math.floor(el.clientHeight / 150));
-                        candidates.push({ el, score });
-                    }
-                }
-
-                if (!candidates.length) {
+            """({ direction, amount }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+                if (!activePanel) {
                     return { moved: false, found: false };
                 }
-
-                candidates.sort((a, b) => b.score - a.score);
-                const panel = candidates[0].el;
+                const panel = activePanel;
                 const adaptiveStep = Math.max(180, Math.min(420, Math.floor(panel.clientHeight * 0.58)));
                 const deltaBase = (typeof amount === 'number' && amount > 0) ? amount : adaptiveStep;
                 const delta = direction === 'down' ? deltaBase : -deltaBase;
@@ -312,32 +359,10 @@ class BitmojiOutfitMixin:
 
     async def reset_editor_panel_scroll(self, ctx):
         await ctx.evaluate(
-            """() => {
-                const selectors = [
-                    '#current-category.traits-container.scrollable',
-                    '#current-category.fashion-traits-container.scrollable',
-                    '#current-category',
-                    '[class*="traits-container"]',
-                    '[class*="fashion-traits"]',
-                    '[class*="avatar-builder-category-container"]',
-                    '[class*="scrollable"]'
-                ];
-
-                const isVisible = (el) => {
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
-                };
-                const isScrollable = (el) => el && el.scrollHeight > (el.clientHeight + 8);
-
-                for (const selector of selectors) {
-                    for (const panel of document.querySelectorAll(selector)) {
-                        if (isVisible(panel) && isScrollable(panel)) {
-                            panel.scrollTop = 0;
-                            return true;
-                        }
-                    }
-                }
-                return false;
+            """() => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+                if (!activePanel) return false;
+                activePanel.scrollTop = 0;
+                return true;
             }"""
         )
 
@@ -351,6 +376,7 @@ class BitmojiOutfitMixin:
             "/avatar/bottom?",
             "/avatar/one_piece?",
             "/avatar/footwear?",
+            "/avatar/outerwear?",
             "head-trait-container",
             "/avatar/hair?",
             "hair=",
@@ -363,7 +389,10 @@ class BitmojiOutfitMixin:
     def is_outfit_selector(self, selector):
         return any(
             marker in selector
-            for marker in ["/avatar/top?", "/avatar/bottom?", "/avatar/one_piece?", "/avatar/footwear?"]
+            for marker in [
+                "/avatar/top?", "/avatar/bottom?", "/avatar/one_piece?",
+                "/avatar/footwear?", "/avatar/outerwear?",
+            ]
         )
 
     def extract_outfit_src_markers(self, selector):
@@ -377,7 +406,10 @@ class BitmojiOutfitMixin:
             if match not in markers:
                 markers.append(match)
 
-        for token in ["/avatar/top?", "/avatar/bottom?", "/avatar/one_piece?", "/avatar/footwear?", "top=", "bottom=", "footwear="]:
+        for token in [
+            "/avatar/top?", "/avatar/bottom?", "/avatar/one_piece?", "/avatar/footwear?", "/avatar/outerwear?",
+            "top=", "bottom=", "footwear=", "outerwear=",
+        ]:
             if token in selector:
                 start = selector.index(token)
                 end = selector.find("'", start)
@@ -388,6 +420,70 @@ class BitmojiOutfitMixin:
                     markers.append(value)
 
         return markers
+
+    @staticmethod
+    def _xpath_string_expression_value(expression):
+        """Decode the string-only XPath expression emitted by ``build_selector``.
+
+        This deliberately supports only quoted literals and nested ``concat``
+        calls; it never evaluates XPath or JavaScript from a selector.
+        """
+        value = str(expression or "").strip()
+        if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]:
+            return value[1:-1]
+        if not value.startswith("concat(") or not value.endswith(")"):
+            return None
+
+        parts = []
+        start = 0
+        quote = None
+        depth = 0
+        body = value[len("concat("):-1]
+        for index, char in enumerate(body):
+            if quote:
+                if char == quote:
+                    quote = None
+                continue
+            if char in "'\"":
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    return None
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append(body[start:index])
+                start = index + 1
+        if quote or depth:
+            return None
+        parts.append(body[start:])
+
+        values = [BitmojiOutfitMixin._xpath_string_expression_value(part) for part in parts]
+        return "".join(values) if values and all(part is not None for part in values) else None
+
+    @staticmethod
+    def _xpath_expression_until_comma(selector_text, start):
+        """Return one XPath expression and the following top-level comma."""
+        quote = None
+        depth = 0
+        for index in range(start, len(selector_text)):
+            char = selector_text[index]
+            if quote:
+                if char == quote:
+                    quote = None
+                continue
+            if char in "'\"":
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    return None, None
+                depth -= 1
+            elif char == "," and depth == 0:
+                return selector_text[start:index], index
+        return None, None
 
     def extract_outfit_requirements(self, selector):
         if isinstance(selector, dict):
@@ -406,10 +502,62 @@ class BitmojiOutfitMixin:
             if match not in required_fragments:
                 required_fragments.append(match)
 
+        # Live garment selectors match an exact query parameter with an XPath
+        # ``contains(concat(...), '&param=value&')`` clause. Preserve that exact
+        # identity for the in-panel DOM matcher instead of falling back to a
+        # same-category sibling merely because it is visible.
+        literal_exact_params = re.findall(
+            r"contains\(\s*concat\(\s*['\"]&['\"]\s*,\s*"
+            r"substring-after\(\s*@src\s*,\s*['\"]\?['\"]\s*\)\s*,\s*['\"]&['\"]\s*\)\s*,\s*"
+            r"['\"]&([A-Za-z][A-Za-z0-9_]*)=([^&'\"]+)&['\"]\s*\)",
+            selector_text,
+        )
+        for key, value in literal_exact_params:
+            required_params[key] = value
+
+        # ``build_selector`` safely emits an id as a separate XPath expression,
+        # e.g. ``concat('&top=', '1062', '&')``. Decode just that string-only
+        # expression so quoted ids still keep their exact parameter identity.
+        prefix_pattern = re.compile(
+            r"concat\(\s*(['\"])&(?P<param>[A-Za-z][A-Za-z0-9_]*)=\1\s*,\s*",
+        )
+        for prefix in prefix_pattern.finditer(selector_text):
+            expression, comma_index = self._xpath_expression_until_comma(selector_text, prefix.end())
+            if expression is None or comma_index is None:
+                continue
+            if not re.match(r"\s*,\s*(['\"])&\1\s*\)", selector_text[comma_index:]):
+                continue
+            option_id = self._xpath_string_expression_value(expression)
+            if option_id is not None:
+                required_params[prefix.group("param")] = option_id
+
         return {
             "fragments": required_fragments,
             "params": required_params,
         }
+
+    def outfit_option_id_from_selector(self, selector, feature):
+        """Return the actual garment option id encoded by a selected selector.
+
+        A requested selector may have fallen back to a different configured pool
+        member, so callers must derive the id from the selector that actually
+        clicked.  Unknown catalog-wide fallbacks intentionally yield ``None``.
+        """
+        requirements = self.extract_outfit_requirements(selector)
+        params = requirements.get("params", {})
+        feature_params = {
+            "dresses": ("bottom", "top"),
+            "tops": ("top",),
+            "outfits": ("top",),
+            "bottoms": ("bottom",),
+            "footwear": ("footwear",),
+            "outerwear": ("outerwear",),
+        }
+        for param in feature_params.get(str(feature), ()):
+            option_id = str(params.get(param) or "").strip()
+            if option_id:
+                return option_id
+        return None
 
     def normalize_outfit_entry(self, entry):
         if isinstance(entry, dict):
@@ -709,7 +857,8 @@ class BitmojiOutfitMixin:
                                     ".head-trait-container[tabindex='0']",
                                     ".facial-feature-wrapper[tabindex='0']",
                                     ".container[tabindex='0']",
-                                    ".mix-and-match-container[tabindex='0']",
+                                    ".mix-and-match-container",
+                                    "[class*='mix-and-match-container']",
                                     ".trait-preview [tabindex='0']",
                                     "#current-category [tabindex='0']",
                                     "[class*='traits-container'] [tabindex='0']",
@@ -903,13 +1052,13 @@ class BitmojiOutfitMixin:
                                     scrollTop: el.scrollTop,
                                     scrollHeight: el.scrollHeight,
                                     clientHeight: el.clientHeight,
-                                    itemCount: el.querySelectorAll('.mix-and-match-container[tabindex="0"], [class*="mix-and-match-container"][tabindex="0"]').length,
+                                    itemCount: el.querySelectorAll('.mix-and-match-container, [class*="mix-and-match-container"]').length,
                                     visibleText: String(el.innerText || "").slice(0, 500)
                                 });
                             }
                         }
                         const visibleItems = Array.from(
-                            document.querySelectorAll('.mix-and-match-container[tabindex="0"] img, [class*="mix-and-match-container"][tabindex="0"] img')
+                            document.querySelectorAll('.mix-and-match-container img, [class*="mix-and-match-container"] img')
                         )
                             .filter((img) => isVisible(img))
                             .slice(0, 40)
@@ -953,38 +1102,26 @@ class BitmojiOutfitMixin:
 
         for attempt_index in range(14):
             clicked = await ctx.evaluate(
-                """({ requirements }) => {
-                    const selectors = [
-                        '#current-category.traits-container.scrollable',
-                        '#current-category.fashion-traits-container.scrollable',
-                        '#current-category',
-                        '[class*="traits-container"]',
-                        '[class*="fashion-traits"]',
-                        '[class*="avatar-builder-category-container"]',
-                        '[class*="scrollable"]'
-                    ];
-
+                """({ requirements }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
                     const isVisible = (el) => {
                         const rect = el.getBoundingClientRect();
                         return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
                     };
-                    const isScrollable = (el) => el && el.scrollHeight > (el.clientHeight + 8);
-
-                    let panel = null;
-                    for (const selector of selectors) {
-                        const found = Array.from(document.querySelectorAll(selector)).find((el) => isVisible(el) && isScrollable(el));
-                        if (found) {
-                            panel = found;
-                            break;
-                        }
-                    }
+                    const panel = activePanel;
                     if (!panel) return false;
 
-                    const items = Array.from(panel.querySelectorAll('.mix-and-match-container[tabindex="0"]'));
+                    const items = Array.from(
+                        panel.querySelectorAll('.mix-and-match-container, [class*="mix-and-match-container"]')
+                    ).filter(isVisible);
                     const match = items.find((item) => {
                         const img = item.querySelector('img');
                         if (!img || !img.src) return false;
-                        const url = new URL(img.src);
+                        let url = null;
+                        try {
+                            url = new URL(img.src, document.baseURI);
+                        } catch (error) {
+                            return false;
+                        }
                         const matchesFragments = requirements.fragments.every((fragment) => img.src.includes(fragment));
                         if (!matchesFragments) return false;
                         return Object.entries(requirements.params).every(
@@ -1015,16 +1152,18 @@ class BitmojiOutfitMixin:
             await asyncio.sleep(0.35)
 
         clicked = await ctx.evaluate(
-            """({ requirements }) => {
+            """({ requirements }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
                 const isVisible = (el) => {
                     if (!el) return false;
                     const rect = el.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
                 };
 
+                const panel = activePanel;
+                if (!panel) return false;
                 const candidates = Array.from(
-                    document.querySelectorAll(
-                        '.mix-and-match-container[tabindex="0"], [class*="mix-and-match-container"][tabindex="0"], [class*="fashion-traits"] [tabindex="0"]'
+                    panel.querySelectorAll(
+                        '.mix-and-match-container, [class*="mix-and-match-container"]'
                     )
                 ).filter(isVisible);
 
@@ -1225,7 +1364,7 @@ class BitmojiOutfitMixin:
                     if ctx is not None and self.is_skin_tone_selector_key(selector_key):
                         if await self.click_skin_tone_trait(ctx, selector):
                             return True
-                    if ctx is not None and (not self.is_skin_tone_selector_key(selector_key)) and await self.click_by_dom_signature(ctx, selector_key, selector):
+                    if ctx is not None and (not self.is_skin_tone_selector_key(selector_key)) and (not self.is_outfit_selector(selector)) and await self.click_by_dom_signature(ctx, selector_key, selector):
                         return True
                 except Exception:
                     pass
@@ -1399,43 +1538,59 @@ class BitmojiOutfitMixin:
             dress_entry = self.normalize_outfit_entry(outfit["dress"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit dress: {self.describe_outfit_entry(dress_entry)}")
-            await self._apply_outfit_piece(
+            selected_dress = await self._apply_outfit_piece(
                 "categories.dresses", dress_entry["selector"], profile_id,
                 fallback_param="top", fallback_pool=outfit.get("dress_pool"),
             )
-            await self.pick_configured_color_option(profile_id, model, ("dresses",), outfit_seed, preferred_color=dress_entry.get("preferred_color"))
+            await self.pick_configured_color_option(
+                profile_id, model, ("dresses",), outfit_seed,
+                preferred_color=dress_entry.get("preferred_color"),
+                selected_option_id=self.outfit_option_id_from_selector(selected_dress, "dresses"),
+            )
         else:
             report("outfit_top")
             top_entry = self.normalize_outfit_entry(outfit["top"])
             bottom_entry = self.normalize_outfit_entry(outfit["bottom"])
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit top: {self.describe_outfit_entry(top_entry)}")
-            await self._apply_outfit_piece(
+            selected_top = await self._apply_outfit_piece(
                 "categories.tops", top_entry["selector"], profile_id,
                 fallback_param="top", blocked_ids=BLOCKED_TOP_IDS,
                 fallback_pool=outfit.get("top_pool"),
             )
             await self.enable_tuck_if_available()
-            await self.pick_configured_color_option(profile_id, model, ("tops", "outfits"), outfit_seed, preferred_color=top_entry.get("preferred_color"))
+            await self.pick_configured_color_option(
+                profile_id, model, ("tops", "outfits"), outfit_seed,
+                preferred_color=top_entry.get("preferred_color"),
+                selected_option_id=self.outfit_option_id_from_selector(selected_top, "tops"),
+            )
             report("outfit_bottom")
             if self.logger:
                 self.logger.info(f"[{profile_id}] Outfit bottom: {self.describe_outfit_entry(bottom_entry)}")
-            await self._apply_outfit_piece(
+            selected_bottom = await self._apply_outfit_piece(
                 "categories.bottoms", bottom_entry["selector"], profile_id,
                 fallback_param="bottom", fallback_pool=outfit.get("bottom_pool"),
             )
-            await self.pick_configured_color_option(profile_id, model, ("bottoms",), outfit_seed, preferred_color=bottom_entry.get("preferred_color"))
+            await self.pick_configured_color_option(
+                profile_id, model, ("bottoms",), outfit_seed,
+                preferred_color=bottom_entry.get("preferred_color"),
+                selected_option_id=self.outfit_option_id_from_selector(selected_bottom, "bottoms"),
+            )
 
         report("outfit_footwear")
         shoe_entry = self.normalize_outfit_entry(outfit["shoes"])
         if self.logger:
             self.logger.info(f"[{profile_id}] Outfit footwear: {self.describe_outfit_entry(shoe_entry)}")
-        await self._apply_outfit_piece(
+        selected_shoes = await self._apply_outfit_piece(
             "categories.footwear", shoe_entry["selector"], profile_id,
             fallback_param="footwear", blocked_ids=BLOCKED_FOOTWEAR_IDS,
             fallback_pool=outfit.get("shoes_pool"),
         )
-        await self.pick_configured_color_option(profile_id, model, ("footwear",), outfit_seed, preferred_color=shoe_entry.get("preferred_color"))
+        await self.pick_configured_color_option(
+            profile_id, model, ("footwear",), outfit_seed,
+            preferred_color=shoe_entry.get("preferred_color"),
+            selected_option_id=self.outfit_option_id_from_selector(selected_shoes, "footwear"),
+        )
         await self.human_delay()
 
     async def _apply_outfit_piece(self, category_key, item_selector, profile_id,
@@ -1458,7 +1613,7 @@ class BitmojiOutfitMixin:
                 await self.reset_editor_panel_scroll(ctx)
                 await self.wait_for_category_items(ctx)
                 await self.safe_click(item_selector, profile_id)
-                return True
+                return item_selector
             except Exception as exc:
                 last_exc = exc
                 if self.logger:
@@ -1473,11 +1628,12 @@ class BitmojiOutfitMixin:
         # curated piece instead of failing/scrolling forever.
         if _OUTFIT_ALLOW_FALLBACK and fallback_pool:
             try:
-                if await self._apply_pool_fallback_piece(
+                fallback_selector = await self._apply_pool_fallback_piece(
                     category_key, item_selector, fallback_pool, profile_id,
                     fallback_param=fallback_param, blocked_ids=blocked_ids,
-                ):
-                    return True
+                )
+                if fallback_selector:
+                    return fallback_selector
             except Exception as fb_exc:
                 if self.logger:
                     self.logger.warning(f"[{profile_id}] Outfit pool fallback for {category_key} failed: {fb_exc}")
@@ -1486,7 +1642,11 @@ class BitmojiOutfitMixin:
         if _OUTFIT_ALLOW_FALLBACK and _OUTFIT_ALLOW_CATALOG_FALLBACK and fallback_param:
             try:
                 if await self._click_any_item_in_open_category(category_key, fallback_param, profile_id, blocked_ids):
-                    return True
+                    # The catalogue-wide net cannot tell us which tile it clicked,
+                    # so make that uncertainty explicit instead of pretending the
+                    # requested id was selected. It remains truthy for legacy
+                    # callers that only need to know this step completed.
+                    return {"known": False}
             except Exception as fb_exc:
                 if self.logger:
                     self.logger.warning(f"[{profile_id}] Outfit catalog fallback for {fallback_param} failed: {fb_exc}")
@@ -1540,7 +1700,7 @@ class BitmojiOutfitMixin:
                         f"[{profile_id}] Configured item unavailable in catalog; "
                         f"selected another item from the same pool as fallback."
                     )
-                return True
+                return selector
             except Exception as exc:
                 if self.logger:
                     self.logger.warning(f"[{profile_id}] Pool fallback candidate failed: {exc}")
@@ -1560,13 +1720,15 @@ class BitmojiOutfitMixin:
         await self.reset_editor_panel_scroll(ctx)
         await self.wait_for_category_items(ctx)
         clicked = await ctx.evaluate(
-            """({ param, blocked, seed }) => {
+            """({ param, blocked, seed }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
                 const isVisible = (el) => {
                     const r = el.getBoundingClientRect();
                     return r.width > 0 && r.height > 0;
                 };
+                const panel = activePanel;
+                if (!panel) return false;
                 const items = Array.from(
-                    document.querySelectorAll('[class*="mix-and-match-container"][tabindex="0"]')
+                    panel.querySelectorAll('.mix-and-match-container, [class*="mix-and-match-container"]')
                 ).filter((el) => {
                     if (!isVisible(el)) return false;
                     const img = el.querySelector('img');
@@ -1594,7 +1756,103 @@ class BitmojiOutfitMixin:
             )
         return bool(clicked)
 
-    async def pick_random_color_option(self, profile_id, outfit_seed="", preferred_color=None):
+    async def _pick_random_color_option_from_active_panel(self, profile_id, outfit_seed="", preferred_color=None,
+                                                          ctx=None):
+        """Pick a safe random swatch only from the resolved garment panel.
+
+        This path is used after a configured garment colour cannot be applied.
+        It deliberately refuses to use a stale colour picker outside the active
+        garment panel; callers that need the historic document-wide picker use
+        ``pick_random_color_option`` without ``active_panel_only`` instead.
+        """
+        await self.wait_if_paused()
+        if ctx is None:
+            ctx = await self.get_editor_context()
+        if ctx is None:
+            return False
+
+        preferred_parts = []
+        if isinstance(preferred_color, dict):
+            preferred_parts = [
+                str(part) for part in preferred_color.get("background_contains", []) if str(part)
+            ]
+        seed_source = str(outfit_seed).strip() or f"{profile_id}:{random.random()}"
+        try:
+            clicked = await ctx.evaluate(
+                r"""({ seed, preferredParts }) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
+                    if (!activePanel) return false;
+                    const isVisible = (el) => {
+                        if (!el) return false;
+                        const rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0;
+                    };
+                    const pickers = Array.from(activePanel.querySelectorAll(
+                        'div.colour-picker-container, div.colour-picker'
+                    )).filter(isVisible);
+                    const options = Array.from(new Set(pickers.flatMap((picker) => Array.from(
+                        picker.querySelectorAll('.colour-picker-option')
+                    )))).filter(isVisible);
+                    if (!options.length) return false;
+
+                    const isNeon = (el) => {
+                        const parts = String(getComputedStyle(el).backgroundColor || '').match(/\d+/g);
+                        if (!parts || parts.length < 3) return false;
+                        const [r, g, b] = parts.slice(0, 3).map(Number);
+                        const blocked = [[255,107,14],[246,249,10],[175,255,83],[50,255,40],[40,255,136],[10,255,214],[255,0,151],[78,21,86],[19,19,19],[42,41,45],[104,112,114],[29,88,82],[255,116,23]];
+                        if (blocked.some(([br, bgc, bb]) => r === br && g === bgc && b === bb)) return true;
+                        const max = Math.max(r, g, b);
+                        const min = Math.min(r, g, b);
+                        const l = (max + min) / 510.0;
+                        if (max === min) return false;
+                        const d = (max - min) / 255.0;
+                        const s = l > 0.5 ? d / (2.0 - (max + min) / 255.0) : d / ((max + min) / 255.0);
+                        if (s > 0.75 && l > 0.35 && l < 0.85) return true;
+                        if (l < 0.22) return true;
+                        if (g > r && g > b && s < 0.45 && l < 0.45) return true;
+                        let h;
+                        if (max === r) h = (g - b) / 255.0 / d + (g < b ? 6 : 0);
+                        else if (max === g) h = (b - r) / 255.0 / d + 2;
+                        else h = (r - g) / 255.0 / d + 4;
+                        h /= 6;
+                        return h > 0.15 && h < 0.45 && s > 0.55 && l > 0.3;
+                    };
+
+                    const preferred = options.find((option) => {
+                        if (!preferredParts.length) return false;
+                        const inlineBackground = option.style.background || '';
+                        const computedBackground = getComputedStyle(option).background || '';
+                        const background = `${inlineBackground} ${computedBackground}`;
+                        return preferredParts.every((part) => background.includes(part));
+                    });
+                    const eligible = options.filter((option) => !isNeon(option));
+                    const selected = preferred || eligible[(() => {
+                        if (!eligible.length) return -1;
+                        let hash = 2166136261;
+                        for (const char of String(seed)) {
+                            hash ^= char.charCodeAt(0);
+                            hash = Math.imul(hash, 16777619) >>> 0;
+                        }
+                        return hash % eligible.length;
+                    })()];
+                    if (!selected) return false;
+                    selected.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    selected.click();
+                    return true;
+                }""",
+                {"seed": seed_source, "preferredParts": preferred_parts},
+            )
+        except Exception:
+            return False
+        if clicked:
+            await self.human_delay(0.3, 0.8, kind="think")
+        return bool(clicked)
+
+    async def pick_random_color_option(self, profile_id, outfit_seed="", preferred_color=None,
+                                       active_panel_only=False, ctx=None):
+        if active_panel_only:
+            return await self._pick_random_color_option_from_active_panel(
+                profile_id, outfit_seed, preferred_color=preferred_color, ctx=ctx,
+            )
         await self.wait_if_paused()
 
         ctx = await self.get_editor_context()
@@ -1686,7 +1944,8 @@ class BitmojiOutfitMixin:
 
         return False
 
-    async def pick_configured_color_option(self, profile_id, model, features, outfit_seed="", preferred_color=None):
+    async def pick_configured_color_option(self, profile_id, model, features, outfit_seed="", preferred_color=None,
+                                           selected_option_id=None):
         """Apply the operator's per-model colour choice for an outfit piece.
 
         Reads the "Configure Nyxmoji" colour config for ``features`` (a fixed
@@ -1697,12 +1956,58 @@ class BitmojiOutfitMixin:
         Colour is cosmetic and must never fail a profile, so this never raises."""
         if isinstance(features, str):
             features = (features,)
+        selected_option_id = str(selected_option_id or "").strip() or None
+
+        # A completed live scan makes an empty swatch list authoritative.  Avoid
+        # even opening a picker for those garments: an old picker left in the DOM
+        # could otherwise recolour a different item, and the legacy random
+        # fallback would choose a colour the selected garment does not support.
+        selected_item_is_verified_color_capable = False
+        if selected_option_id:
+            try:
+                from core.bitmoji_config import catalog_option, load_catalog_raw, option_colors
+                catalog = load_catalog_raw()
+                for selected_feature in features:
+                    selected_item = catalog_option(selected_feature, selected_option_id, catalog)
+                    if selected_item is None or selected_item.get("colors_verified") is not True:
+                        continue
+                    if not option_colors(selected_feature, selected_option_id, catalog):
+                        if self.logger:
+                            self.logger.info(
+                                f"[{profile_id}] Nyxmoji colour skipped: {selected_feature}="
+                                f"{selected_option_id} has no verified swatches"
+                            )
+                        return False
+                    selected_item_is_verified_color_capable = True
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning(
+                        f"[{profile_id}] colour capability lookup failed for {features}: {exc}"
+                    )
         target_hex = None
+        configured_colour_requested = False
         try:
             from core.bitmoji_config import load_models as _load_models, resolve_option_color
             models = _load_models()
+            model_config = models.get(model, {}) if isinstance(models, dict) else {}
             for feat in features:
-                target_hex = resolve_option_color(model, feat, models)
+                selection = model_config.get(feat) if isinstance(model_config, dict) else None
+                if isinstance(selection, dict):
+                    mode = str(selection.get("mode") or "").lower()
+                    if mode == "fixed":
+                        configured_colour_requested = configured_colour_requested or bool(
+                            str(selection.get("color") or "").strip()
+                        )
+                    elif mode == "random":
+                        colors = selection.get("colors")
+                        configured_colour_requested = configured_colour_requested or (
+                            isinstance(colors, (list, tuple))
+                            and any(str(color).strip() for color in colors if color is not None)
+                        )
+                if selected_option_id:
+                    target_hex = resolve_option_color(model, feat, models, selected_option_id)
+                else:
+                    target_hex = resolve_option_color(model, feat, models)
                 if target_hex:
                     break
         except Exception as exc:
@@ -1710,31 +2015,71 @@ class BitmojiOutfitMixin:
                 self.logger.warning(f"[{profile_id}] colour config lookup failed for {features}: {exc}")
 
         if not target_hex:
+            if selected_item_is_verified_color_capable and configured_colour_requested:
+                if self.logger:
+                    self.logger.info(
+                        f"[{profile_id}] Nyxmoji colour skipped: configured colour is unavailable for "
+                        f"{selected_option_id}"
+                    )
+                return False
             return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
 
+        preserve_verified_configured_colour = (
+            selected_item_is_verified_color_capable and configured_colour_requested
+        )
+
+        def log_configured_picker_unavailable(reason):
+            if self.logger:
+                self.logger.info(
+                    f"[{profile_id}] Nyxmoji colour skipped: configured swatch {reason} for "
+                    f"{selected_option_id}; selected garment left unchanged"
+                )
+
+        ctx = None
         try:
             await self.wait_if_paused()
             ctx = await self.get_editor_context()
-            color_picker = ctx.locator("div.colour-picker-container, div.colour-picker")
-            try:
-                await color_picker.first.wait_for(state="visible", timeout=10000)
-            except Exception:
-                return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
+            picker_ready = False
+            deadline = asyncio.get_event_loop().time() + 10.0
+            while asyncio.get_event_loop().time() < deadline:
+                await self.wait_if_paused()
+                try:
+                    if await ctx.evaluate(_OUTFIT_ACTIVE_PANEL_COLOR_PICKER_READY):
+                        picker_ready = True
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.2)
+            if not picker_ready:
+                if preserve_verified_configured_colour:
+                    log_configured_picker_unavailable("is unavailable in the active panel")
+                    return False
+                return await self.pick_random_color_option(
+                    profile_id, outfit_seed, preferred_color=preferred_color,
+                    active_panel_only=True, ctx=ctx,
+                )
             clicked = await ctx.evaluate(
-                r"""(targetHex) => {
+                r"""(targetHex) => {""" + _OUTFIT_ACTIVE_PANEL_RESOLVER + r"""
                     const toRGB = (h) => {
                         h = String(h).replace('#', '');
                         if (h.length === 3) h = h.split('').map(c => c + c).join('');
                         if (h.length !== 6) return null;
                         return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
                     };
-                    const parse = (s) => { const m = String(s).match(/\\d+/g); return (m && m.length >= 3) ? m.slice(0, 3).map(Number) : null; };
+                    const parse = (s) => { const m = String(s).match(/\d+/g); return (m && m.length >= 3) ? m.slice(0, 3).map(Number) : null; };
                     const want = toRGB(targetHex);
-                    if (!want) return false;
-                    const opts = Array.from(document.querySelectorAll('.colour-picker-option')).filter((el) => {
+                    if (!want || !activePanel) return false;
+                    const isVisible = (el) => {
+                        if (!el) return false;
                         const r = el.getBoundingClientRect();
-                        return r.width > 0 && r.height > 0;
-                    });
+                        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0;
+                    };
+                    const pickers = Array.from(activePanel.querySelectorAll(
+                        'div.colour-picker-container, div.colour-picker'
+                    )).filter(isVisible);
+                    const opts = Array.from(new Set(pickers.flatMap((picker) => Array.from(
+                        picker.querySelectorAll('.colour-picker-option')
+                    )))).filter(isVisible);
                     let best = null, bestD = Infinity;
                     for (const el of opts) {
                         const rgb = parse(getComputedStyle(el).backgroundColor || '');
@@ -1757,5 +2102,12 @@ class BitmojiOutfitMixin:
         except Exception as exc:
             if self.logger:
                 self.logger.warning(f"[{profile_id}] colour apply failed for {features}: {exc}")
-        # Configured colour couldn't be matched — keep a valid look via random pick.
-        return await self.pick_random_color_option(profile_id, outfit_seed, preferred_color=preferred_color)
+        if preserve_verified_configured_colour:
+            log_configured_picker_unavailable("could not be matched or clicked")
+            return False
+        # Configured colour couldn't be matched — keep a valid look only if the
+        # currently active garment panel still owns a usable picker.
+        return await self.pick_random_color_option(
+            profile_id, outfit_seed, preferred_color=preferred_color,
+            active_panel_only=True, ctx=ctx,
+        )

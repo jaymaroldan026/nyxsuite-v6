@@ -9,6 +9,22 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.4
+
+- Nyxmoji live catalog scans now verify every required garment selector against
+  the real Bitmoji editor: Outfits, Tops, Bottoms, Dresses, Footwear, and
+  Outerwear all write only after complete selector and colour audits.
+- The scanner now handles real outfit tiles, virtualized garment lists, and
+  virtualized colour pickers without falling back to stale or wrong selectors.
+- Colour variants are linked to the selected garment's real Bitmoji render
+  params instead of generic synthesized tones, including garments with no
+  colour picker.
+- AdsPower profile attachment is safer when the Local API is unavailable, and
+  scanner restoration resets the captured Bitmoji builder iframe without saving
+  draft avatar changes.
+- The bundled Nyxmoji catalog has been regenerated from a complete live audit
+  of AdsPower profile `k1f2la8v`.
+
 ### NyxSuite v6.4.3
 
 - SnapBoard AdsPower-name sync no longer writes the full
