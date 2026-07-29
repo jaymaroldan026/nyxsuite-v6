@@ -3,7 +3,7 @@
 Connects to a running AdsPower profile with the Bitmoji avatar editor open at
 https://www.bitmoji.com/avatar/create, walks every feature panel using the
 editor's own ``#arrow_btn_forward`` navigation, scrolls each virtualised
-``.traits-container.scrollable`` to the bottom, and records every option:
+traits/fashion scroll container to the bottom, and records every option:
 
   * img features  -> the distinct value of the query param that varies across
     the tile preview images (e.g. ``hair``, ``hair_tone``, ``nose``, ``top``).
@@ -38,7 +38,7 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -266,7 +266,7 @@ def garment_param_bases(feature: str) -> tuple[str, ...]:
         "footwear": ("footwear",),
         "outerwear": ("outerwear",),
         "dresses": ("top", "bottom"),
-        "outfits": ("top", "bottom"),
+        "outfits": ("outfit", "top", "bottom"),
     }.get(str(feature or "").strip().lower(), ("top", "bottom", "footwear", "outerwear"))
 
 
@@ -299,11 +299,14 @@ def filter_outfit_render_params(feature: str, params: dict[str, str], tile_previ
         if feature_key in ("dresses", "outfits") and tile_preview:
             return {}
         return dict(params)
-    return {
+    filtered = {
         key: value
         for key, value in params.items()
         if any(key == base or key.startswith(f"{base}_tone") for base in allowed_bases)
     }
+    if feature_key == "outfits" and filtered.get("outfit") and params.get("clothing_type"):
+        filtered["clothing_type"] = params["clothing_type"]
+    return filtered
 
 
 def feature_tone_delta(
@@ -409,6 +412,46 @@ def assemble_outfit_option(
     return option
 
 
+def original_outfit_body_preview(option_id: str) -> str:
+    """Synthetic body URL carrying the params the editor emits for outfit IDs."""
+    return (
+        "https://preview.bitmoji.com/bm-preview/v3/avatar/body?"
+        f"outfit={quote(str(option_id), safe='')}&clothing_type=0"
+    )
+
+
+def scan_original_outfit_id_options(options: list[dict], base_avatar: str):
+    """Assemble original outfit presets without mutating their dynamic list.
+
+    Full outfit preset panels expose atomic ``outfit`` ids. Clicking one preset
+    changes the panel's subsequent inventory, so the stable catalog form is the
+    atomic id plus Bitmoji's original-outfit ``clothing_type=0`` body param.
+    Mix-and-match garments still go through the live click/swatch scanner.
+    """
+    scanned: list[dict] = []
+    errors: list[dict[str, str]] = []
+    for source in options:
+        option_id = str(source.get("id") or "")
+        preview = str(source.get("preview") or "")
+        if not option_id or not preview:
+            error = "missing outfit id or tile preview"
+            scanned.append(assemble_outfit_option(
+                option_id, preview, base_avatar, {}, complete=False, feature="outfits", error=error,
+            ))
+            errors.append({"id": option_id, "error": error})
+            continue
+        scanned.append(assemble_outfit_option(
+            option_id,
+            preview,
+            base_avatar,
+            {},
+            complete=True,
+            feature="outfits",
+            body_preview=original_outfit_body_preview(option_id),
+        ))
+    return scanned, errors
+
+
 def editor_frame(page):
     matches = [fr for fr in page.frames if FRAME_HINT in fr.url]
     if matches:
@@ -497,9 +540,20 @@ JS_CLEAR_ACTIVE = r"""() => { document.querySelectorAll('[data-nyx-active]').for
 
 JS_SCROLL_TO = r"""(top) => {
   const c=document.querySelector('[data-nyx-active] .traits-container.scrollable')
+        || document.querySelector('[data-nyx-active] .fashion-traits-container.scrollable')
+        || document.querySelector('[data-nyx-active] [class*="traits-container"].scrollable')
         || document.querySelector('[data-nyx-active]');
   if (!c) return {h:0,t:0,ch:0};
   c.scrollTop = top;
+  return {h:c.scrollHeight, t:c.scrollTop, ch:c.clientHeight};
+}"""
+
+JS_SCROLL_STATE = r"""() => {
+  const c=document.querySelector('[data-nyx-active] .traits-container.scrollable')
+        || document.querySelector('[data-nyx-active] .fashion-traits-container.scrollable')
+        || document.querySelector('[data-nyx-active] [class*="traits-container"].scrollable')
+        || document.querySelector('[data-nyx-active]');
+  if (!c) return {h:0,t:0,ch:0};
   return {h:c.scrollHeight, t:c.scrollTop, ch:c.clientHeight};
 }"""
 
@@ -541,8 +595,9 @@ JS_SELECT_OUTFIT_TILE = r"""({param, optionId}) => {
     const targets=[];
     if(/outfit/i.test(String(img.className || '')) && visible(img)) targets.push(img);
     if(tile && root.contains(tile) && visible(tile) && tile!==img) targets.push(tile);
+    if(targets.length===0) continue;
     for(const target of targets) target.click();
-    return targets.length > 0;
+    return true;
   }
   return false;
 }"""
@@ -648,17 +703,27 @@ def body_matches_advertised_tile(
     allow_tone_changes: bool = False,
 ) -> bool:
     """Confirm both the selected id and every garment value advertised by its tile."""
-    if not _body_has_item(body_preview, param, option_id):
-        return False
     if not tile_preview:
-        return True
+        return _body_has_item(body_preview, param, option_id)
     advertised = advertised_garment_params(feature, tile_preview)
     if not advertised:
-        return False
+        return _body_has_item(body_preview, param, option_id)
     if allow_tone_changes:
         advertised = {key: value for key, value in advertised.items() if "_tone" not in key}
+    if not advertised:
+        return False
     body = preview_params(body_preview)
-    return all(body.get(key) == value for key, value in advertised.items())
+    if all(body.get(key) == value for key, value in advertised.items()):
+        return True
+    if str(feature or "").strip().lower() == "outfits" and "outfit" in advertised:
+        detailed = {
+            key: value
+            for key, value in advertised.items()
+            if key != "outfit" and not key.startswith("outfit_tone")
+        }
+        if detailed and all(body.get(key) == value for key, value in detailed.items()):
+            return True
+    return False
 
 
 def wait_for_selected_body(
@@ -904,15 +969,17 @@ def wait_for_picker_palette(
 def select_outfit_tile(fr, param: str, option_id: str) -> bool:
     """Click one exact virtualised tile, retrying scroll sweeps if necessary."""
     step = 140
-    for _ in range(3):
-        state = fr.evaluate(JS_SCROLL_TO, 0)
-        time.sleep(0.12)
+    target = {"param": param, "optionId": str(option_id)}
+
+    def sweep_from(state: dict, *, pause: float = 0.0) -> bool:
+        if pause:
+            time.sleep(pause)
         top = state.get("t", 0)
         if not isinstance(top, (int, float)):
             return False
         guard = 0
         while True:
-            if fr.evaluate(JS_SELECT_OUTFIT_TILE, {"param": param, "optionId": str(option_id)}):
+            if fr.evaluate(JS_SELECT_OUTFIT_TILE, target):
                 return True
             height = state.get("h", 0)
             client_height = state.get("ch", 0)
@@ -925,6 +992,18 @@ def select_outfit_tile(fr, param: str, option_id: str) -> bool:
             top = actual_top
             time.sleep(0.06)
             guard += 1
+        return False
+
+    if fr.evaluate(JS_SELECT_OUTFIT_TILE, target):
+        return True
+    try:
+        if sweep_from(fr.evaluate(JS_SCROLL_STATE)):
+            return True
+    except Exception:
+        pass
+    for _ in range(2):
+        if sweep_from(fr.evaluate(JS_SCROLL_TO, 0), pause=0.12):
+            return True
     return False
 
 
@@ -1067,8 +1146,6 @@ def scan_outfit_options(
         active_color = active_picker_colour(fr)
         current_body = selected_body
         ordered_colors = [color for color in colors if color != active_color]
-        if active_color in colors:
-            ordered_colors.append(active_color)
         for color in ordered_colors:
             try:
                 clicked = click_picker_colour(fr, color)
@@ -1093,7 +1170,7 @@ def scan_outfit_options(
             colour_previews[color] = body_preview
             colour_deltas[color] = feature_tone_delta(feature, current_body, body_preview, preview)
             current_body = body_preview
-        complete = not scan_error and len(colour_previews) == len(colors)
+        complete = not scan_error and len(colour_previews) == len(ordered_colors)
         scanned.append(assemble_outfit_option(
             option_id, preview, base_avatar, colour_previews,
             complete=complete,
@@ -1175,9 +1252,12 @@ def discover_features(fr, base_avatar: str):
             kind = declared_kind if declared_kind in ("img", "outfit") else "img"
             options = [{"id": v, "preview": u} for v, u in val_map.items()]
             if kind == "outfit":
-                options, outfit_errors = scan_outfit_options(
-                    fr, options, param or "", base_avatar, feature=key,
-                )
+                if key == "outfits" and param == "outfit":
+                    options, outfit_errors = scan_original_outfit_id_options(options, base_avatar)
+                else:
+                    options, outfit_errors = scan_outfit_options(
+                        fr, options, param or "", base_avatar, feature=key,
+                    )
                 for item_error in outfit_errors:
                     errors.append({"feature": key, **item_error})
         elif fills:
@@ -1334,6 +1414,24 @@ def scan_editor_page(page, profile_id: str) -> tuple[dict, dict]:
     return catalog, build_audit_report(catalog, errors, navigation_complete)
 
 
+def catalog_scan_page(contexts):
+    """Choose the best open page for a live scan.
+
+    A direct ``sdk.bitmoji.com/web-builder`` tab is already the editor frame, so
+    prefer it over the parent Bitmoji page when both are open. The parent page
+    remains supported for normal browser sessions with a healthy iframe.
+    """
+    editor_page = None
+    builder_page = None
+    for ctx in contexts:
+        for candidate in ctx.pages:
+            if FRAME_HINT in candidate.url:
+                builder_page = candidate
+            elif EDITOR_HINT in candidate.url:
+                editor_page = candidate
+    return builder_page or editor_page
+
+
 def _ensure_editor_frame(page, timeout: float = 25.0):
     """Wait for the existing editor iframe without mutating avatar state."""
     deadline = time.monotonic() + max(0.0, timeout)
@@ -1352,11 +1450,7 @@ def scan_live_catalog(profile_id: str) -> tuple[dict, dict]:
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         browser = pw.chromium.connect_over_cdp(ws)
-        page = None
-        for ctx in browser.contexts:
-            for candidate in ctx.pages:
-                if EDITOR_HINT in candidate.url:
-                    page = candidate
+        page = catalog_scan_page(browser.contexts)
         if not page:
             raise SystemExit("No Bitmoji editor page open. Open the avatar editor in the profile.")
         fr = _ensure_editor_frame(page)

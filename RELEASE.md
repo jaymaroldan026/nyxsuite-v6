@@ -9,6 +9,24 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.4.5
+
+- Completed the Nyxmoji apparel catalog from the real Bitmoji editor, expanding
+  the released apparel coverage to 246 outfits, 291 tops, 131 bottoms,
+  27 dresses, 78 footwear options, 10 socks, and 94 outerwear options.
+- Fixed fashion-panel scrolling so virtualized outfit, top, bottom, footwear,
+  dress, sock, and outerwear selectors are collected from the actual
+  `.fashion-traits-container` instead of only the first visible batch.
+- Original `outfit=<id>` presets now render through atomic Bitmoji outfit params
+  with `clothing_type=0`, while mix-and-match garments continue to receive live
+  selector and swatch verification.
+- Colour verification now treats the active swatch as the selected item's base
+  render state, fixing single-colour garments whose active swatch correctly
+  produces no body URL change.
+- The live scanner now skips hidden duplicate virtualized tiles, starts
+  selection from the current viewport before resetting, and can prefer a direct
+  `sdk.bitmoji.com/web-builder` tab when the parent iframe is unreliable.
+
 ### NyxSuite v6.4.4
 
 - Nyxmoji live catalog scans now verify every required garment selector against

@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.4.5 - Complete Nyxmoji apparel catalog
+
+### Nyxmoji: apparel selectors now cover the full live Bitmoji inventory
+- Completed the Nyxmoji live apparel catalog from AdsPower profile `k1f2la8v`,
+  expanding the bundled selector data to 246 outfits, 291 tops, 131 bottoms,
+  27 dresses, 78 footwear options, 10 socks, and 94 outerwear options.
+- Fixed fashion virtual-scroll enumeration so apparel panels use the real
+  fashion scroll container and no longer stop at the first rendered batch.
+- Added original `outfit=<id>` preset handling with atomic `outfit` /
+  `clothing_type=0` render params, while keeping live swatch verification for
+  tops, bottoms, dresses, footwear, and outerwear.
+- Fixed active-swatch verification for single-colour garments and hidden
+  duplicate virtualized outfit tiles.
+
 ## 6.4.4 - Nyxmoji live selector/catalog repair
 
 ### Nyxmoji: selectors and colours now come from a complete live Bitmoji audit

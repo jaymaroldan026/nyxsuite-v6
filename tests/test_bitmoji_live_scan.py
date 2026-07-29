@@ -95,8 +95,38 @@ class OutfitRenderFilterTests(unittest.TestCase):
 
         self.assertEqual(scan.filter_outfit_render_params("outfits", params, preview), params)
 
+    def test_outfit_id_preview_keeps_outfit_and_original_clothing_type(self):
+        params = {
+            "outfit": "927623",
+            "clothing_type": "0",
+            "top": "stale",
+            "bottom": "stale",
+        }
+        preview = "https://preview.bitmoji.com/avatar-builder-v3/preview/mannequin?outfit=927623"
+
+        self.assertEqual(
+            scan.filter_outfit_render_params("outfits", params, preview),
+            {"outfit": "927623", "clothing_type": "0"},
+        )
+
 
 class OutfitOptionAssemblyTests(unittest.TestCase):
+    def test_original_outfit_id_options_use_atomic_outfit_render_params(self):
+        options, errors = scan.scan_original_outfit_id_options(
+            [
+                {
+                    "id": "927623",
+                    "preview": "https://preview.bitmoji.com/avatar-builder-v3/preview/mannequin?outfit=927623",
+                }
+            ],
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/body?gender=2&clothing_type=1",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(options[0]["colors_verified"], True)
+        self.assertEqual(options[0]["colors"], [])
+        self.assertEqual(options[0]["render"]["params"], {"outfit": "927623", "clothing_type": "0"})
+
     def test_each_garment_keeps_its_own_completed_colour_variants(self):
         base = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?gender=1"
         red = (
@@ -276,6 +306,64 @@ class OutfitScanCallPathTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(options[0]["render"]["params"], {"top": "632", "bottom": "632"})
+
+    def test_outfit_id_tiles_confirm_selection_from_advertised_top_and_bottom(self):
+        preview = (
+            "https://preview.bitmoji.com/avatar-builder-v3/preview/mannequin?"
+            "outfit=927623&top=183&bottom=356&top_tone1=10&bottom_tone1=20"
+        )
+        selected = (
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/body?"
+            "top=183&bottom=356&top_tone1=10&bottom_tone1=20"
+        )
+
+        class OutfitIdFrame:
+            def evaluate(self, script, *_args):
+                if script == scan.JS_BASE_AVATAR:
+                    return selected
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        with mock.patch.object(scan.time, "sleep"):
+            self.assertEqual(
+                scan.wait_for_selected_body(
+                    OutfitIdFrame(),
+                    "outfit",
+                    "927623",
+                    timeout=0,
+                    feature="outfits",
+                    tile_preview=preview,
+                ),
+                selected,
+            )
+
+    def test_outfit_id_only_tiles_confirm_selection_from_body_outfit_param(self):
+        preview = (
+            "https://preview.bitmoji.com/avatar-builder-v3/preview/mannequin?"
+            "outfit=927623"
+        )
+        selected = (
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/body?"
+            "clothing_type=0&outfit=927623"
+        )
+
+        class OutfitIdFrame:
+            def evaluate(self, script, *_args):
+                if script == scan.JS_BASE_AVATAR:
+                    return selected
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        with mock.patch.object(scan.time, "sleep"):
+            self.assertEqual(
+                scan.wait_for_selected_body(
+                    OutfitIdFrame(),
+                    "outfit",
+                    "927623",
+                    timeout=0,
+                    feature="outfits",
+                    tile_preview=preview,
+                ),
+                selected,
+            )
 
     def test_selected_body_preview_supplies_paired_garment_params(self):
         base = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?gender=1"
@@ -469,7 +557,7 @@ class OutfitScanCallPathTests(unittest.TestCase):
         self.assertTrue(options[0]["colors_verified"])
         self.assertEqual(options[0]["render"]["colour_variants"]["#ec2020"], {"top_tone1": "20"})
 
-    def test_active_singleton_without_tone_transition_stays_unverified(self):
+    def test_active_singleton_uses_selected_body_as_verified_default(self):
         body = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=1062&top_tone1=10"
 
         class StaticFrame:
@@ -495,11 +583,13 @@ class OutfitScanCallPathTests(unittest.TestCase):
                 swatch_timeout=0,
             )
 
-        self.assertFalse(options[0]["colors_verified"])
+        self.assertEqual(errors, [])
+        self.assertTrue(options[0]["colors_verified"])
+        self.assertEqual(options[0]["colors"], ["#ec2020"])
+        self.assertEqual(options[0]["render"]["params"], {"top": "1062", "top_tone1": "10"})
         self.assertNotIn("#ec2020", options[0]["render"].get("colour_variants", {}))
-        self.assertIn("relevant tone", errors[0]["error"])
 
-    def test_active_swatch_is_confirmed_after_transitioning_back_to_it(self):
+    def test_active_swatch_uses_base_render_after_other_colours_are_verified(self):
         red = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=1062&top_tone1=10"
         blue = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=1062&top_tone1=20"
 
@@ -532,7 +622,7 @@ class OutfitScanCallPathTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(options[0]["colors_verified"])
         self.assertEqual(options[0]["render"]["colour_variants"]["#010203"], {"top_tone1": "20"})
-        self.assertEqual(options[0]["render"]["colour_variants"]["#ec2020"], {"top_tone1": "10"})
+        self.assertNotIn("#ec2020", options[0]["render"]["colour_variants"])
 
     def test_body_and_picker_poll_until_the_editor_confirms_state(self):
         selected = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?gender=1&top=1062"
@@ -672,6 +762,39 @@ class EnumerationCompletenessTests(unittest.TestCase):
             ):
                 self.assertEqual(scan.main(["profile", "--write"]), 1)
             self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"existing": True})
+
+    def test_feature_scroll_targets_fashion_container_before_active_root(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is required for feature scroll DOM regression")
+        helper = json.dumps(scan.JS_SCROLL_TO)
+        harness = f"""
+const helper = {helper};
+const root = {{name:'root', scrollTop:0, scrollHeight:400, clientHeight:400}};
+const fashion = {{name:'fashion', scrollTop:0, scrollHeight:1200, clientHeight:300}};
+globalThis.document = {{
+  querySelector: (selector) => {{
+    if (selector === '[data-nyx-active] .traits-container.scrollable') return null;
+    if (selector === '[data-nyx-active] .fashion-traits-container.scrollable') return fashion;
+    if (selector === '[data-nyx-active] [class*="traits-container"].scrollable') return fashion;
+    if (selector === '[data-nyx-active]') return root;
+    return null;
+  }},
+}};
+const scrollTo = eval(`(${{helper}})`);
+const result = scrollTo(280);
+console.log(JSON.stringify({{
+  result,
+  rootScrollTop: root.scrollTop,
+  fashionScrollTop: fashion.scrollTop,
+}}));
+"""
+        result = subprocess.run([node, "-e", harness], check=True, text=True, capture_output=True)
+        observed = json.loads(result.stdout)
+
+        self.assertEqual(observed["result"], {"h": 1200, "t": 280, "ch": 300})
+        self.assertEqual(observed["fashionScrollTop"], 280)
+        self.assertEqual(observed["rootScrollTop"], 0)
 
     def test_feature_scroll_cap_is_explicit_and_write_blocked(self):
         class EndlessFeatureFrame:
@@ -940,7 +1063,119 @@ console.log(JSON.stringify(result));
         self.assertEqual(observed["blueEvents"], ["mousedown", "mouseup", "click"])
 
 
+class LiveCatalogPageSelectionTests(unittest.TestCase):
+    def test_direct_builder_page_is_preferred_over_parent_editor_page(self):
+        class Page:
+            def __init__(self, url):
+                self.url = url
+
+        class Context:
+            def __init__(self, pages):
+                self.pages = pages
+
+        editor = Page("https://www.bitmoji.com/avatar/edit/")
+        builder = Page("https://sdk.bitmoji.com/web-builder/?top=183")
+
+        self.assertIs(scan.catalog_scan_page([Context([editor, builder])]), builder)
+
+
 class OutfitTileSelectorTests(unittest.TestCase):
+    def test_select_outfit_tile_clicks_visible_tile_before_resetting_scroll(self):
+        class Frame:
+            def __init__(self):
+                self.operations = []
+
+            def evaluate(self, script, *_args):
+                if script == scan.JS_SELECT_OUTFIT_TILE:
+                    self.operations.append("select")
+                    return True
+                if script == scan.JS_SCROLL_TO:
+                    self.operations.append(("scroll", _args[0]))
+                    return {"h": 1200, "t": _args[0], "ch": 300}
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        frame = Frame()
+        with mock.patch.object(scan.time, "sleep"):
+            self.assertTrue(scan.select_outfit_tile(frame, "top", "1062"))
+
+        self.assertEqual(frame.operations, ["select"])
+
+    def test_garment_selector_skips_hidden_duplicate_before_visible_match(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is required for outfit tile DOM regression")
+        selector = json.dumps(scan.JS_SELECT_OUTFIT_TILE)
+        harness = f"""
+const selector = {selector};
+class Element {{
+  constructor(tag, className, style, parent=null, attrs={{}}) {{
+    this.tagName=tag; this.className=className; this.style=style; this.parentElement=parent;
+    this.attrs=attrs; this.children=[]; this.clicks=0; this.src=attrs.src||'';
+    if(parent) parent.children.push(this);
+  }}
+  getBoundingClientRect() {{ return {{width:this.style.width, height:this.style.height}}; }}
+  getAttribute(name) {{ return this.attrs[name] ?? null; }}
+  contains(node) {{
+    let current=node;
+    while(current) {{ if(current===this) return true; current=current.parentElement; }}
+    return false;
+  }}
+  matchesOne(part) {{
+    if(part.startsWith('.')) return String(this.className).split(/\\s+/).includes(part.slice(1));
+    if(part.startsWith('[class*="')) return String(this.className).includes(part.slice(9, -2));
+    return false;
+  }}
+  closest(selector) {{
+    const parts=selector.split(',').map(part=>part.trim());
+    let current=this;
+    while(current) {{
+      if(parts.some(part=>current.matchesOne(part))) return current;
+      current=current.parentElement;
+    }}
+    return null;
+  }}
+  querySelectorAll(selector) {{
+    const out=[];
+    const visit=(node)=>{{ for(const child of node.children) {{
+      if(selector.startsWith('img[') && child.tagName==='IMG' && String(child.src).includes('preview.bitmoji.com')) out.push(child);
+      visit(child);
+    }} }};
+    visit(this);
+    return out;
+  }}
+  click() {{ this.clicks += 1; }}
+}}
+const visible = {{width:50,height:50,display:'block',visibility:'visible'}};
+const hiddenStyle = {{width:0,height:0,display:'block',visibility:'visible'}};
+const activeRoot = new Element('DIV', 'avatar-builder-category', visible);
+const hiddenWrapper = new Element('DIV', 'outfit-container brand-outfit', hiddenStyle, activeRoot);
+const hiddenImg = new Element('IMG', 'outfit', hiddenStyle, hiddenWrapper, {{src:'https://preview.bitmoji.com/avatar/outfit?outfit=1018126'}});
+const visibleWrapper = new Element('DIV', 'outfit-container brand-outfit', visible, activeRoot);
+const visibleImg = new Element('IMG', 'outfit', visible, visibleWrapper, {{src:'https://preview.bitmoji.com/avatar/outfit?outfit=1018126'}});
+globalThis.document = {{
+  baseURI: 'https://sdk.bitmoji.com/',
+  querySelector: (query) => query==='[data-nyx-active]' ? activeRoot : null,
+}};
+globalThis.getComputedStyle = (element) => element.style;
+const select = eval(`(${{selector}})`);
+const selected = select({{param:'outfit', optionId:'1018126'}});
+console.log(JSON.stringify({{
+  selected,
+  hiddenWrapper:hiddenWrapper.clicks,
+  hiddenImg:hiddenImg.clicks,
+  visibleWrapper:visibleWrapper.clicks,
+  visibleImg:visibleImg.clicks,
+}}));
+"""
+        result = subprocess.run([node, "-e", harness], check=True, text=True, capture_output=True)
+        observed = json.loads(result.stdout)
+
+        self.assertTrue(observed["selected"])
+        self.assertEqual(observed["hiddenWrapper"], 0)
+        self.assertEqual(observed["hiddenImg"], 0)
+        self.assertEqual(observed["visibleWrapper"], 1)
+        self.assertEqual(observed["visibleImg"], 1)
+
     def test_visible_garment_selector_clicks_mix_tiles_and_outfit_images(self):
         node = shutil.which("node")
         if not node:
