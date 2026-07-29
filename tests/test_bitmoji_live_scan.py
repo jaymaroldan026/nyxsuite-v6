@@ -37,6 +37,14 @@ class PreviewDeltaTests(unittest.TestCase):
             {"top": "22", "top_tone1": "16031775"},
         )
 
+    def test_body_tone_colours_converts_decimal_garment_tones_to_hex(self):
+        body = (
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/body?"
+            "top=897&top_tone1=3171228&bottom=356&bottom_tone1=11801878"
+        )
+
+        self.assertEqual(scan.body_tone_colours("tops", body), {"#30639c"})
+
 
 class OutfitRenderFilterTests(unittest.TestCase):
     def test_top_render_drops_a_stale_bottom_from_a_previous_dress(self):
@@ -177,6 +185,47 @@ class OutfitOptionAssemblyTests(unittest.TestCase):
 
 
 class OutfitScanCallPathTests(unittest.TestCase):
+    def test_swatch_variant_match_allows_tone_params_to_change(self):
+        previous = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=897&top_tone1=3171228"
+        changed = (
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/body?"
+            "top=897&top_tone1=11801878&top_tone2=4823115"
+        )
+        preview = (
+            "https://preview.bitmoji.com/bm-preview/v3/avatar/top?"
+            "top=897&top_tone1=3171228&top_tone2=4690663"
+        )
+
+        class Frame:
+            def evaluate(self, script, *_args):
+                if script == scan.JS_BASE_AVATAR:
+                    return changed
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        self.assertFalse(scan.body_matches_advertised_tile(changed, "top", "897", "tops", preview))
+        self.assertTrue(
+            scan.body_matches_advertised_tile(
+                changed,
+                "top",
+                "897",
+                "tops",
+                preview,
+                allow_tone_changes=True,
+            )
+        )
+        self.assertEqual(
+            scan.wait_for_changed_body(
+                Frame(),
+                previous,
+                "top",
+                "897",
+                feature="tops",
+                tile_preview=preview,
+                timeout=0,
+            ),
+            changed,
+        )
+
     def test_paired_tile_rejects_a_selected_body_with_a_stale_advertised_sibling(self):
         base = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?gender=1"
         preview = "https://preview.bitmoji.com/bm-preview/v3/avatar/one_piece?top=632&bottom=632"
@@ -750,6 +799,72 @@ class EnumerationCompletenessTests(unittest.TestCase):
 
 
 class PickerScopeTests(unittest.TestCase):
+    def test_wait_for_picker_palette_waits_for_selected_body_tones(self):
+        selected = "https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=897&top_tone1=3171228"
+
+        class Frame:
+            def __init__(self):
+                self.reads = 0
+
+            def evaluate(self, script, *_args):
+                if script == scan.JS_PICKER_SCROLL:
+                    return {"h": 100, "t": 0, "ch": 50}
+                if script == scan.JS_PICKER_COLORS:
+                    self.reads += 1
+                    return ["#111111"] if self.reads == 1 else ["#30639c"]
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        frame = Frame()
+        with mock.patch.object(scan.time, "sleep"):
+            ready, error = scan.wait_for_picker_palette(frame, selected, "tops", timeout=1)
+
+        self.assertTrue(ready)
+        self.assertIsNone(error)
+        self.assertEqual(frame.reads, 2)
+
+    def test_picker_colours_resets_virtual_scroll_before_first_grab(self):
+        class Frame:
+            def __init__(self):
+                self.reset_settled = False
+
+            def evaluate(self, script, *_args):
+                if script == scan.JS_PICKER_COLORS:
+                    return ["#222222"] if self.reset_settled else ["#111111"]
+                if script == scan.JS_PICKER_SCROLL:
+                    return {"h": 0, "t": 0, "ch": 0}
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        frame = Frame()
+
+        def mark_reset_settled(_seconds):
+            frame.reset_settled = True
+
+        with mock.patch.object(scan.time, "sleep", side_effect=mark_reset_settled):
+            colors, error = scan.picker_colours(frame)
+
+        self.assertIsNone(error)
+        self.assertEqual(colors, ["#222222"])
+
+    def test_click_picker_colour_waits_after_resetting_virtual_scroll(self):
+        class Frame:
+            def __init__(self):
+                self.slept_after_reset = False
+
+            def evaluate(self, script, *_args):
+                if script == scan.JS_PICKER_SCROLL:
+                    return {"h": 0, "t": 0, "ch": 0}
+                if script == scan.JS_CLICK_PICKER_COLOR:
+                    return self.slept_after_reset
+                raise AssertionError(f"unexpected browser script: {script}")
+
+        frame = Frame()
+
+        def mark_virtualized_dom_settled(_seconds):
+            frame.slept_after_reset = True
+
+        with mock.patch.object(scan.time, "sleep", side_effect=mark_virtualized_dom_settled):
+            self.assertTrue(scan.click_picker_colour(frame, "#f5eaea"))
+
     def test_visible_picker_root_counts_enumerates_and_clicks_all_its_swatches(self):
         node = shutil.which("node")
         if not node:
@@ -763,11 +878,11 @@ class PickerScopeTests(unittest.TestCase):
         harness = f"""
 const helpers = {helpers};
 class Element {{
-  constructor(className, style, parent=null) {{
-    this.className=className; this.style=style; this.parentElement=parent;
-    this.children=[]; this.scrollHeight=0; this.clientHeight=0; this.scrollTop=0; this.clicks=0;
-    if(parent) parent.children.push(this);
-  }}
+	  constructor(className, style, parent=null) {{
+	    this.className=className; this.style=style; this.parentElement=parent;
+	    this.children=[]; this.scrollHeight=0; this.clientHeight=0; this.scrollTop=0; this.clicks=0; this.events=[];
+	    if(parent) parent.children.push(this);
+	  }}
   getBoundingClientRect() {{ return {{width:this.style.width, height:this.style.height}}; }}
   closest(_selector) {{
     let current=this;
@@ -784,10 +899,15 @@ class Element {{
       visit(child);
     }} }};
     visit(this); return out;
-  }}
-  click() {{ this.clicks += 1; }}
-}}
-const hiddenRoot = new Element('hidden-picker', {{width:100,height:100,display:'none',visibility:'visible',backgroundColor:''}});
+	  }}
+	  click() {{ this.clicks += 1; }}
+	  dispatchEvent(event) {{ this.events.push(event.type); return true; }}
+	}}
+	globalThis.MouseEvent = class MouseEvent {{
+	  constructor(type, _init) {{ this.type = type; }}
+	}};
+	globalThis.window = globalThis;
+	const hiddenRoot = new Element('hidden-picker', {{width:100,height:100,display:'none',visibility:'visible',backgroundColor:''}});
 const hidden = new Element('colour-picker-option', {{width:20,height:20,display:'none',visibility:'visible',backgroundColor:'rgb(1, 2, 3)'}}, hiddenRoot);
 const visibleRoot = new Element('colour-picker-panel', {{width:200,height:100,display:'block',visibility:'visible',backgroundColor:''}});
 visibleRoot.scrollHeight=600; visibleRoot.clientHeight=100;
@@ -800,11 +920,12 @@ const invoke = (source, ...args) => eval(`(${{source}})`)(...args);
 const result = {{
   count: invoke(helpers.count),
   colors: invoke(helpers.colors),
-  scroll: invoke(helpers.scroll, 85),
-  clicked: invoke(helpers.click, '#010203'),
-  hiddenClicks: hidden.clicks,
-  blueClicks: blue.clicks,
-}};
+	  scroll: invoke(helpers.scroll, 85),
+	  clicked: invoke(helpers.click, '#010203'),
+	  hiddenClicks: hidden.clicks,
+	  blueClicks: blue.clicks,
+	  blueEvents: blue.events,
+	}};
 console.log(JSON.stringify(result));
 """
         result = subprocess.run([node, "-e", harness], check=True, text=True, capture_output=True)
@@ -815,57 +936,98 @@ console.log(JSON.stringify(result));
         self.assertEqual(observed["scroll"], {"h": 600, "t": 85, "ch": 100})
         self.assertTrue(observed["clicked"])
         self.assertEqual(observed["hiddenClicks"], 0)
-        self.assertEqual(observed["blueClicks"], 1)
+        self.assertEqual(observed["blueClicks"], 0)
+        self.assertEqual(observed["blueEvents"], ["mousedown", "mouseup", "click"])
 
 
 class OutfitTileSelectorTests(unittest.TestCase):
-    def test_visible_bare_mix_and_match_tile_requires_an_exact_preview_match(self):
+    def test_visible_garment_selector_clicks_mix_tiles_and_outfit_images(self):
         node = shutil.which("node")
         if not node:
             self.skipTest("Node.js is required for outfit tile DOM regression")
         selector = json.dumps(scan.JS_SELECT_OUTFIT_TILE)
         harness = f"""
 const selector = {selector};
-class Tile {{
-  constructor(className, tabindex, imageUrl) {{
-    this.className=className; this.tabindex=tabindex; this.imageUrl=imageUrl; this.clicks=0;
-    this.style={{width:50,height:50,display:'block',visibility:'visible'}};
+class Element {{
+  constructor(tag, className, style, parent=null, attrs={{}}) {{
+    this.tagName=tag; this.className=className; this.style=style; this.parentElement=parent;
+    this.attrs=attrs; this.children=[]; this.clicks=0; this.src=attrs.src||'';
+    if(parent) parent.children.push(this);
   }}
   getBoundingClientRect() {{ return {{width:this.style.width, height:this.style.height}}; }}
-  querySelectorAll(query) {{ return query.startsWith('img[') ? [{{src:this.imageUrl}}] : []; }}
+  getAttribute(name) {{ return this.attrs[name] ?? null; }}
+  contains(node) {{
+    let current=node;
+    while(current) {{ if(current===this) return true; current=current.parentElement; }}
+    return false;
+  }}
+  matchesOne(part) {{
+    if(part.startsWith('.')) return String(this.className).split(/\\s+/).includes(part.slice(1));
+    if(part.startsWith('[class*="')) return String(this.className).includes(part.slice(9, -2));
+    return false;
+  }}
+  closest(selector) {{
+    const parts=selector.split(',').map(part=>part.trim());
+    let current=this;
+    while(current) {{
+      if(parts.some(part=>current.matchesOne(part))) return current;
+      current=current.parentElement;
+    }}
+    return null;
+  }}
+  querySelectorAll(selector) {{
+    const out=[];
+    const visit=(node)=>{{ for(const child of node.children) {{
+      if(selector.startsWith('img[') && child.tagName==='IMG' && String(child.src).includes('preview.bitmoji.com')) out.push(child);
+      visit(child);
+    }} }};
+    visit(this);
+    return out;
+  }}
   click() {{ this.clicks += 1; }}
 }}
-const bareMatch = new Tile('mix-and-match-container', null, 'https://preview.bitmoji.com/avatar/top?top=1062');
-const focusableMismatch = new Tile('mix-and-match-container', '0', 'https://preview.bitmoji.com/avatar/top?top=999');
-const unrelatedMatch = new Tile('other-container', '0', 'https://preview.bitmoji.com/avatar/top?top=1062');
-const tiles = [bareMatch, focusableMismatch, unrelatedMatch];
-const activeRoot = {{
-  querySelectorAll(query) {{
-    const needsTabIndex=query.includes('[tabindex="0"]');
-    const acceptsExactClass=query.includes('.mix-and-match-container');
-    const acceptsClassSubstring=query.includes('[class*="mix-and-match-container"]');
-    return tiles.filter(tile =>
-      (acceptsExactClass && tile.className.split(/\\s+/).includes('mix-and-match-container') ||
-       acceptsClassSubstring && tile.className.includes('mix-and-match-container')) &&
-      (!needsTabIndex || tile.tabindex==='0')
-    );
-  }}
-}};
+const visible = {{width:50,height:50,display:'block',visibility:'visible'}};
+const activeRoot = new Element('DIV', 'avatar-builder-category', visible);
+const bareMatch = new Element('DIV', 'mix-and-match-container', visible, activeRoot);
+const bareImg = new Element('IMG', 'trait', visible, bareMatch, {{src:'https://preview.bitmoji.com/avatar/top?top=1062'}});
+const mismatch = new Element('DIV', 'mix-and-match-container', visible, activeRoot);
+const mismatchImg = new Element('IMG', 'trait', visible, mismatch, {{src:'https://preview.bitmoji.com/avatar/top?top=999'}});
+const unrelated = new Element('DIV', 'other-container', visible, activeRoot);
+const unrelatedImg = new Element('IMG', 'trait', visible, unrelated, {{src:'https://preview.bitmoji.com/avatar/top?top=1062'}});
+const outfitWrapper = new Element('DIV', 'outfit-container brand-outfit', visible, activeRoot);
+const outfitImg = new Element('IMG', 'outfit', visible, outfitWrapper, {{src:'https://preview.bitmoji.com/avatar/outfit?bottom=537'}});
 globalThis.document = {{
   baseURI: 'https://sdk.bitmoji.com/',
   querySelector: (query) => query==='[data-nyx-active]' ? activeRoot : null,
 }};
 globalThis.getComputedStyle = (element) => element.style;
-const selected = eval(`(${{selector}})`)({{param:'top', optionId:'1062'}});
-console.log(JSON.stringify({{selected, bare:bareMatch.clicks, mismatch:focusableMismatch.clicks, unrelated:unrelatedMatch.clicks}}));
+const select = eval(`(${{selector}})`);
+const selectedTop = select({{param:'top', optionId:'1062'}});
+const selectedOutfit = select({{param:'bottom', optionId:'537'}});
+console.log(JSON.stringify({{
+  selectedTop,
+  selectedOutfit,
+  bare:bareMatch.clicks,
+  bareImg:bareImg.clicks,
+  mismatch:mismatch.clicks,
+  unrelated:unrelated.clicks,
+  unrelatedImg:unrelatedImg.clicks,
+  outfitWrapper:outfitWrapper.clicks,
+  outfitImg:outfitImg.clicks,
+}}));
 """
         result = subprocess.run([node, "-e", harness], check=True, text=True, capture_output=True)
         observed = json.loads(result.stdout)
 
-        self.assertTrue(observed["selected"])
+        self.assertTrue(observed["selectedTop"])
+        self.assertTrue(observed["selectedOutfit"])
         self.assertEqual(observed["bare"], 1)
+        self.assertEqual(observed["bareImg"], 0)
         self.assertEqual(observed["mismatch"], 0)
         self.assertEqual(observed["unrelated"], 0)
+        self.assertEqual(observed["unrelatedImg"], 0)
+        self.assertEqual(observed["outfitWrapper"], 1)
+        self.assertEqual(observed["outfitImg"], 1)
 
 
 class AuditBoundaryTests(unittest.TestCase):
@@ -968,6 +1130,32 @@ class AuditBoundaryTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(good_page.reload_calls, 1)
 
+        class IframeRestorePage(Page):
+            def evaluate(self, script, url):
+                if script != scan.JS_RESET_BUILDER_FRAME:
+                    raise AssertionError(f"unexpected page script: {script}")
+                self.frames[0].url = url
+                self.frames[0].body = ""
+                return True
+
+        iframe_page = IframeRestorePage(Frame("https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=999"))
+        restored, error = scan.restore_editor_state(
+            iframe_page,
+            initial,
+            timeout=0,
+            base_frame_url="https://sdk.bitmoji.com/web-builder?top=1062&top_tone1=10",
+        )
+        self.assertTrue(restored)
+        self.assertIsNone(error)
+        self.assertEqual(iframe_page.reload_calls, 0)
+
+        frame_url_page = Page(Frame(""))
+        frame_url_page.frames[0].url = "https://sdk.bitmoji.com/web-builder?top=1062&top_tone1=10"
+        restored, error = scan.restore_editor_state(frame_url_page, initial, timeout=0)
+        self.assertTrue(restored)
+        self.assertIsNone(error)
+        self.assertEqual(frame_url_page.reload_calls, 1)
+
         bad_page = Page(Frame("https://preview.bitmoji.com/bm-preview/v3/avatar/body?top=999"))
         restored, error = scan.restore_editor_state(bad_page, initial, timeout=0)
         self.assertFalse(restored)
@@ -1027,6 +1215,38 @@ class ScanLifecycleTests(unittest.TestCase):
         self.assertFalse(restored)
         self.assertIn("initial body preview", error)
 
+    def test_waiting_for_editor_frame_does_not_pick_avatar_gender(self):
+        class Button:
+            def __init__(self):
+                self.clicks = 0
+
+            def click(self):
+                self.clicks += 1
+
+        class Page:
+            def __init__(self, button):
+                self.frames = []
+                self.button = button
+
+            def query_selector(self, selector):
+                if selector == 'button[aria-label="Female Avatar"]':
+                    return self.button
+                return None
+
+        button = Button()
+        with (
+            mock.patch.dict("sys.modules", {
+                "playwright": mock.Mock(),
+                "playwright.sync_api": mock.Mock(TimeoutError=TimeoutError),
+            }),
+            mock.patch.object(scan.time, "monotonic", side_effect=[0, 0, 1]),
+            mock.patch.object(scan.time, "sleep"),
+        ):
+            frame = scan._ensure_editor_frame(Page(button), timeout=0.1)
+
+        self.assertIsNone(frame)
+        self.assertEqual(button.clicks, 0)
+
 
 class CliAndWriteTests(unittest.TestCase):
     def test_default_cli_is_report_only_and_requires_a_profile(self):
@@ -1049,6 +1269,48 @@ class CliAndWriteTests(unittest.TestCase):
 
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "complete", "errors": []})
             self.assertEqual(list(path.parent.glob(".report.json.*.tmp")), [])
+
+    def test_adspower_cache_fallback_requires_validated_profile_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            cache = home / "Library/Application Support/adspower_global/cwd_global/source/cache"
+            cache.mkdir(parents=True)
+            (cache / "k1f2la8v-other").mkdir()
+            (cache / "k1f2la8vx").mkdir()
+
+            with mock.patch.object(scan.Path, "home", return_value=home):
+                with self.assertRaises(SystemExit):
+                    scan._ads_cache_dir("k1f2la8v")
+
+            suffixed = cache / "k1f2la8v_i6wcie"
+            suffixed.mkdir()
+            with mock.patch.object(scan.Path, "home", return_value=home):
+                self.assertEqual(scan._ads_cache_dir("k1f2la8v"), suffixed)
+
+            (cache / "k1f2la8v_second").mkdir()
+            with mock.patch.object(scan.Path, "home", return_value=home):
+                with self.assertRaises(SystemExit):
+                    scan._ads_cache_dir("k1f2la8v")
+
+    def test_ws_endpoint_uses_validated_cache_when_local_api_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            cache = home / "Library/Application Support/adspower_global/cwd_global/source/cache/k1f2la8v_i6wcie"
+            cache.mkdir(parents=True)
+            (cache / "DevToolsActivePort").write_text("1234\n/devtools/browser/abc\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(scan.Path, "home", return_value=home),
+                mock.patch.object(
+                    scan,
+                    "_get",
+                    side_effect=scan.urllib.error.URLError(ConnectionRefusedError("refused")),
+                ),
+            ):
+                self.assertEqual(
+                    scan.ws_endpoint("k1f2la8v"),
+                    "ws://127.0.0.1:1234/devtools/browser/abc",
+                )
 
 
 if __name__ == "__main__":
