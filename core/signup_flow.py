@@ -2499,9 +2499,11 @@ async def _recover_otp_via_back_and_new_email(
         return "", signup_page
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
-        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
-        if not clicked_back and not await _is_email_verification_step(signup_page):
-            return "", signup_page
+        on_email_step = await _is_email_verification_step(signup_page)
+        if not on_email_step:
+            clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+            if not clicked_back and not await _is_email_verification_step(signup_page):
+                return "", signup_page
 
         # Wait for the email entry step to (re)appear before re-ordering.
         on_email_step = await _is_email_verification_step(signup_page)
@@ -2561,9 +2563,11 @@ async def _recover_sms_via_new_phone(
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
         # Return to the phone-entry step so a fresh number can be submitted.
-        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
-        if not clicked_back and not await _is_phone_verification_step(signup_page):
-            return "", signup_page
+        on_phone_step = await _is_phone_verification_step(signup_page)
+        if not on_phone_step:
+            clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+            if not clicked_back and not await _is_phone_verification_step(signup_page):
+                return "", signup_page
 
         on_phone_step = await _is_phone_verification_step(signup_page)
         for _ in range(6):

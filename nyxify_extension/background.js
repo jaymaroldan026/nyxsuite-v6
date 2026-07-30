@@ -1093,6 +1093,7 @@ chrome.runtime.onStartup.addListener(async () => {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === FLUSH_ALARM) {
     await maybeFetchBridgeToken().catch(() => null);
+    await processSnapboardRefreshRequest().catch(() => null);
     await flushPendingEntries();
     await hydrateScrapeRunFromStorage().catch(() => null);
     // Settle hung/closed worker tabs (hibernation-safe) before re-driving so a
@@ -1563,6 +1564,20 @@ function getAvailableSnapboardTabId() {
   return entries[0][0];
 }
 
+async function findSnapboardTabId() {
+  const connectedTabId = getAvailableSnapboardTabId();
+  if (connectedTabId != null) {
+    return connectedTabId;
+  }
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://snapboard.onrender.com/*" });
+    const tab = (tabs || []).find((candidate) => candidate && candidate.id != null);
+    return tab ? tab.id : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 function sendMessageToSnapboardTab(message) {
   return new Promise((resolve) => {
     const tabId = getAvailableSnapboardTabId();
@@ -1611,12 +1626,13 @@ async function ensureSnapboardLoggedIn(timeoutMs) {
   }
 }
 
-async function refreshSnapboardTab() {
+async function refreshSnapboardTab(options) {
+  const force = !!(options && options.force);
   const now = Date.now();
-  if (now - lastSnapboardReloadAt < SNAPBOARD_RELOAD_COOLDOWN_MS) {
+  if (!force && now - lastSnapboardReloadAt < SNAPBOARD_RELOAD_COOLDOWN_MS) {
     return false;
   }
-  const tabId = getAvailableSnapboardTabId();
+  const tabId = await findSnapboardTabId();
   if (tabId == null) {
     return false;  // no tab to reload
   }
@@ -1800,7 +1816,29 @@ async function collectPendingBridgeRequests(path, maxRequests) {
   return requests;
 }
 
+async function processSnapboardRefreshRequest() {
+  const payload = await callLocalNyxify("GET", "/snapboard_refresh/pending");
+  const request = payload && payload.request ? payload.request : null;
+  if (!request || !request.request_id) {
+    return false;
+  }
+
+  const refreshed = await refreshSnapboardTab({ force: true });
+  await callLocalNyxify("POST", "/snapboard_refresh/result", {
+    request_id: request.request_id,
+    success: refreshed,
+    error: refreshed ? "" : "No SnapBoard tab could be refreshed.",
+  });
+  return refreshed;
+}
+
 async function processBridgeActionsOnce() {
+  try {
+    await processSnapboardRefreshRequest();
+  } catch (error) {
+    await appendEventLog(`Nyxify SnapBoard refresh bridge error: ${error.message}`);
+  }
+
   if (!snapboardPorts.size) {
     return;
   }

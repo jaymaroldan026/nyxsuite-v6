@@ -441,6 +441,93 @@ class _SmsFetchStore:
             return info
 
 
+class _SnapboardRefreshStore:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._pending = None
+        self._result = None
+        self._next_id = 0
+
+    def request(self, reason=""):
+        with self._lock:
+            self._next_id += 1
+            request_id = f"refresh:{self._next_id}"
+            self._pending = {
+                "request_id": request_id,
+                "reason": str(reason or "").strip(),
+                "created_at": time.monotonic(),
+                "dispatched": False,
+                "dispatched_at": 0.0,
+            }
+            self._result = None
+            return request_id
+
+    def pop_pending(self):
+        with self._lock:
+            if not self._pending:
+                return None
+            now = time.monotonic()
+            if (
+                self._pending.get("dispatched")
+                and (now - float(self._pending.get("dispatched_at") or 0.0)) < 5.0
+            ):
+                return None
+            self._pending["dispatched"] = True
+            self._pending["dispatched_at"] = now
+            return {
+                "request_id": self._pending.get("request_id", ""),
+                "reason": self._pending.get("reason", ""),
+            }
+
+    def store_result(self, success, error=None, request_id=""):
+        with self._lock:
+            normalized_request_id = str(request_id or "").strip()
+            current_request_id = str((self._pending or {}).get("request_id") or "").strip()
+            if normalized_request_id and current_request_id and normalized_request_id != current_request_id:
+                return False
+            self._result = {
+                "request_id": normalized_request_id or current_request_id,
+                "success": bool(success),
+                "error": str(error or "").strip(),
+                "done_at": time.monotonic(),
+            }
+            self._pending = None
+            return True
+
+    def get_result(self, request_id=""):
+        with self._lock:
+            if not self._result:
+                return None
+            normalized_request_id = str(request_id or "").strip()
+            result_request_id = str(self._result.get("request_id") or "").strip()
+            if normalized_request_id and result_request_id and normalized_request_id != result_request_id:
+                return None
+            return dict(self._result)
+
+    def get_pending_info(self, request_id=""):
+        with self._lock:
+            if not self._pending:
+                return None
+            normalized_request_id = str(request_id or "").strip()
+            pending_request_id = str(self._pending.get("request_id") or "").strip()
+            if normalized_request_id and pending_request_id and normalized_request_id != pending_request_id:
+                return None
+            now = time.monotonic()
+            created_at = float(self._pending.get("created_at") or now)
+            dispatched_at = float(self._pending.get("dispatched_at") or 0.0)
+            dispatched = bool(self._pending.get("dispatched"))
+            info = {
+                "requested": True,
+                "request_id": pending_request_id,
+                "reason": self._pending.get("reason", ""),
+                "dispatched": dispatched,
+                "age_seconds": max(0.0, now - created_at),
+            }
+            if dispatched and dispatched_at:
+                info["dispatched_age_seconds"] = max(0.0, now - dispatched_at)
+            return info
+
+
 class _ReplaceBannedScanStore:
     def __init__(self):
         self._lock = threading.Lock()
@@ -529,6 +616,7 @@ class NyxifyLocalApiServer:
         self.email_fetch_store = _EmailFetchStore()
         self.phone_fetch_store = _PhoneFetchStore()
         self.sms_fetch_store = _SmsFetchStore()
+        self.snapboard_refresh_store = _SnapboardRefreshStore()
         self.replace_banned_scan_store = _ReplaceBannedScanStore()
         self.full_auto_username_store = FullAutoUsernameStore()
         try:
@@ -842,6 +930,10 @@ class NyxifyLocalApiServer:
                     self._write_json(200, {"ok": True, "request": outer.sms_fetch_store.pop_pending()})
                     return
 
+                if self.path == "/snapboard_refresh/pending":
+                    self._write_json(200, {"ok": True, "request": outer.snapboard_refresh_store.pop_pending()})
+                    return
+
                 if self.path == "/config":
                     self._write_json(200, {"ok": True, "config": load_nyxify_config()})
                     return
@@ -997,6 +1089,29 @@ class NyxifyLocalApiServer:
                         )
                     else:
                         pending = outer.sms_fetch_store.get_pending_info(row_key) if row_key else None
+                        payload = {"ok": True, "done": False}
+                        if pending:
+                            payload.update(pending)
+                        self._write_json(200, payload)
+                    return
+
+                if parsed_path.path == "/snapboard_refresh/status":
+                    params = parse_qs(parsed_path.query)
+                    request_id = str((params.get("request_id") or [""])[0]).strip()
+                    result = outer.snapboard_refresh_store.get_result(request_id)
+                    if result:
+                        self._write_json(
+                            200,
+                            {
+                                "ok": True,
+                                "done": True,
+                                "request_id": result.get("request_id", ""),
+                                "success": bool(result.get("success")),
+                                "error": result.get("error", ""),
+                            },
+                        )
+                    else:
+                        pending = outer.snapboard_refresh_store.get_pending_info(request_id)
                         payload = {"ok": True, "done": False}
                         if pending:
                             payload.update(pending)
@@ -1285,6 +1400,34 @@ class NyxifyLocalApiServer:
                         return
                     outer.sms_fetch_store.store_result(row_key, code=code, error=error)
                     self._write_json(200, {"ok": True, "message": "SMS fetch result stored."})
+                    return
+
+                if self.path == "/snapboard_refresh/request":
+                    reason = str(payload.get("reason", "")).strip()
+                    request_id = outer.snapboard_refresh_store.request(reason=reason)
+                    self._write_json(
+                        200,
+                        {
+                            "ok": True,
+                            "request_id": request_id,
+                            "message": "SnapBoard refresh requested.",
+                        },
+                    )
+                    return
+
+                if self.path == "/snapboard_refresh/result":
+                    request_id = str(payload.get("request_id", "")).strip()
+                    success = bool(payload.get("success"))
+                    error = str(payload.get("error", "")).strip()
+                    stored = outer.snapboard_refresh_store.store_result(
+                        success=success,
+                        error=error,
+                        request_id=request_id,
+                    )
+                    if not stored:
+                        self._write_json(409, {"ok": False, "error": "SnapBoard refresh request is stale."})
+                        return
+                    self._write_json(200, {"ok": True, "message": "SnapBoard refresh result stored."})
                     return
 
                 if self.path == "/full_auto/reserve":

@@ -385,6 +385,31 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertEqual(dispatcher_for('action: "otp"'), "snapboardFetchWithRelogin")
         self.assertEqual(dispatcher_for('action: "sms"'), "snapboardFetchWithRelogin")
 
+    def test_snapboard_refresh_bridge_is_wired_in_background_and_content(self):
+        background = (ROOT / "nyxify_extension" / "background.js").read_text(encoding="utf-8")
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function processSnapboardRefreshRequest()", background)
+        self.assertIn('"/snapboard_refresh/pending"', background)
+        self.assertIn('"/snapboard_refresh/result"', background)
+        self.assertIn("await refreshSnapboardTab({ force: true })", background)
+        self.assertLess(
+            background.index("await processSnapboardRefreshRequest();"),
+            background.index("const emailRequests"),
+        )
+        self.assertIn("chrome.tabs.query", background)
+        self.assertIn("https://snapboard.onrender.com/*", background)
+
+        self.assertIn("function startSnapboardRefreshPoll()", content)
+        self.assertIn('"/snapboard_refresh/pending"', content)
+        self.assertIn('"/snapboard_refresh/result"', content)
+        self.assertIn("SNAPBOARD_REFRESH_ACK_KEY", content)
+        self.assertIn("window.location.reload();", content)
+        self.assertLess(
+            content.index("startSnapboardRefreshPoll();"),
+            content.index("startAutoLoginPoll();"),
+        )
+
     def test_options_page_stores_snapboard_login_credentials(self):
         options_html = (ROOT / "nyxify_extension" / "options.html").read_text(encoding="utf-8")
         options_js = (ROOT / "nyxify_extension" / "options.js").read_text(encoding="utf-8")

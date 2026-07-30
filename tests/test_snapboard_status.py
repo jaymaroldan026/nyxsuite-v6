@@ -128,6 +128,25 @@ class StatusUpdateApiTests(unittest.TestCase):
         self.assertTrue(status["done"])
         self.assertEqual(status["code"], "654321")
 
+    def test_snapboard_refresh_request_pending_result_flow(self):
+        resp = self._post("/snapboard_refresh/request", {"reason": "email_fetch_not_dispatched"})
+        self.assertTrue(resp["ok"])
+        request_id = resp["request_id"]
+
+        pending = self._get("/snapboard_refresh/pending")
+        self.assertEqual(pending["request"]["request_id"], request_id)
+        self.assertEqual(pending["request"]["reason"], "email_fetch_not_dispatched")
+
+        status = self._get(f"/snapboard_refresh/status?request_id={request_id}")
+        self.assertFalse(status["done"])
+        self.assertTrue(status["requested"])
+        self.assertTrue(status["dispatched"])
+
+        self._post("/snapboard_refresh/result", {"request_id": request_id, "success": True})
+        status = self._get(f"/snapboard_refresh/status?request_id={request_id}")
+        self.assertTrue(status["done"])
+        self.assertTrue(status["success"])
+
     def test_config_accepts_extension_category_setting(self):
         captured = {}
 

@@ -17,12 +17,16 @@
   var adspowerNameUpdatePollInFlight = false;
   var statusUpdatePollTimer = null;
   var statusUpdatePollInFlight = false;
+  var snapboardRefreshPollTimer = null;
+  var snapboardRefreshPollInFlight = false;
   var configCache = null;
   var configCacheAt = 0;
   var ROW_SCAN_DEBOUNCE_MS = 800;
   var OTP_POLL_INTERVAL_MS = 900;
   var PROXY_ROTATE_POLL_INTERVAL_MS = 1500;
   var USERNAME_UPDATE_POLL_INTERVAL_MS = 1200;
+  var SNAPBOARD_REFRESH_POLL_INTERVAL_MS = 1200;
+  var SNAPBOARD_REFRESH_ACK_KEY = "nyxifySnapboardRefreshAck";
   var OTP_FETCH_TIMEOUT_MS = 30000;
   var EMAIL_FETCH_TIMEOUT_MS = 45000;
   // SnapBoard's "get new email / number" (redo) buttons enforce a ~60s cooldown
@@ -1474,6 +1478,114 @@
     }
   }
 
+  function readSnapboardRefreshAck() {
+    try {
+      var raw = window.sessionStorage.getItem(SNAPBOARD_REFRESH_ACK_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && parsed.request_id ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function writeSnapboardRefreshAck(request) {
+    try {
+      window.sessionStorage.setItem(SNAPBOARD_REFRESH_ACK_KEY, JSON.stringify({
+        request_id: normalizeText(request && request.request_id),
+        reason: normalizeText(request && request.reason),
+        started_at: Date.now(),
+      }));
+    } catch (_error) {
+    }
+  }
+
+  function clearSnapboardRefreshAck() {
+    try {
+      window.sessionStorage.removeItem(SNAPBOARD_REFRESH_ACK_KEY);
+    } catch (_error) {
+    }
+  }
+
+  async function postSnapboardRefreshResult(apiConfig, request, success, error) {
+    var headers = { "Content-Type": "application/json" };
+    if (apiConfig.localToken) {
+      headers["X-Nyxify-Token"] = apiConfig.localToken;
+    }
+    var response = await fetch(apiConfig.localApiUrl + "/snapboard_refresh/result", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({
+        request_id: normalizeText(request && request.request_id),
+        success: !!success,
+        error: success ? "" : normalizeText(error),
+      }),
+    });
+    var payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload && payload.error || "SnapBoard refresh result was not accepted.");
+    }
+  }
+
+  async function completePendingSnapboardRefreshAck(apiConfig) {
+    var ack = readSnapboardRefreshAck();
+    if (!ack || !ack.request_id) {
+      return false;
+    }
+    try {
+      await postSnapboardRefreshResult(apiConfig, ack, true, "");
+      clearSnapboardRefreshAck();
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async function pollPendingSnapboardRefresh() {
+    if (snapboardRefreshPollInFlight) {
+      return;
+    }
+    snapboardRefreshPollInFlight = true;
+
+    try {
+      var config = await getStoredConfig();
+      var apiConfig = getLocalApiConfig(config);
+      if (!apiConfig.localApiUrl) {
+        return;
+      }
+
+      if (await completePendingSnapboardRefreshAck(apiConfig)) {
+        return;
+      }
+
+      if (readSnapboardRefreshAck()) {
+        return;
+      }
+
+      var headers = {};
+      if (apiConfig.localToken) {
+        headers["X-Nyxify-Token"] = apiConfig.localToken;
+      }
+
+      var response = await fetch(apiConfig.localApiUrl + "/snapboard_refresh/pending", {
+        method: "GET",
+        headers: headers,
+      });
+      var payload = await response.json();
+      var request = payload && payload.request ? payload.request : null;
+      if (!response.ok || !payload.ok || !request || !request.request_id) {
+        return;
+      }
+
+      writeSnapboardRefreshAck(request);
+      window.location.reload();
+    } catch (_error) {
+      return;
+    } finally {
+      snapboardRefreshPollInFlight = false;
+    }
+  }
+
   function waitForProxyChange(rowId, oldProxy, timeoutMs) {
     return new Promise(function (resolve) {
       var start = Date.now();
@@ -2005,6 +2117,18 @@
     }, USERNAME_UPDATE_POLL_INTERVAL_MS);
   }
 
+  function startSnapboardRefreshPoll() {
+    if (snapboardRefreshPollTimer) {
+      return;
+    }
+    snapboardRefreshPollTimer = window.setInterval(function () {
+      pollPendingSnapboardRefresh();
+    }, SNAPBOARD_REFRESH_POLL_INTERVAL_MS);
+    window.setTimeout(function () {
+      pollPendingSnapboardRefresh();
+    }, 500);
+  }
+
   function getReserveButton() {
     return document.getElementById("reserveBtn")
       || document.querySelector(".btn-reserve")
@@ -2222,6 +2346,7 @@
   startAdspowerUpdatePoll();
   startAdspowerNameUpdatePoll();
   startStatusUpdatePoll();
+  startSnapboardRefreshPoll();
   startProviderLockPoll();
   startAutoLoginPoll();
 

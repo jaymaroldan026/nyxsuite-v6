@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from urllib.parse import urlparse
 from unittest import mock
 
 
@@ -99,12 +100,64 @@ class BridgeValueWaitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(status_calls), 1)
         self.assertLess(clock.now, 2)
 
-    async def test_phone_returns_when_bridge_never_dispatches_request(self):
+    async def test_email_refreshes_snapboard_and_retries_when_bridge_never_dispatches_request(self):
         clock = FakeClock()
-        status_calls = []
+        post_paths = []
+        email_requests = 0
+        email_status_calls = 0
+        refresh_status_calls = 0
 
-        def fake_get(_url, **_kwargs):
-            status_calls.append(_kwargs)
+        def fake_post(url, **_kwargs):
+            nonlocal email_requests
+            path = urlparse(url).path
+            post_paths.append(path)
+            if path == "/email/request":
+                email_requests += 1
+            return Response({"ok": True, "request_id": "refresh:1"})
+
+        def fake_get(url, **_kwargs):
+            nonlocal email_status_calls, refresh_status_calls
+            path = urlparse(url).path
+            if path == "/snapboard_refresh/status":
+                refresh_status_calls += 1
+                return Response({"ok": True, "done": True, "success": True})
+            if path == "/email/status":
+                email_status_calls += 1
+                if email_requests == 1:
+                    return Response({
+                        "ok": True,
+                        "done": False,
+                        "requested": True,
+                        "dispatched": False,
+                        "age_seconds": 12,
+                    })
+                return Response({"ok": True, "done": True, "email": "fresh@example.com"})
+            return Response({"ok": False}, ok=False, status_code=404)
+
+        with mock.patch.object(nyxify_runner._requests, "post", side_effect=fake_post), \
+            mock.patch.object(nyxify_runner._requests, "get", side_effect=fake_get), \
+            mock.patch.object(nyxify_runner.time, "monotonic", side_effect=clock.monotonic), \
+            mock.patch.object(nyxify_runner.asyncio, "sleep", side_effect=clock.sleep):
+            email = await nyxify_runner._request_snapboard_email("snapboard:1", timeout_seconds=120)
+
+        self.assertEqual(email, "fresh@example.com")
+        self.assertEqual(post_paths, ["/email/request", "/snapboard_refresh/request", "/email/request"])
+        self.assertEqual(email_status_calls, 2)
+        self.assertEqual(refresh_status_calls, 1)
+
+    async def test_phone_returns_empty_when_snapboard_refresh_fails(self):
+        clock = FakeClock()
+        post_paths = []
+
+        def fake_post(url, **_kwargs):
+            path = urlparse(url).path
+            post_paths.append(path)
+            return Response({"ok": True, "request_id": "refresh:1"})
+
+        def fake_get(url, **_kwargs):
+            path = urlparse(url).path
+            if path == "/snapboard_refresh/status":
+                return Response({"ok": True, "done": True, "success": False, "error": "No SnapBoard tab."})
             return Response({
                 "ok": True,
                 "done": False,
@@ -113,15 +166,14 @@ class BridgeValueWaitTests(unittest.IsolatedAsyncioTestCase):
                 "age_seconds": 12,
             })
 
-        with mock.patch.object(nyxify_runner._requests, "post", return_value=Response({"ok": True})), \
+        with mock.patch.object(nyxify_runner._requests, "post", side_effect=fake_post), \
             mock.patch.object(nyxify_runner._requests, "get", side_effect=fake_get), \
             mock.patch.object(nyxify_runner.time, "monotonic", side_effect=clock.monotonic), \
             mock.patch.object(nyxify_runner.asyncio, "sleep", side_effect=clock.sleep):
             phone = await nyxify_runner._request_snapboard_phone("snapboard:1", timeout_seconds=120)
 
         self.assertEqual(phone, "")
-        self.assertEqual(len(status_calls), 1)
-        self.assertLess(clock.now, 2)
+        self.assertEqual(post_paths, ["/phone/request", "/snapboard_refresh/request"])
 
     async def test_email_request_refreshes_stale_token_after_unauthorized_response(self):
         post_headers = []
@@ -152,6 +204,43 @@ class BridgeValueWaitTests(unittest.IsolatedAsyncioTestCase):
             [headers.get("X-Nyxify-Token") for headers in post_headers],
             ["stale", "fresh"],
         )
+
+    async def test_otp_refreshes_snapboard_and_retries_after_timeout(self):
+        class FakeOtpStore:
+            def __init__(self):
+                self.requests = 0
+                self.clears = 0
+
+            def request_otp_for_row(self, row_key):
+                self.requests += 1
+                self.row_key = row_key
+
+            def consume_otp_code(self, _row_key):
+                return "123456" if self.requests >= 2 else ""
+
+            def clear_otp_request(self, _row_key):
+                self.clears += 1
+
+        clock = FakeClock()
+        store = FakeOtpStore()
+        refresh_mock = mock.AsyncMock(return_value=True)
+
+        with mock.patch.object(nyxify_runner, "_request_snapboard_refresh", new=refresh_mock), \
+            mock.patch.object(nyxify_runner.time, "monotonic", side_effect=clock.monotonic), \
+            mock.patch.object(nyxify_runner.asyncio, "sleep", side_effect=clock.sleep):
+            code = await nyxify_runner._request_snapboard_otp_from_store(
+                store,
+                "snapboard:1",
+                task_id=42,
+                timeout_seconds=2,
+                poll_seconds=1,
+                retry_timeout_seconds=2,
+            )
+
+        self.assertEqual(code, "123456")
+        self.assertEqual(store.requests, 2)
+        self.assertEqual(store.clears, 1)
+        refresh_mock.assert_awaited_once()
 
 
 if __name__ == "__main__":

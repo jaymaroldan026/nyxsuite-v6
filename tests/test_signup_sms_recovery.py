@@ -1,4 +1,4 @@
-"""Phone/SMS verification recovery.
+"""Email/phone verification recovery.
 
 When the SMS code never arrives, Nyxify should NOT fail the account (which
 deletes the AdsPower profile and recreates it). Instead it goes back to the
@@ -16,6 +16,35 @@ def _async_page():
     page = mock.Mock()
     page.wait_for_timeout = mock.AsyncMock()
     return page
+
+
+class RecoverOtpViaNewEmailTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_does_not_click_back_again_from_email_entry_step(self):
+        page = _async_page()
+        click_back = mock.AsyncMock(return_value=True)
+        is_email_step = mock.AsyncMock(side_effect=[False, True, True, True])
+        fetch_email = mock.AsyncMock(return_value="")
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+             mock.patch.object(signup_flow, "_click_verification_back_button", click_back), \
+             mock.patch.object(signup_flow, "_is_email_verification_step", is_email_step), \
+             mock.patch.object(signup_flow, "_emit_signup_progress", mock.AsyncMock()), \
+             mock.patch.object(signup_flow, "_fetch_email_from_provider", fetch_email), \
+             mock.patch.object(signup_flow, "_fill_and_submit_verification_email", mock.AsyncMock(return_value=False)), \
+             mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(return_value="")):
+            code, out_page = await signup_flow._recover_otp_via_back_and_new_email(
+                page,
+                otp_fetcher=mock.AsyncMock(return_value=""),
+                email_fetcher=mock.Mock(),
+                logger=None,
+                profile_id="1",
+                max_attempts=2,
+            )
+
+        self.assertEqual(code, "")
+        self.assertIs(out_page, page)
+        click_back.assert_awaited_once()
+        self.assertEqual(fetch_email.await_count, 2)
 
 
 class RecoverSmsViaNewPhoneTests(unittest.IsolatedAsyncioTestCase):
@@ -87,6 +116,33 @@ class RecoverSmsViaNewPhoneTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(code, "")
         self.assertIs(out_page, page)
+
+    async def test_retry_does_not_click_back_again_from_phone_entry_step(self):
+        page = _async_page()
+        click_back = mock.AsyncMock(return_value=True)
+        is_phone_step = mock.AsyncMock(side_effect=[False, True, True, True])
+        fetch_phone = mock.AsyncMock(return_value="")
+
+        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
+             mock.patch.object(signup_flow, "_click_verification_back_button", click_back), \
+             mock.patch.object(signup_flow, "_is_phone_verification_step", is_phone_step), \
+             mock.patch.object(signup_flow, "_emit_signup_progress", mock.AsyncMock()), \
+             mock.patch.object(signup_flow, "_fetch_phone_from_provider", fetch_phone), \
+             mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=False)), \
+             mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(return_value="")):
+            code, out_page = await signup_flow._recover_sms_via_new_phone(
+                page,
+                phone_fetcher=mock.Mock(),
+                sms_fetcher=mock.Mock(),
+                logger=None,
+                profile_id="1",
+                max_attempts=2,
+            )
+
+        self.assertEqual(code, "")
+        self.assertIs(out_page, page)
+        click_back.assert_awaited_once()
+        self.assertEqual(fetch_phone.await_count, 2)
 
 
 class FetchPhoneFromProviderTests(unittest.IsolatedAsyncioTestCase):

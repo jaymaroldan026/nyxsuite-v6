@@ -44,6 +44,8 @@ SNAPBOARD_BRIDGE_POLL_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_BRIDGE_POLL_SE
 SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS = float(
     os.getenv("NYXIFY_SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS", "8")
 )
+SNAPBOARD_REFRESH_TIMEOUT_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_REFRESH_TIMEOUT_SECONDS", "45"))
+SNAPBOARD_OTP_REFRESH_RETRY_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_OTP_REFRESH_RETRY_SECONDS", "75"))
 PAUSE_FILE = os.getenv("NYXIFY_PAUSE_FILE", str(LOGS_DIR / "nyxify_runner.paused"))
 TASK_DB_PATH = os.getenv("NYXIFY_TASK_DB_PATH", str(APP_DATA_DIR / "data" / "nyxify_tasks.db"))
 RUNNER_LOCK_HOST = os.getenv("NYXIFY_RUNNER_LOCK_HOST", "127.0.0.1")
@@ -844,6 +846,72 @@ def _elapsed_label(started_at):
     return f"{max(0.0, time.monotonic() - float(started_at or time.monotonic())):.1f}s"
 
 
+async def _request_snapboard_refresh(reason, timeout_seconds=None):
+    normalized_reason = str(reason or "snapboard_recovery").strip() or "snapboard_recovery"
+    started_at = time.monotonic()
+    try:
+        response = _post_local_api_response(
+            "/snapboard_refresh/request",
+            {"reason": normalized_reason},
+            timeout=5,
+        )
+        if not response.ok:
+            logger.warning(
+                f"Could not request SnapBoard refresh for {normalized_reason}: HTTP {response.status_code}"
+            )
+            return False
+        try:
+            request_id = str(response.json().get("request_id") or "").strip()
+        except Exception:
+            request_id = ""
+    except Exception as exc:
+        logger.warning(f"Could not request SnapBoard refresh for {normalized_reason}: {exc}")
+        return False
+
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds or SNAPBOARD_REFRESH_TIMEOUT_SECONDS or 45))
+    poll_delay = max(0.25, float(SNAPBOARD_BRIDGE_POLL_SECONDS or 0.5))
+    last_error = ""
+    poll_count = 0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(poll_delay)
+        poll_count += 1
+        try:
+            params = {"request_id": request_id} if request_id else None
+            response = _requests.get(
+                f"{NYXIFY_LOCAL_API_URL}/snapboard_refresh/status",
+                params=params,
+                timeout=5,
+            )
+            if not response.ok:
+                last_error = f"HTTP {response.status_code}"
+                continue
+            data = response.json()
+            if data.get("done"):
+                if data.get("success"):
+                    logger.info(
+                        f"[SNAPBOARD_TIMING] SnapBoard refresh for {normalized_reason} "
+                        f"completed in {_elapsed_label(started_at)} (polls={poll_count})."
+                    )
+                    await asyncio.sleep(1.5)
+                    return True
+                last_error = str(data.get("error") or "SnapBoard refresh failed.").strip()
+                logger.warning(
+                    f"[SNAPBOARD_TIMING] SnapBoard refresh for {normalized_reason} failed "
+                    f"after {_elapsed_label(started_at)}: {last_error}"
+                )
+                return False
+            last_error = str(data.get("error") or "").strip()
+        except Exception as exc:
+            last_error = str(exc)
+
+    logger.warning(
+        f"[SNAPBOARD_TIMING] Timed out waiting for SnapBoard refresh for {normalized_reason}: "
+        f"{_elapsed_label(started_at)}, {poll_count} polls"
+        + (f", last_error={last_error}" if last_error else ".")
+    )
+    return False
+
+
 async def _request_snapboard_value(
     row_key,
     *,
@@ -858,28 +926,35 @@ async def _request_snapboard_value(
     if not normalized_row_key:
         return ""
 
-    started_at = time.monotonic()
     payload = {"row_key": normalized_row_key}
     if force_new is not None:
         payload["force_new"] = bool(force_new)
-    try:
-        response = _post_local_api_response(request_path, payload, timeout=5)
-        if not response.ok:
-            logger.warning(
-                f"Could not request SnapBoard {label} fetch for {normalized_row_key}: "
-                f"HTTP {response.status_code}"
-            )
-            return ""
-    except Exception as exc:
-        logger.warning(f"Could not request SnapBoard {label} fetch for {normalized_row_key}: {exc}")
+
+    def queue_request():
+        request_started_at = time.monotonic()
+        try:
+            response = _post_local_api_response(request_path, payload, timeout=5)
+            if not response.ok:
+                logger.warning(
+                    f"Could not request SnapBoard {label} fetch for {normalized_row_key}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False, request_started_at, 0.0
+        except Exception as exc:
+            logger.warning(f"Could not request SnapBoard {label} fetch for {normalized_row_key}: {exc}")
+            return False, request_started_at, 0.0
+        return True, request_started_at, time.monotonic() - request_started_at
+
+    queued, started_at, request_elapsed = queue_request()
+    if not queued:
         return ""
-    request_elapsed = time.monotonic() - started_at
 
     deadline = time.monotonic() + max(1.0, float(timeout_seconds or 75))
     last_error = ""
     poll_count = 0
     poll_delay = max(0.1, float(SNAPBOARD_BRIDGE_POLL_SECONDS or 0.5))
     dispatch_timeout = max(1.0, float(SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS or 8))
+    refresh_attempted = False
     while time.monotonic() < deadline:
         await asyncio.sleep(poll_delay)
         poll_count += 1
@@ -920,9 +995,24 @@ async def _request_snapboard_value(
                     logger.warning(
                         f"[SNAPBOARD_TIMING] SnapBoard {label} fetch for {normalized_row_key} "
                         f"was not picked up by the SnapBoard bridge after {request_age:.1f}s; "
-                        "check the Chrome SnapBoard tab/extension connection."
+                        "refreshing SnapBoard before retrying."
                     )
-                    return ""
+                    if refresh_attempted:
+                        return ""
+                    refresh_attempted = True
+                    refreshed = await _request_snapboard_refresh(
+                        f"{label}_fetch_not_dispatched",
+                        timeout_seconds=SNAPBOARD_REFRESH_TIMEOUT_SECONDS,
+                    )
+                    if not refreshed:
+                        return ""
+                    queued, started_at, request_elapsed = queue_request()
+                    if not queued:
+                        return ""
+                    deadline = time.monotonic() + max(1.0, float(timeout_seconds or 75))
+                    last_error = ""
+                    poll_count = 0
+                    continue
         except Exception as exc:
             last_error = str(exc)
 
@@ -968,6 +1058,76 @@ async def _request_snapboard_sms(row_key, timeout_seconds=150):
         timeout_seconds=timeout_seconds,
         force_new=None,
     )
+
+
+async def _consume_snapboard_otp_from_store(store, row_key, task_id, *, timeout_seconds=120, poll_seconds=1):
+    timeout_seconds = max(1.0, float(timeout_seconds or 120))
+    poll_seconds = max(0.1, float(poll_seconds or 1))
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
+        code = str(store.consume_otp_code(row_key) or "").strip()
+        if code:
+            logger.info(f"Received OTP for task {task_id} from main Chrome SnapBoard bridge.")
+            return code
+        await asyncio.sleep(poll_seconds)
+
+    return ""
+
+
+async def _request_snapboard_otp_from_store(
+    store,
+    row_key,
+    *,
+    task_id,
+    timeout_seconds=120,
+    poll_seconds=1,
+    retry_timeout_seconds=None,
+):
+    normalized_row_key = str(row_key or "").strip()
+    if not normalized_row_key:
+        logger.warning(f"Task {task_id} is missing row_key for OTP retrieval.")
+        return ""
+
+    logger.info(f"Task {task_id} requesting OTP from SnapBoard bridge.")
+    store.request_otp_for_row(normalized_row_key)
+    code = await _consume_snapboard_otp_from_store(
+        store,
+        normalized_row_key,
+        task_id,
+        timeout_seconds=timeout_seconds,
+        poll_seconds=poll_seconds,
+    )
+    if code:
+        return code
+
+    store.clear_otp_request(normalized_row_key)
+    logger.warning(f"Timed out waiting for OTP for task {task_id}; refreshing SnapBoard before retrying.")
+    refreshed = await _request_snapboard_refresh(
+        "otp_timeout",
+        timeout_seconds=SNAPBOARD_REFRESH_TIMEOUT_SECONDS,
+    )
+    if not refreshed:
+        return ""
+
+    logger.info(f"Task {task_id} retrying OTP after SnapBoard refresh.")
+    store.request_otp_for_row(normalized_row_key)
+    retry_timeout = retry_timeout_seconds
+    if retry_timeout is None:
+        retry_timeout = min(float(timeout_seconds or 120), float(SNAPBOARD_OTP_REFRESH_RETRY_SECONDS or 75))
+    code = await _consume_snapboard_otp_from_store(
+        store,
+        normalized_row_key,
+        task_id,
+        timeout_seconds=retry_timeout,
+        poll_seconds=poll_seconds,
+    )
+    if code:
+        return code
+
+    store.clear_otp_request(normalized_row_key)
+    logger.warning(f"Timed out waiting for OTP for task {task_id} after SnapBoard refresh.")
+    return ""
 
 
 def _build_final_adspower_name(final_username):
@@ -1161,27 +1321,7 @@ async def process_task(task, store, adspower):
 
         async def otp_fetcher():
             row_key = str(task.get("row_key") or "").strip()
-            if not row_key:
-                logger.warning(f"Task {task_id} is missing row_key for OTP retrieval.")
-                return ""
-
-            logger.info(f"Task {task_id} requesting OTP from SnapBoard bridge.")
-            store.request_otp_for_row(row_key)
-            timeout_seconds = 120
-            poll_seconds = 1
-            remaining_seconds = timeout_seconds
-
-            while remaining_seconds > 0:
-                code = str(store.consume_otp_code(row_key) or "").strip()
-                if code:
-                    logger.info(f"Received OTP for task {task_id} from main Chrome SnapBoard bridge.")
-                    return code
-                await asyncio.sleep(poll_seconds)
-                remaining_seconds -= poll_seconds
-
-            store.clear_otp_request(row_key)
-            logger.warning(f"Timed out waiting for OTP for task {task_id}.")
-            return ""
+            return await _request_snapboard_otp_from_store(store, row_key, task_id=task_id)
 
         async def phone_fetcher(force_new=False):
             if not task_row_key:
