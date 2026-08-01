@@ -324,16 +324,37 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
         self.assertIn("if (pushAdspowerIdEnabled !== undefined)", nyxify_js)
         self.assertIn("if (adspowerTagsEnabled !== undefined)", nyxify_js)
 
-    def test_content_script_locks_tv_phone_provider(self):
+    def test_content_script_locks_selected_email_and_phone_providers(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
 
-        # Lock in TV mirrors Lock in G5 but targets the SMS/phone provider toggle.
+        # The popup segmented controls must actively keep SnapBoard on either
+        # side of the provider toggle, not only the G5/TV side.
+        self.assertIn("function findAMProviderButton()", content)
+        self.assertIn("function lockProviderToAM()", content)
         self.assertIn("function findTVProviderButton()", content)
         self.assertIn("function lockProviderToTV()", content)
+        self.assertIn("function findSPProviderButton()", content)
+        self.assertIn("function lockProviderToSP()", content)
+        self.assertIn('data-provider="gmail500"', content)
         self.assertIn('data-provider="textverified"', content)
+        self.assertIn("setemailprovider('gmail500')", content)
         self.assertIn("setphoneprovider('textverified')", content)
-        self.assertIn("if (config.lockTV)", content)
-        self.assertIn("if (config.lockG5)", content)
+        self.assertIn(
+            "if (config.lockG5) {\n"
+            "      lockProviderToG5();\n"
+            "    } else {\n"
+            "      lockProviderToAM();\n"
+            "    }",
+            content,
+        )
+        self.assertIn(
+            "if (config.lockTV) {\n"
+            "      lockProviderToTV();\n"
+            "    } else {\n"
+            "      lockProviderToSP();\n"
+            "    }",
+            content,
+        )
 
     def test_content_script_auto_clicks_sign_in_when_logged_out(self):
         content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")

@@ -471,6 +471,41 @@
       || normalizeText(button.getAttribute("data-active")).toLowerCase() === "true";
   }
 
+  function findAMProviderButton() {
+    return document.querySelector('button.provider-option[data-provider="accountmanager"]')
+      || document.querySelector('[data-provider="accountmanager"]')
+      || document.querySelector('button.provider-option[data-provider="accountsmarket"]')
+      || document.querySelector('[data-provider="accountsmarket"]')
+      || document.querySelector('button.provider-option[data-provider="accsmarket"]')
+      || document.querySelector('[data-provider="accsmarket"]')
+      || document.querySelector('button.provider-option[data-provider="am"]')
+      || document.querySelector('[data-provider="am"]')
+      || toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = normalizeText(node.getAttribute("onclick") || "").toLowerCase();
+        var text = normalizeText(node.innerText || node.textContent || "").toLowerCase();
+        return onclickText.indexOf("setemailprovider('accountmanager')") >= 0
+          || onclickText.indexOf('setemailprovider("accountmanager")') >= 0
+          || onclickText.indexOf("setemailprovider('accountsmarket')") >= 0
+          || onclickText.indexOf('setemailprovider("accountsmarket")') >= 0
+          || onclickText.indexOf("setemailprovider('accsmarket')") >= 0
+          || onclickText.indexOf('setemailprovider("accsmarket")') >= 0
+          || onclickText.indexOf("setemailprovider('am')") >= 0
+          || onclickText.indexOf('setemailprovider("am")') >= 0
+          || text === "am";
+      }) || null;
+  }
+
+  function lockProviderToAM() {
+    var button = findAMProviderButton();
+    if (!button) {
+      return false;
+    }
+    if (isProviderOptionActive(button)) {
+      return true;
+    }
+    return clickElement(button);
+  }
+
   function findG5ProviderButton() {
     return document.querySelector('button.provider-option[data-provider="gmail500"]')
       || document.querySelector('[data-provider="gmail500"]')
@@ -485,6 +520,37 @@
 
   function lockProviderToG5() {
     var button = findG5ProviderButton();
+    if (!button) {
+      return false;
+    }
+    if (isProviderOptionActive(button)) {
+      return true;
+    }
+    return clickElement(button);
+  }
+
+  function findSPProviderButton() {
+    return document.querySelector('button.provider-option[data-provider="smspool"]')
+      || document.querySelector('[data-provider="smspool"]')
+      || document.querySelector('button.provider-option[data-provider="sms_pool"]')
+      || document.querySelector('[data-provider="sms_pool"]')
+      || document.querySelector('button.provider-option[data-provider="sp"]')
+      || document.querySelector('[data-provider="sp"]')
+      || toArray(document.querySelectorAll("button")).find(function (node) {
+        var onclickText = normalizeText(node.getAttribute("onclick") || "").toLowerCase();
+        var text = normalizeText(node.innerText || node.textContent || "").toLowerCase();
+        return onclickText.indexOf("setphoneprovider('smspool')") >= 0
+          || onclickText.indexOf('setphoneprovider("smspool")') >= 0
+          || onclickText.indexOf("setphoneprovider('sms_pool')") >= 0
+          || onclickText.indexOf('setphoneprovider("sms_pool")') >= 0
+          || onclickText.indexOf("setphoneprovider('sp')") >= 0
+          || onclickText.indexOf('setphoneprovider("sp")') >= 0
+          || text === "sp";
+      }) || null;
+  }
+
+  function lockProviderToSP() {
+    var button = findSPProviderButton();
     if (!button) {
       return false;
     }
@@ -521,9 +587,13 @@
     var config = await getStoredConfig();
     if (config.lockG5) {
       lockProviderToG5();
+    } else {
+      lockProviderToAM();
     }
     if (config.lockTV) {
       lockProviderToTV();
+    } else {
+      lockProviderToSP();
     }
   }
 
