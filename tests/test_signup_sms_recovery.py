@@ -63,6 +63,7 @@ class RecoverSmsViaNewPhoneTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(code, "654321")
         self.assertIs(out_page, page)
+        sms_fetcher.assert_called_once_with(phone="+15551230000")
 
     async def test_forces_a_new_number(self):
         page = _async_page()

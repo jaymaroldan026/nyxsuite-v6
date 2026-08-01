@@ -69,6 +69,31 @@ class NyxifySnapboardBridgeTests(unittest.TestCase):
             row = store.list_tasks()[0]
             self.assertEqual(row["password"], "NewPassword2!")
 
+    def test_task_store_pending_otp_uses_submitted_email(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = NyxifyTaskStore(Path(tmp) / "tasks.db")
+
+            store.upsert_task(
+                row_key="snapboard:505811",
+                model="Clea",
+                ip_address="198.51.100.10",
+                username="cleaopala",
+                email="old@example.com",
+                password="KyotoRiver%12",
+            )
+
+            store.request_otp_for_row("snapboard:505811", email="submitted@example.com")
+            pending = store.get_pending_otp_request()
+
+            self.assertEqual(pending["row_key"], "snapboard:505811")
+            self.assertEqual(pending["email"], "submitted@example.com")
+
+    def test_extension_requires_expected_email_for_email_otp(self):
+        content = (ROOT / "nyxify_extension" / "content.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("if (!expected) {\n      return true;", content)
+        self.assertIn("Missing expected email for OTP check", content)
+
     def test_replace_banned_reset_clears_old_adspower_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = NyxifyTaskStore(Path(tmp) / "tasks.db")

@@ -384,12 +384,13 @@ class _SmsFetchStore:
         self._pending = {}
         self._results = {}
 
-    def request(self, row_key):
+    def request(self, row_key, phone=""):
         with self._lock:
             self._pending[row_key] = {
                 "created_at": time.monotonic(),
                 "dispatched": False,
                 "dispatched_at": 0.0,
+                "phone": str(phone or "").strip(),
             }
             self._results.pop(row_key, None)
 
@@ -401,7 +402,7 @@ class _SmsFetchStore:
                     continue
                 payload["dispatched"] = True
                 payload["dispatched_at"] = now
-                return {"row_key": row_key}
+                return {"row_key": row_key, "phone": payload.get("phone", "")}
             return None
 
     def store_result(self, row_key, code="", error=None):
@@ -435,6 +436,7 @@ class _SmsFetchStore:
                 "requested": True,
                 "dispatched": dispatched,
                 "age_seconds": max(0.0, now - created_at),
+                "phone": payload.get("phone", ""),
             }
             if dispatched and dispatched_at:
                 info["dispatched_age_seconds"] = max(0.0, now - dispatched_at)
@@ -1384,10 +1386,11 @@ class NyxifyLocalApiServer:
 
                 if self.path == "/sms/request":
                     row_key = str(payload.get("row_key", "")).strip()
+                    phone = str(payload.get("phone", "")).strip()
                     if not row_key:
                         self._write_json(400, {"ok": False, "error": "Row key is required."})
                         return
-                    outer.sms_fetch_store.request(row_key)
+                    outer.sms_fetch_store.request(row_key, phone=phone)
                     self._write_json(200, {"ok": True, "message": "SMS fetch requested."})
                     return
 
@@ -1578,11 +1581,12 @@ class NyxifyLocalApiServer:
                 if self.path == "/otp/result":
                     row_key = str(payload.get("row_key", "")).strip()
                     code = str(payload.get("code", "")).strip()
-                    if not row_key or not code:
-                        self._write_json(400, {"ok": False, "error": "Row key and code are required."})
+                    error = str(payload.get("error", "")).strip()
+                    if not row_key or not (code or error):
+                        self._write_json(400, {"ok": False, "error": "Row key and code or error are required."})
                         return
 
-                    count = outer.store.store_otp_code(row_key, code)
+                    count = outer.store.store_otp_code(row_key, code, error=error)
                     self._write_json(
                         200,
                         {

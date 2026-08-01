@@ -618,21 +618,35 @@ class NyxifyTaskStore:
             cursor = conn.execute("DELETE FROM tasks WHERE row_key = ?", (str(row_key or "").strip(),))
             return cursor.rowcount
 
-    def request_otp_for_row(self, row_key):
+    def request_otp_for_row(self, row_key, email=""):
         normalized_row_key = _normalize_text(row_key)
         if not normalized_row_key:
             return 0
+        normalized_email = _normalize_email(email)
         with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE tasks
-                SET otp_request_status = 'PENDING',
-                    otp_code = '',
-                    updated_at = ?
-                WHERE row_key = ?
-                """,
-                (utc_now_iso(), normalized_row_key),
-            )
+            if normalized_email:
+                cursor = conn.execute(
+                    """
+                    UPDATE tasks
+                    SET email = ?,
+                        otp_request_status = 'PENDING',
+                        otp_code = '',
+                        updated_at = ?
+                    WHERE row_key = ?
+                    """,
+                    (normalized_email, utc_now_iso(), normalized_row_key),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE tasks
+                    SET otp_request_status = 'PENDING',
+                        otp_code = '',
+                        updated_at = ?
+                    WHERE row_key = ?
+                    """,
+                    (utc_now_iso(), normalized_row_key),
+                )
             return cursor.rowcount
 
     def get_pending_otp_request(self):
@@ -648,41 +662,44 @@ class NyxifyTaskStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def store_otp_code(self, row_key, code):
+    def store_otp_code(self, row_key, code, error=""):
         normalized_row_key = _normalize_text(row_key)
         normalized_code = _normalize_text(code)
-        if not normalized_row_key or not normalized_code:
+        normalized_error = _normalize_text(error)
+        if not normalized_row_key or not (normalized_code or normalized_error):
             return 0
         with self._connect() as conn:
+            next_status = "READY" if normalized_code else "ERROR"
             cursor = conn.execute(
                 """
                 UPDATE tasks
-                SET otp_request_status = 'READY',
+                SET otp_request_status = ?,
                     otp_code = ?,
                     updated_at = ?
                 WHERE row_key = ? AND otp_request_status = 'PENDING'
                 """,
-                (normalized_code, utc_now_iso(), normalized_row_key),
+                (next_status, normalized_code or normalized_error, utc_now_iso(), normalized_row_key),
             )
             return cursor.rowcount
 
-    def consume_otp_code(self, row_key):
+    def consume_otp_result(self, row_key):
         normalized_row_key = _normalize_text(row_key)
         if not normalized_row_key:
-            return ""
+            return {"code": "", "error": ""}
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT otp_code
+                SELECT otp_request_status, otp_code
                 FROM tasks
-                WHERE row_key = ? AND otp_request_status = 'READY'
+                WHERE row_key = ? AND otp_request_status IN ('READY', 'ERROR')
                 LIMIT 1
                 """,
                 (normalized_row_key,),
             ).fetchone()
             if not row:
-                return ""
-            code = _normalize_text(row["otp_code"])
+                return {"code": "", "error": ""}
+            status = _normalize_text(row["otp_request_status"])
+            value = _normalize_text(row["otp_code"])
             conn.execute(
                 """
                 UPDATE tasks
@@ -693,7 +710,12 @@ class NyxifyTaskStore:
                 """,
                 (utc_now_iso(), normalized_row_key),
             )
-            return code
+        if status == "READY":
+            return {"code": value, "error": ""}
+        return {"code": "", "error": value}
+
+    def consume_otp_code(self, row_key):
+        return _normalize_text(self.consume_otp_result(row_key).get("code", ""))
 
     def clear_otp_request(self, row_key):
         normalized_row_key = _normalize_text(row_key)

@@ -1908,6 +1908,12 @@ async function processBridgeActionsOnce() {
           row_key: otpRequest.row_key,
           code: otpResponse.code,
         });
+      } else if (otpResponse && !otpResponse.ok) {
+        await callLocalNyxify("POST", "/otp/result", {
+          row_key: otpRequest.row_key,
+          code: "",
+          error: otpResponse.error || "SnapBoard OTP fetch failed.",
+        });
       }
     }
   } catch (error) {
@@ -1922,6 +1928,7 @@ async function processBridgeActionsOnce() {
         type: "NYXIFY_SNAPBOARD_ACTION",
         action: "sms",
         row_key: smsRequest.row_key,
+        phone: smsRequest.phone || "",
       });
       await callLocalNyxify("POST", "/sms/result", {
         row_key: smsRequest.row_key,

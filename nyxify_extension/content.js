@@ -59,6 +59,10 @@
     return normalizeText(value).toLowerCase();
   }
 
+  function normalizeComparablePhone(value) {
+    return normalizeText(value).replace(/[^\d]/g, "");
+  }
+
   function extractEmailFromText(value) {
     var match = normalizeText(value).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     return match ? match[0] : "";
@@ -191,7 +195,7 @@
     var actual;
 
     if (!expected) {
-      return true;
+      return false;
     }
 
     row = document.querySelector('tr[data-id="' + rowId + '"]');
@@ -205,6 +209,24 @@
     }
 
     return normalizeComparableEmail(row.innerText || row.textContent || "").indexOf(expected) >= 0;
+  }
+
+  function rowMatchesExpectedPhone(rowId, expectedPhone) {
+    var expected = normalizeComparablePhone(expectedPhone);
+    var actual;
+
+    if (!expected) {
+      return false;
+    }
+
+    actual = normalizeComparablePhone(readPhoneFromRowId(rowId));
+    if (actual && actual.endsWith(expected.slice(-10))) {
+      return true;
+    }
+
+    return normalizeComparablePhone(
+      (document.querySelector('tr[data-id="' + rowId + '"]') || {}).innerText || ""
+    ).indexOf(expected.slice(-10)) >= 0;
   }
 
   function getRowRoot() {
@@ -1102,21 +1124,25 @@
     // "No pending email order for this account. Get email first." — SnapBoard
     // needs an email ordered before it will hand one over. Click Get Email and
     // wait again before giving up so the Python side can keep proceeding.
-    if (!fetchedEmail && hasNoPendingOrderToast("email")) {
+    var noPendingEmailOrder = hasNoPendingOrderToast("email");
+    if (!fetchedEmail && noPendingEmailOrder) {
       if (clickGetEmailButton(rowId)) {
         fetchedEmail = await waitForEmailForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentEmail);
       }
+      noPendingEmailOrder = hasNoPendingOrderToast("email");
     }
 
     if (!fetchedEmail) {
       return {
         ok: false,
-        // Signals the background to refresh SnapBoard and retry — a stale board
-        // is a common cause of "no pending order" when an order really exists.
-        stale: hasNoPendingOrderToast("email"),
+        stale: noPendingEmailOrder,
+        terminal: noPendingEmailOrder,
+        no_pending_order: noPendingEmailOrder,
         error: forceNew
           ? "New email did not appear after clicking Redo Email."
-          : "Email did not appear after clicking Get Email.",
+          : (noPendingEmailOrder
+            ? "No pending email order for this account. Get email first."
+            : "Email did not appear after clicking Get Email."),
       };
     }
 
@@ -1156,19 +1182,25 @@
     // "No pending phone order for this account. Request a number first." —
     // SnapBoard needs a number ordered before it hands one over. Mirror the
     // email path: click Request Number and wait again before giving up.
-    if (!fetchedPhone && hasNoPendingOrderToast("phone")) {
+    var noPendingPhoneOrder = hasNoPendingOrderToast("phone");
+    if (!fetchedPhone && noPendingPhoneOrder) {
       if (clickGetPhoneButton(rowId)) {
         fetchedPhone = await waitForPhoneForRow(rowId, EMAIL_FETCH_TIMEOUT_MS, currentPhone);
       }
+      noPendingPhoneOrder = hasNoPendingOrderToast("phone");
     }
 
     if (!fetchedPhone) {
       return {
         ok: false,
-        stale: hasNoPendingOrderToast("phone"),
+        stale: noPendingPhoneOrder,
+        terminal: noPendingPhoneOrder,
+        no_pending_order: noPendingPhoneOrder,
         error: forceNew
           ? "New phone did not appear after clicking Redo Phone."
-          : "Phone did not appear after clicking Request Number.",
+          : (noPendingPhoneOrder
+            ? "No pending phone order for this account. Request a number first."
+            : "Phone did not appear after clicking Request Number."),
       };
     }
 
@@ -1774,6 +1806,9 @@
       if (latestCode) {
         return latestCode;
       }
+      if (hasNoPendingOrderToast("email")) {
+        return "";
+      }
       await sleep(300);
     }
     return latestCode || "";
@@ -1792,6 +1827,9 @@
       );
       if (latestCode) {
         return latestCode;
+      }
+      if (hasNoPendingOrderToast("phone")) {
+        return "";
       }
       await sleep(300);
     }
@@ -1852,12 +1890,44 @@
       if (!rowId) {
         return;
       }
+      if (!normalizeComparableEmail(payload.request.email)) {
+        headers["Content-Type"] = "application/json";
+        await fetch(apiConfig.localApiUrl + "/otp/result", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({
+            row_key: rowKey,
+            error: "Missing expected email for OTP check.",
+          }),
+        });
+        return;
+      }
       if (!rowMatchesExpectedEmail(rowId, payload.request.email)) {
+        headers["Content-Type"] = "application/json";
+        await fetch(apiConfig.localApiUrl + "/otp/result", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({
+            row_key: rowKey,
+            error: "SnapBoard row email does not match pending OTP account.",
+          }),
+        });
         return;
       }
 
       var code = await clickCheckCodeUntilOtp(rowId, OTP_FETCH_TIMEOUT_MS);
       if (!code) {
+        headers["Content-Type"] = "application/json";
+        await fetch(apiConfig.localApiUrl + "/otp/result", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({
+            row_key: rowKey,
+            error: hasNoPendingOrderToast("email")
+              ? "No pending email order for this account. Get email first."
+              : "OTP code not found on SnapBoard row.",
+          }),
+        });
         return;
       }
 
@@ -2224,13 +2294,23 @@
       }
 
       if (message.action === "otp") {
+        if (!normalizeComparableEmail(message.email || message.expected_email)) {
+          sendResponse({ ok: false, terminal: true, error: "Missing expected email for OTP check." });
+          return;
+        }
         if (!rowMatchesExpectedEmail(rowId, message.email || message.expected_email)) {
           sendResponse({ ok: false, error: "SnapBoard row email does not match pending OTP account." });
           return;
         }
         var code = await clickCheckCodeUntilOtp(rowId, OTP_FETCH_TIMEOUT_MS);
         if (!code) {
-          sendResponse({ ok: false, error: "OTP code not found on SnapBoard row." });
+          sendResponse({
+            ok: false,
+            terminal: hasNoPendingOrderToast("email"),
+            error: hasNoPendingOrderToast("email")
+              ? "No pending email order for this account. Get email first."
+              : "OTP code not found on SnapBoard row.",
+          });
           return;
         }
         sendResponse({ ok: true, code: code });
@@ -2250,9 +2330,19 @@
       }
 
       if (message.action === "sms") {
+        if (!rowMatchesExpectedPhone(rowId, message.phone || message.expected_phone)) {
+          sendResponse({ ok: false, error: "SnapBoard row phone does not match pending SMS account." });
+          return;
+        }
         var smsCode = await clickCheckSmsUntilOtp(rowId, OTP_FETCH_TIMEOUT_MS);
         if (!smsCode) {
-          sendResponse({ ok: false, error: "SMS code not found on SnapBoard row." });
+          sendResponse({
+            ok: false,
+            terminal: hasNoPendingOrderToast("phone"),
+            error: hasNoPendingOrderToast("phone")
+              ? "No pending phone order for this account. Request a number first."
+              : "SMS code not found on SnapBoard row.",
+          });
           return;
         }
         sendResponse({ ok: true, code: smsCode });

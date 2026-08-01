@@ -117,11 +117,11 @@ class StatusUpdateApiTests(unittest.TestCase):
         self.assertGreaterEqual(status["age_seconds"], 0)
 
     def test_sms_request_pending_result_flow(self):
-        resp = self._post("/sms/request", {"row_key": "snapboard:99"})
+        resp = self._post("/sms/request", {"row_key": "snapboard:99", "phone": "+15551234567"})
         self.assertTrue(resp["ok"])
 
         pending = self._get("/sms/pending")
-        self.assertEqual(pending["request"], {"row_key": "snapboard:99"})
+        self.assertEqual(pending["request"], {"row_key": "snapboard:99", "phone": "+15551234567"})
 
         self._post("/sms/result", {"row_key": "snapboard:99", "code": "654321"})
         status = self._get("/sms/status?row_key=snapboard:99")
