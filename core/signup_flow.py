@@ -128,6 +128,14 @@ _PHONE_NUMBER_SELECTORS = [
     "input[placeholder*='phone number' i]",
 ]
 
+_PHONE_SUBMIT_SELECTORS = [
+    "button[type='submit']",
+    "button:has-text('Continue')",
+    "button:has-text('Next')",
+    "button:has-text('Send')",
+    "button:has-text('SMS')",
+]
+
 # ---------------------------------------------------------------------------
 # JS helpers — set values without needing OS-level window focus
 # ---------------------------------------------------------------------------
@@ -1604,6 +1612,46 @@ def _split_phone_number(phone: str) -> tuple[str, str]:
     return "", digits
 
 
+def _digits_only(value: str) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+async def _phone_input_has_local_number(locator, local_number: str) -> bool:
+    try:
+        return _digits_only(await locator.input_value()) == str(local_number or "").strip()
+    except Exception:
+        return False
+
+
+async def _dispatch_input_events(locator) -> None:
+    for event_name in ("input", "change", "blur"):
+        try:
+            await locator.dispatch_event(event_name)
+        except Exception:
+            pass
+
+
+async def _click_enabled_verification_entry_submit(signup_page, selectors) -> bool:
+    for button_sel in selectors:
+        try:
+            button = signup_page.locator(button_sel).first
+            try:
+                visible = await button.is_visible()
+            except Exception:
+                visible = False
+            if not visible and button_sel != "button[type='submit']":
+                continue
+            enabled = await _wait_enabled(signup_page, button_sel, timeout_ms=5000)
+            if not enabled:
+                continue
+            await _human_pause(signup_page, 250, 800)
+            if await _js_click(signup_page, button_sel):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _fill_and_submit_phone_number(signup_page, phone: str, logger=None, profile_id: str = "") -> bool:
     _country_code, local_number = _split_phone_number(phone)
     if not local_number:
@@ -1614,14 +1662,11 @@ async def _fill_and_submit_phone_number(signup_page, phone: str, logger=None, pr
             loc = signup_page.locator(phone_sel).first
             if await loc.is_visible():
                 typed = await _humanized_type_only(signup_page, phone_sel, local_number, logger, f"[{profile_id}] phone")
-                if not typed:
+                if not typed and not await _phone_input_has_local_number(loc, local_number):
                     return False
+                await _dispatch_input_events(loc)
                 await signup_page.wait_for_timeout(400)
-                enabled = await _wait_enabled(signup_page, "button[type='submit']", timeout_ms=5000)
-                if not enabled:
-                    return False
-                await _human_pause(signup_page, 250, 800)
-                clicked = await _js_click(signup_page, "button[type='submit']")
+                clicked = await _click_enabled_verification_entry_submit(signup_page, _PHONE_SUBMIT_SELECTORS)
                 if not clicked:
                     return False
                 await signup_page.wait_for_timeout(1200)

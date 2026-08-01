@@ -9,6 +9,18 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.5.0
+
+- Nyxify phone/SMS verification now accepts already-entered or formatted phone
+  values before clicking the SMS submit button.
+- The phone verification step now dispatches input/change/blur events after the
+  phone value is present and can click visible Continue/Next/Send/SMS submit
+  variants when Snapchat does not expose a normal submit button.
+- The Nyxify popup now shows yellow AM/G5 and SP/TV segmented provider-lock
+  controls, backed by the existing `lockG5` and `lockTV` SnapBoard lock keys.
+- Added regression coverage for formatted phone fields, alternate phone-step
+  submit buttons, and the segmented provider-lock popup contract.
+
 ### NyxSuite v6.4.8
 
 - Nyxify now clears unrelated browser tabs immediately after cookie warm-up and

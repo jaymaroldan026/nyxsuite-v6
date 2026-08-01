@@ -108,12 +108,14 @@ def version_decl(name, text):
 
 
 def test_extension_version_metadata_is_synced():
+    expected_version = "6.5.0"
     version_py = read("core/version.py")
     nyx_manifest = json.loads(read("nyx_extension/manifest.json"))
     nyxify_manifest = json.loads(read("nyxify_extension/manifest.json"))
     nyx_version = version_decl("NYX_VERSION", version_py)
     nyxify_version = version_decl("NYXIFY_VERSION", version_py)
 
+    assert nyx_version == expected_version
     assert read("VERSION").strip() == nyx_version
     assert nyxify_version == nyx_version
     assert nyx_manifest["version"] == nyx_version

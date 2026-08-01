@@ -242,6 +242,79 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(typed_values, [("#phoneNumber", "5551234567")])
 
+    async def test_phone_verification_clicks_when_phone_field_is_already_formatted(self):
+        class FakeLocator:
+            @property
+            def first(self):
+                return self
+
+            async def is_visible(self):
+                return True
+
+            async def input_value(self):
+                return "(555) 123-4567"
+
+            async def dispatch_event(self, _event):
+                return None
+
+        class FakePhoneEntryPage:
+            def locator(self, _selector):
+                return FakeLocator()
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+        with mock.patch.object(signup_flow, "_humanized_type_only", mock.AsyncMock(return_value=False)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(return_value=None)), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
+            self.assertTrue(await signup_flow._fill_and_submit_phone_number(
+                FakePhoneEntryPage(),
+                "+15551234567",
+                None,
+                "172",
+            ))
+
+        js_click.assert_awaited_once_with(mock.ANY, "button[type='submit']")
+
+    async def test_phone_verification_clicks_continue_when_submit_selector_stays_disabled(self):
+        class FakeLocator:
+            def __init__(self, selector):
+                self.selector = selector
+
+            @property
+            def first(self):
+                return self
+
+            async def is_visible(self):
+                return self.selector == "#phoneNumber" or "Continue" in self.selector
+
+            async def dispatch_event(self, _event):
+                return None
+
+        class FakePhoneEntryPage:
+            def locator(self, selector):
+                return FakeLocator(selector)
+
+            async def wait_for_timeout(self, _ms):
+                return None
+
+        async def enabled_for_continue(_page, selector, *_args, **_kwargs):
+            return "Continue" in selector
+
+        with mock.patch.object(signup_flow, "_humanized_type_only", mock.AsyncMock(return_value=True)), \
+            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(side_effect=enabled_for_continue)), \
+            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(return_value=None)), \
+            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
+            self.assertTrue(await signup_flow._fill_and_submit_phone_number(
+                FakePhoneEntryPage(),
+                "+15551234567",
+                None,
+                "172",
+            ))
+
+        js_click.assert_awaited_once_with(mock.ANY, "button:has-text('Continue')")
+
     async def test_email_verification_submit_fails_when_type_fails(self):
         class FakeLocator:
             @property

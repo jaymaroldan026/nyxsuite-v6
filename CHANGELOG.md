@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.5.0 - Verification click recovery and provider lock popup
+
+### Nyxify: phone/SMS verification click recovery
+- Phone verification now accepts already-entered or formatted local phone
+  values before clicking the SMS submit button.
+- The phone step now dispatches input/change/blur events after the phone value
+  is present and can click visible Continue/Next/Send/SMS submit variants.
+- Added regression coverage for formatted phone fields and alternate phone-step
+  submit buttons.
+
+### Nyxify: provider lock segmented popup controls
+- Replaced the popup's old Lock in G5 / Lock in TV checkbox rows with compact
+  yellow AM/G5 and SP/TV segmented controls.
+- AM/SP keep the default provider behavior, while G5/TV save the existing
+  `lockG5` and `lockTV` config keys that drive SnapBoard provider locking.
+
 ## 6.4.8 - Post-warmup tab cleanup before signup
 
 ### Nyxify: prune unrelated browser tabs after cookie warm-up
