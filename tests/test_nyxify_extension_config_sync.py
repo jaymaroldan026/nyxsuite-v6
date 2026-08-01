@@ -204,7 +204,7 @@ def test_nyxify_popup_and_options_expose_synced_runner_controls():
     assert 'proxy_checker_enabled: el("ncfg-proxy_checker_enabled").checked' in dashboard_js
 
 
-def test_nyxify_extension_exposes_lock_tv_toggle():
+def test_nyxify_extension_exposes_lock_tv_provider_lock():
     ext = ROOT / "nyxify_extension"
     popup_html = (ext / "popup.html").read_text()
     options_html = (ext / "options.html").read_text()
@@ -212,10 +212,22 @@ def test_nyxify_extension_exposes_lock_tv_toggle():
     options_js = (ext / "options.js").read_text()
     background_js = (ext / "background.js").read_text()
 
-    # UI toggles mirror the existing "Lock in G5" control.
-    assert 'id="popupLockTVToggle"' in popup_html
+    # Popup provider locks use the compact AM/G5 and SP/TV segmented controls.
+    assert 'data-provider-lock="g5"' in popup_html
+    assert 'data-provider-lock="tv"' in popup_html
+    assert 'data-config-key="lockG5"' in popup_html
+    assert 'data-config-key="lockTV"' in popup_html
+    assert 'data-value="false" aria-pressed="true">AM</button>' in popup_html
+    assert 'data-value="true" aria-pressed="false">G5</button>' in popup_html
+    assert 'data-value="false" aria-pressed="true">SP</button>' in popup_html
+    assert 'data-value="true" aria-pressed="false">TV</button>' in popup_html
+    assert "popupLockG5Toggle" not in popup_html
+    assert "popupLockTVToggle" not in popup_html
+    assert "popupLockG5Toggle" not in popup_js
+    assert "popupLockTVToggle" not in popup_js
+
+    # The full options page still exposes the same stored config keys.
     assert 'id="lockTVToggle"' in options_html
-    assert '["popupLockTVToggle", "lockTV"' in popup_js
     assert '["lockTVToggle", "lockTV"' in options_js
 
     # lockTV survives every config normalizer so the runner sync never drops it.

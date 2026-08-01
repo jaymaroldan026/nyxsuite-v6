@@ -75,6 +75,32 @@ def test_nyxify_popup_queue_is_removed_and_setup_install_is_available():
     assert (ROOT / "nyxify_extension" / "setup.js").exists()
 
 
+def test_nyxify_popup_provider_locks_use_yellow_segmented_controls():
+    popup_html = read("nyxify_extension/popup.html")
+    popup_js = read("nyxify_extension/popup.js")
+    popup_css = read("nyxify_extension/styles.css")
+
+    assert 'data-provider-lock="g5"' in popup_html
+    assert 'data-provider-lock="tv"' in popup_html
+    assert 'data-config-key="lockG5"' in popup_html
+    assert 'data-config-key="lockTV"' in popup_html
+    assert re.search(r'<button[^>]*data-value="false"[^>]*>AM</button>', popup_html)
+    assert re.search(r'<button[^>]*data-value="true"[^>]*>G5</button>', popup_html)
+    assert re.search(r'<button[^>]*data-value="false"[^>]*>SP</button>', popup_html)
+    assert re.search(r'<button[^>]*data-value="true"[^>]*>TV</button>', popup_html)
+
+    assert "popupLockG5Toggle" not in popup_html
+    assert "popupLockTVToggle" not in popup_html
+    assert "popupLockG5Toggle" not in popup_js
+    assert "popupLockTVToggle" not in popup_js
+
+    assert ".provider-lock-segmented" in popup_css
+    assert ".provider-lock-option-active" in popup_css
+    assert "#fffb00" in popup_css.lower()
+    assert "lockG5" in popup_js
+    assert "lockTV" in popup_js
+
+
 def version_decl(name, text):
     match = re.search(rf'^{name}\s*=\s*"([^"]+)"', text, re.MULTILINE)
     assert match, f"{name} declaration not found"

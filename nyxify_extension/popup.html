@@ -101,19 +101,15 @@
                 <span class="toggle-slider" aria-hidden="true"></span>
               </label>
             </div>
-            <div class="toggle-row">
-              <span class="toggle-text">Lock in G5</span>
-              <label class="toggle-switch" for="popupLockG5Toggle">
-                <input id="popupLockG5Toggle" type="checkbox">
-                <span class="toggle-slider" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-text">Lock in TV</span>
-              <label class="toggle-switch" for="popupLockTVToggle">
-                <input id="popupLockTVToggle" type="checkbox">
-                <span class="toggle-slider" aria-hidden="true"></span>
-              </label>
+            <div class="provider-lock-row" aria-label="SnapBoard provider locks">
+              <div class="provider-lock-segmented" role="group" aria-label="Email provider lock" data-provider-lock="g5" data-config-key="lockG5">
+                <button class="provider-lock-option provider-lock-option-active" type="button" data-value="false" aria-pressed="true">AM</button>
+                <button class="provider-lock-option" type="button" data-value="true" aria-pressed="false">G5</button>
+              </div>
+              <div class="provider-lock-segmented" role="group" aria-label="Phone provider lock" data-provider-lock="tv" data-config-key="lockTV">
+                <button class="provider-lock-option provider-lock-option-active" type="button" data-value="false" aria-pressed="true">SP</button>
+                <button class="provider-lock-option" type="button" data-value="true" aria-pressed="false">TV</button>
+              </div>
             </div>
             <div class="button-row button-row-compact button-row-two">
               <button id="refreshButton" class="button button-secondary" type="button">Refresh</button>

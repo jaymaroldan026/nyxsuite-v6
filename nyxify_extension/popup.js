@@ -93,6 +93,18 @@ function setCheckboxValue(id, checked) {
   element.checked = checked === true;
 }
 
+function setProviderLockValue(configKey, locked) {
+  const control = document.querySelector(`.provider-lock-segmented[data-config-key="${configKey}"]`);
+  if (!control) {
+    return;
+  }
+  control.querySelectorAll(".provider-lock-option").forEach((button) => {
+    const isActive = (button.dataset.value === "true") === (locked === true);
+    button.classList.toggle("provider-lock-option-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
 function getInputSetting(id, configKey, fallback = "") {
   const element = document.getElementById(id);
   if (element) {
@@ -108,6 +120,19 @@ function getCheckedSetting(id, configKey, fallback = false) {
   const element = document.getElementById(id);
   if (element) {
     return element.checked;
+  }
+  if (Object.prototype.hasOwnProperty.call(latestPopupConfig, configKey)) {
+    return latestPopupConfig[configKey] === true;
+  }
+  return fallback;
+}
+
+function getProviderLockSetting(configKey, fallback = false) {
+  const active = document.querySelector(
+    `.provider-lock-segmented[data-config-key="${configKey}"] .provider-lock-option-active`
+  );
+  if (active) {
+    return active.dataset.value === "true";
   }
   if (Object.prototype.hasOwnProperty.call(latestPopupConfig, configKey)) {
     return latestPopupConfig[configKey] === true;
@@ -298,8 +323,8 @@ function applyPopupStatusSnapshot(status) {
   setCheckboxValue("popupFullAutoModeToggle", config.fullAutoModeEnabled === true);
   setCheckboxValue("popupContinuousModeToggle", config.continuousModeEnabled === true);
   setCheckboxValue("popupAutoFillRowToggle", config.autoFillRow === true);
-  setCheckboxValue("popupLockG5Toggle", config.lockG5 === true);
-  setCheckboxValue("popupLockTVToggle", config.lockTV === true);
+  setProviderLockValue("lockG5", config.lockG5 === true);
+  setProviderLockValue("lockTV", config.lockTV === true);
   document.getElementById("countReady").textContent = String(counts.ready || 0);
   document.getElementById("countWaiting").textContent = String(counts.waiting || 0);
   document.getElementById("countRunning").textContent = String(counts.running || 0);
@@ -408,8 +433,8 @@ function savePopupSettings(options = {}) {
     fullAutoModeEnabled: getCheckedSetting("popupFullAutoModeToggle", "fullAutoModeEnabled", false),
     continuousModeEnabled: getCheckedSetting("popupContinuousModeToggle", "continuousModeEnabled", false),
     autoFillRow: getCheckedSetting("popupAutoFillRowToggle", "autoFillRow", false),
-    lockG5: getCheckedSetting("popupLockG5Toggle", "lockG5", false),
-    lockTV: getCheckedSetting("popupLockTVToggle", "lockTV", false),
+    lockG5: getProviderLockSetting("lockG5", false),
+    lockTV: getProviderLockSetting("lockTV", false),
     temporaryProfileName: getInputSetting("popupTemporaryName", "temporaryProfileName", DEFAULT_TEMPORARY_PROFILE_NAME),
     adspowerGroup: getInputSetting("popupGroup", "adspowerGroup", DEFAULT_ADSPOWER_GROUP),
     extensionCategory: getInputSetting("popupExtensionCategory", "extensionCategory", DEFAULT_EXTENSION_CATEGORY),
@@ -487,6 +512,40 @@ function saveDashboardToggle(toggleId, configKey, enabledMessage, disabledMessag
       return;
     }
     refreshPopupStatus(checked ? enabledMessage : disabledMessage, true);
+  });
+}
+
+function saveProviderLockOption(button) {
+  const control = button && button.closest(".provider-lock-segmented");
+  if (!control) {
+    return;
+  }
+  const configKey = String(control.dataset.configKey || "");
+  if (!configKey) {
+    return;
+  }
+  const locked = button.dataset.value === "true";
+  const messages = {
+    lockG5: ["Lock in G5 enabled.", "Lock in G5 disabled."],
+    lockTV: ["Lock in TV enabled.", "Lock in TV disabled."],
+  };
+  const [enabledMessage, disabledMessage] = messages[configKey] || ["Provider lock enabled.", "Provider lock disabled."];
+  const previous = latestPopupConfig[configKey] === true;
+  const payload = { type: "NYXIFY_SAVE_CONFIG" };
+  payload[configKey] = locked;
+
+  setProviderLockValue(configKey, locked);
+  latestPopupConfig = normalizePopupConfig({ ...latestPopupConfig, ...payload });
+  setPrimaryStatus(locked ? enabledMessage : disabledMessage, 1500);
+
+  chrome.runtime.sendMessage(payload, (response) => {
+    if (!response || !response.ok) {
+      setProviderLockValue(configKey, previous);
+      latestPopupConfig = normalizePopupConfig({ ...latestPopupConfig, [configKey]: previous });
+      setPrimaryStatus((response && response.error) || "Could not save Nyxify toggle.", 2500);
+      return;
+    }
+    refreshPopupStatus(locked ? enabledMessage : disabledMessage, true);
   });
 }
 
@@ -710,8 +769,6 @@ chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => 
   ["popupFullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
   ["popupContinuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
   ["popupAutoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
-  ["popupLockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
-  ["popupLockTVToggle", "lockTV", "Lock in TV enabled.", "Lock in TV disabled."],
 ].forEach(([toggleId, configKey, enabledMessage, disabledMessage]) => {
   const toggle = document.getElementById(toggleId);
   if (!toggle) {
@@ -719,6 +776,12 @@ chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => 
   }
   toggle.addEventListener("change", () => {
     saveDashboardToggle(toggleId, configKey, enabledMessage, disabledMessage);
+  });
+});
+
+document.querySelectorAll(".provider-lock-option").forEach((button) => {
+  button.addEventListener("click", () => {
+    saveProviderLockOption(button);
   });
 });
 
