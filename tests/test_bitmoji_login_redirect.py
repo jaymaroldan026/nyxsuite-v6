@@ -337,6 +337,14 @@ class BitmojiTransientLoadErrorTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "Bitmoji transient load error"):
             asyncio.run(flow.wait_for_initial_page_signal(timeout_ms=10, detect_proxy_failure=False))
 
+    def test_wait_for_initial_page_signal_refreshes_sdk_chrome_error_page_immediately(self):
+        flow = _TransientEditorFlow()
+
+        state = asyncio.run(flow.wait_for_initial_page_signal(timeout_ms=500, detect_proxy_failure=False))
+
+        self.assertEqual(state, "EDITOR")
+        self.assertEqual(flow.page.reload_calls, 1)
+
     def test_wait_for_editor_refreshes_sdk_chrome_error_page(self):
         flow = _TransientEditorFlow()
 

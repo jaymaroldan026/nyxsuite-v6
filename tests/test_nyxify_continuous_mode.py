@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -155,12 +156,15 @@ class _FakeContext:
 
 
 class _FakePlaywright:
-    def __init__(self, events=None):
+    def __init__(self, events=None, stop_delay_seconds=0):
         self.stopped = False
         self.events = events if events is not None else []
+        self.stop_delay_seconds = stop_delay_seconds
 
     async def stop(self):
         self.events.append("playwright_stop")
+        if self.stop_delay_seconds:
+            await asyncio.sleep(self.stop_delay_seconds)
         self.stopped = True
 
 
@@ -200,6 +204,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         rotate_during_create=False,
         snapboard_rotation="",
         keep_profile_open_after_signup=False,
+        playwright_stop_delay_seconds=0,
         capture_handoff_state=False,
         capture_events=False,
     ):
@@ -211,7 +216,10 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             events=events,
         )
         context = _FakeContext()
-        playwright = _FakePlaywright(events=events)
+        playwright = _FakePlaywright(
+            events=events,
+            stop_delay_seconds=playwright_stop_delay_seconds,
+        )
         handoffs = []
         handoff_observations = []
         adspower_id_update = adspower_id_update or (lambda *_args, **_kwargs: True)
@@ -343,7 +351,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(context.start_page.closed)
         self.assertTrue(playwright.stopped)
 
-    async def test_continuous_mode_renames_before_releasing_playwright_and_handoff(self):
+    async def test_continuous_mode_releases_playwright_before_rename_and_handoff(self):
         _store, adspower, handoffs, events = await self._run_task(
             True,
             capture_events=True,
@@ -352,12 +360,30 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
         self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertLess(
-            events.index("rename:k1new:Snapchat: cleepink"),
             events.index("playwright_stop"),
+            events.index("rename:k1new:Snapchat: cleepink"),
         )
         self.assertLess(
-            events.index("playwright_stop"),
+            events.index("rename:k1new:Snapchat: cleepink"),
             events.index("handoff:k1new"),
+        )
+
+    async def test_continuous_mode_does_not_wait_on_slow_playwright_release_before_rename(self):
+        started_at = time.monotonic()
+        with mock.patch.object(nyxify_runner, "PLAYWRIGHT_RELEASE_TIMEOUT_SECONDS", 0.01):
+            _store, adspower, handoffs, events = await self._run_task(
+                True,
+                playwright_stop_delay_seconds=0.2,
+                capture_events=True,
+            )
+        elapsed = time.monotonic() - started_at
+
+        self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+        self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
+        self.assertLess(elapsed, 0.15)
+        self.assertLess(
+            events.index("playwright_stop"),
+            events.index("rename:k1new:Snapchat: cleepink"),
         )
 
     async def test_final_username_syncs_full_adspower_name_to_snapboard(self):

@@ -47,6 +47,7 @@ SNAPBOARD_BRIDGE_DISPATCH_TIMEOUT_SECONDS = float(
 SNAPBOARD_REFRESH_TIMEOUT_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_REFRESH_TIMEOUT_SECONDS", "45"))
 SNAPBOARD_OTP_INITIAL_WAIT_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_OTP_INITIAL_WAIT_SECONDS", "35"))
 SNAPBOARD_OTP_REFRESH_RETRY_SECONDS = float(os.getenv("NYXIFY_SNAPBOARD_OTP_REFRESH_RETRY_SECONDS", "75"))
+PLAYWRIGHT_RELEASE_TIMEOUT_SECONDS = float(os.getenv("NYXIFY_PLAYWRIGHT_RELEASE_TIMEOUT_SECONDS", "2"))
 PAUSE_FILE = os.getenv("NYXIFY_PAUSE_FILE", str(LOGS_DIR / "nyxify_runner.paused"))
 TASK_DB_PATH = os.getenv("NYXIFY_TASK_DB_PATH", str(APP_DATA_DIR / "data" / "nyxify_tasks.db"))
 RUNNER_LOCK_HOST = os.getenv("NYXIFY_RUNNER_LOCK_HOST", "127.0.0.1")
@@ -1752,17 +1753,30 @@ async def process_task(task, store, adspower):
                 profile_id_value = str(created.get("profile_id") or "").strip()
                 if playwright_instance is None:
                     return
+                instance = playwright_instance
+                playwright_instance = None
+
+                async def _stop_playwright_connection():
+                    try:
+                        await instance.stop()
+                        logger.info(
+                            f"Task {task_id}: released Nyxify browser connection before Nyx handoff "
+                            f"for AdsPower profile {profile_id_value}."
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"Task {task_id}: could not release Nyxify browser connection before Nyx handoff "
+                            f"for AdsPower profile {profile_id_value}: {exc}"
+                        )
+
+                timeout_seconds = max(0.1, float(PLAYWRIGHT_RELEASE_TIMEOUT_SECONDS or 2))
+                stop_task = asyncio.create_task(_stop_playwright_connection())
                 try:
-                    await playwright_instance.stop()
-                    playwright_instance = None
-                    logger.info(
-                        f"Task {task_id}: released Nyxify browser connection before Nyx handoff "
-                        f"for AdsPower profile {profile_id_value}."
-                    )
-                except Exception as exc:
+                    await asyncio.wait_for(asyncio.shield(stop_task), timeout=timeout_seconds)
+                except asyncio.TimeoutError:
                     logger.warning(
-                        f"Task {task_id}: could not release Nyxify browser connection before Nyx handoff "
-                        f"for AdsPower profile {profile_id_value}: {exc}"
+                        f"Task {task_id}: Playwright release for AdsPower profile {profile_id_value} "
+                        f"is still running after {timeout_seconds:g}s; continuing Nyx handoff."
                     )
 
             async def _signup_progress(step: str):
@@ -1817,6 +1831,7 @@ async def process_task(task, store, adspower):
                 and final_username_applied
                 and final_profile_rename_pending
             ):
+                await _release_playwright_before_nyx_handoff()
                 store.update_task_state(task_id, last_step="renaming_profile_for_nyx")
                 if await _rename_final_profile_if_pending("before Nyx handoff"):
                     store.update_task_state(task_id, last_step=last_step)
@@ -1828,7 +1843,6 @@ async def process_task(task, store, adspower):
                     store.update_task_state(
                         task_id, last_step="profile_rename_failed", error=completion_error
                     )
-                await _release_playwright_before_nyx_handoff()
 
             if (
                 keep_profile_open_after_signup

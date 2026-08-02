@@ -69,6 +69,15 @@ class FakeBlankSignupShellPage(FakeProgressPage):
         return True
 
 
+class FakeLogoOnlySignupShellPage(FakeProgressPage):
+    async def evaluate(self, script):
+        # The live blank shell can show only the Snapchat logo without the
+        # Next.js data marker the older detector required.
+        if "script#__NEXT_DATA__" in script:
+            return False
+        return True
+
+
 class SignupInitialSubmitRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_submit_failure_refreshes_and_refills_signup_form(self):
         page = FakeProgressPage()
@@ -312,6 +321,11 @@ class SignupStallRecoveryTests(unittest.IsolatedAsyncioTestCase):
         resubmit.assert_awaited_once()
         self.assertIn("refreshing_signup_blank_shell", steps)
         self.assertEqual(stall_state["refresh_attempts"], 1)
+
+    async def test_logo_only_signup_shell_is_detected_without_next_data_marker(self):
+        page = FakeLogoOnlySignupShellPage()
+
+        self.assertTrue(await signup_flow._is_blank_signup_shell(page))
 
     async def test_unexpected_page_waits_until_stall_window_expires(self):
         page = FakeProgressPage()

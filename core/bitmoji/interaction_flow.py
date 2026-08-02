@@ -326,8 +326,9 @@ class BitmojiInteractionMixin:
         if not signal:
             return False
 
-        if self.logger:
-            self.logger.warning(
+        logger = getattr(self, "logger", None)
+        if logger:
+            logger.warning(
                 f"Bitmoji transient load error detected"
                 f"{f' {where}' if where else ''}; refreshing page. signal={signal}"
             )
@@ -348,8 +349,8 @@ class BitmojiInteractionMixin:
         try:
             await target.reload(timeout=30000, wait_until="domcontentloaded")
         except Exception as exc:
-            if self.logger:
-                self.logger.warning(
+            if logger:
+                logger.warning(
                     f"Refreshing Bitmoji transient load error failed"
                     f"{f' {where}' if where else ''}: {exc}"
                 )
@@ -1314,6 +1315,8 @@ class BitmojiInteractionMixin:
             timeout_ms = self.page_load_timeout_ms
 
         end_time = asyncio.get_event_loop().time() + (timeout_ms / 1000.0)
+        transient_load_retries = 0
+        max_transient_load_retries = 3
 
         while asyncio.get_event_loop().time() < end_time:
             try:
@@ -1324,6 +1327,15 @@ class BitmojiInteractionMixin:
                 state = await self.prioritized_session_state_from_contexts(contexts)
                 if state == "TRANSIENT_LOAD_ERROR":
                     signal = await self.get_bitmoji_transient_load_error_signal(contexts)
+                    if transient_load_retries < max_transient_load_retries:
+                        transient_load_retries += 1
+                        refreshed = await self.refresh_bitmoji_transient_load_error(
+                            "while waiting for initial page signal",
+                            contexts,
+                        )
+                        if refreshed:
+                            end_time = asyncio.get_event_loop().time() + (timeout_ms / 1000.0)
+                            continue
                     raise BitmojiTransientLoadError(
                         f"Bitmoji transient load error: {signal or 'Chrome error page'}"
                     )
@@ -1365,6 +1377,16 @@ class BitmojiInteractionMixin:
             fallback_state = await self.check_session_state(fast=True)
             if fallback_state == "TRANSIENT_LOAD_ERROR":
                 signal = await self.get_bitmoji_transient_load_error_signal()
+                if transient_load_retries < max_transient_load_retries:
+                    transient_load_retries += 1
+                    refreshed = await self.refresh_bitmoji_transient_load_error(
+                        "while waiting for initial page fallback"
+                    )
+                    if refreshed:
+                        contexts = await self.get_contexts()
+                        refreshed_state = await self.prioritized_session_state_from_contexts(contexts)
+                        if refreshed_state != "TRANSIENT_LOAD_ERROR" and refreshed_state != "UNKNOWN":
+                            return refreshed_state
                 raise BitmojiTransientLoadError(
                     f"Bitmoji transient load error: {signal or 'Chrome error page'}"
                 )

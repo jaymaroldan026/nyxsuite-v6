@@ -883,9 +883,7 @@ async def _is_blank_signup_shell(page) -> bool:
             await page.evaluate(
                 """
                 () => {
-                    const root = document.querySelector("#__next");
-                    const nextData = document.querySelector("script#__NEXT_DATA__");
-                    if (!root || !nextData || document.readyState !== "complete") {
+                    if (!["interactive", "complete"].includes(document.readyState)) {
                         return false;
                     }
                     const isVisible = (node) => {
@@ -907,7 +905,20 @@ async def _is_blank_signup_shell(page) -> bool:
                     const bodyText = String((document.body && document.body.innerText) || "")
                         .replace(/\\s+/g, " ")
                         .trim();
-                    return root.querySelectorAll("*").length <= 1 && bodyText.length <= 40;
+                    const visibleElements = Array.from(document.body ? document.body.querySelectorAll("*") : [])
+                        .filter(isVisible);
+                    const hasSnapchatLogoOnly = visibleElements.some((node) => {
+                        const attrs = [
+                            node.getAttribute("alt"),
+                            node.getAttribute("aria-label"),
+                            node.getAttribute("title"),
+                            node.getAttribute("src"),
+                            node.id,
+                            typeof node.className === "string" ? node.className : "",
+                        ].join(" ").toLowerCase();
+                        return attrs.includes("snapchat") || attrs.includes("ghost");
+                    });
+                    return bodyText.length <= 80 && (visibleElements.length <= 1 || hasSnapchatLogoOnly);
                 }
                 """
             )
