@@ -199,6 +199,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         adspower_id_update=None,
         rotate_during_create=False,
         snapboard_rotation="",
+        keep_profile_open_after_signup=False,
         capture_handoff_state=False,
         capture_events=False,
     ):
@@ -225,6 +226,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
             "push_adspower_id_enabled": True,
             "full_auto_mode_enabled": False,
             "continuous_mode_enabled": continuous_mode,
+            "keep_profile_open_after_signup": keep_profile_open_after_signup,
             "names_dir": "",
         }
         task = {
@@ -341,7 +343,7 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(context.start_page.closed)
         self.assertTrue(playwright.stopped)
 
-    async def test_continuous_mode_releases_playwright_before_rename_and_handoff(self):
+    async def test_continuous_mode_renames_before_releasing_playwright_and_handoff(self):
         _store, adspower, handoffs, events = await self._run_task(
             True,
             capture_events=True,
@@ -350,11 +352,11 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
         self.assertEqual(handoffs, [("k1new", "Clea", "cleepink", "")])
         self.assertLess(
-            events.index("playwright_stop"),
             events.index("rename:k1new:Snapchat: cleepink"),
+            events.index("playwright_stop"),
         )
         self.assertLess(
-            events.index("rename:k1new:Snapchat: cleepink"),
+            events.index("playwright_stop"),
             events.index("handoff:k1new"),
         )
 
@@ -373,6 +375,23 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handoffs, [])
         self.assertEqual(adspower.closed, ["k1new"])
         self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+
+    async def test_keep_profile_open_renames_without_closing_completed_signup(self):
+        store, adspower, handoffs = await self._run_task(
+            False,
+            keep_profile_open_after_signup=True,
+        )
+
+        steps = [update.get("last_step") for _task_id, update in store.updates if update.get("last_step")]
+        done_updates = [update for _task_id, update in store.updates if update.get("status") == "DONE"]
+
+        self.assertEqual(handoffs, [])
+        self.assertEqual(adspower.closed, [])
+        self.assertEqual(adspower.renamed, [("k1new", "Snapchat: cleepink")])
+        self.assertNotIn("closing_profile", steps)
+        self.assertNotIn("profile_closed", steps)
+        self.assertTrue(done_updates)
+        self.assertEqual(done_updates[-1].get("last_step"), "signup_complete")
 
     async def test_continuous_mode_rename_failure_still_hands_off_to_nyx(self):
         # The rename is AdsPower bookkeeping only. Once the Snapchat account is

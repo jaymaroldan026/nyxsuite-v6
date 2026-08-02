@@ -11,6 +11,7 @@ const TOGGLE_OPTIONS = [
   ["adspowerTagsToggle", "adspowerTagsEnabled", "AdsPower tags enabled.", "AdsPower tags disabled."],
   ["fullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
   ["continuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
+  ["keepProfileOpenToggle", "keepProfileOpenAfterSignup", "Keep Profile Open enabled.", "Keep Profile Open disabled."],
   ["autoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
   ["lockG5Toggle", "lockG5", "Lock in G5 enabled.", "Lock in G5 disabled."],
   ["lockTVToggle", "lockTV", "Lock in TV enabled.", "Lock in TV disabled."],
@@ -52,6 +53,7 @@ function normalizeConfig(config) {
     adspowerTagsEnabled: safeConfig.adspowerTagsEnabled === true,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
     continuousModeEnabled: safeConfig.continuousModeEnabled === true,
+    keepProfileOpenAfterSignup: safeConfig.keepProfileOpenAfterSignup === true,
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: Number.isFinite(parsedAutoFillTarget) && parsedAutoFillTarget > 0 ? parsedAutoFillTarget : 0,
     lockG5: safeConfig.lockG5 === true,
@@ -77,6 +79,7 @@ function loadOptions() {
     document.getElementById("adspowerTagsToggle").checked = config.adspowerTagsEnabled;
     document.getElementById("fullAutoModeToggle").checked = config.fullAutoModeEnabled === true;
     document.getElementById("continuousModeToggle").checked = config.continuousModeEnabled === true;
+    document.getElementById("keepProfileOpenToggle").checked = config.keepProfileOpenAfterSignup === true;
     document.getElementById("autoFillRowToggle").checked = config.autoFillRow;
     document.getElementById("autoFillAccountTarget").value = config.autoFillAccountTarget > 0 ? config.autoFillAccountTarget : "";
     document.getElementById("lockG5Toggle").checked = config.lockG5;
@@ -107,6 +110,7 @@ function saveOptions() {
     adspowerTagsEnabled: document.getElementById("adspowerTagsToggle").checked,
     fullAutoModeEnabled: document.getElementById("fullAutoModeToggle").checked,
     continuousModeEnabled: document.getElementById("continuousModeToggle").checked,
+    keepProfileOpenAfterSignup: document.getElementById("keepProfileOpenToggle").checked,
     autoFillRow: document.getElementById("autoFillRowToggle").checked,
     autoFillAccountTarget: document.getElementById("autoFillAccountTarget").value,
     lockG5: document.getElementById("lockG5Toggle").checked,

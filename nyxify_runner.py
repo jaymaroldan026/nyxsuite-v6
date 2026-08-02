@@ -1324,6 +1324,7 @@ async def process_task(task, store, adspower):
     push_adspower_id_enabled = bool(config.get("push_adspower_id_enabled", True))
     full_auto_mode_enabled = bool(config.get("full_auto_mode_enabled", False))
     continuous_mode_enabled = bool(config.get("continuous_mode_enabled", False))
+    keep_profile_open_after_signup = bool(config.get("keep_profile_open_after_signup", False))
     names_dir = _resolve_names_dir(config)
     created = None
     final_adspower_name = ""
@@ -1648,7 +1649,12 @@ async def process_task(task, store, adspower):
                             task_id,
                             adspower_name=final_adspower_name,
                         )
-                        rename_timing = "before Nyx handoff" if continuous_mode_enabled else "after close"
+                        if continuous_mode_enabled:
+                            rename_timing = "before Nyx handoff"
+                        elif keep_profile_open_after_signup:
+                            rename_timing = "without closing profile"
+                        else:
+                            rename_timing = "after close"
                         logger.info(
                             f"Task {task_id}: scheduled AdsPower profile {profile_id_value} "
                             f"rename to {final_adspower_name!r} {rename_timing}."
@@ -1811,7 +1817,6 @@ async def process_task(task, store, adspower):
                 and final_username_applied
                 and final_profile_rename_pending
             ):
-                await _release_playwright_before_nyx_handoff()
                 store.update_task_state(task_id, last_step="renaming_profile_for_nyx")
                 if await _rename_final_profile_if_pending("before Nyx handoff"):
                     store.update_task_state(task_id, last_step=last_step)
@@ -1823,6 +1828,25 @@ async def process_task(task, store, adspower):
                     store.update_task_state(
                         task_id, last_step="profile_rename_failed", error=completion_error
                     )
+                await _release_playwright_before_nyx_handoff()
+
+            if (
+                keep_profile_open_after_signup
+                and not continuous_mode_enabled
+                and last_step == "signup_complete"
+                and final_username_applied
+                and final_profile_rename_pending
+            ):
+                store.update_task_state(task_id, last_step="renaming_profile_keep_open")
+                if await _rename_final_profile_if_pending("without closing profile"):
+                    store.update_task_state(task_id, last_step=last_step)
+                else:
+                    # The signup is already complete; keep the row done and
+                    # surface the AdsPower bookkeeping issue without closing.
+                    store.update_task_state(
+                        task_id, last_step="profile_rename_failed", error=completion_error
+                    )
+                    store.update_task_state(task_id, last_step=last_step)
 
             if (
                 push_adspower_id_enabled
@@ -1888,6 +1912,7 @@ async def process_task(task, store, adspower):
             close_profile_id
             and last_step == "signup_complete"
             and not continuous_mode_enabled
+            and not keep_profile_open_after_signup
             and final_username_applied
             and (final_profile_renamed or final_profile_rename_pending)
         )
@@ -1911,7 +1936,17 @@ async def process_task(task, store, adspower):
         )
         if signup_completed:
             _play_completion_sound()
-        if close_profile_id and not close_profile_after_completion:
+        if (
+            close_profile_id
+            and keep_profile_open_after_signup
+            and last_step == "signup_complete"
+            and final_username_applied
+        ):
+            logger.info(
+                f"Task {task_id}: leaving AdsPower profile {close_profile_id} open because "
+                "Keep Profile Open is enabled."
+            )
+        elif close_profile_id and not close_profile_after_completion:
             logger.info(
                 f"Task {task_id}: leaving AdsPower profile {close_profile_id} open because final setup "
                 f"is not fully confirmed. last_step={last_step!r}, username_applied={final_username_applied}, "

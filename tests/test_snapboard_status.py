@@ -160,6 +160,7 @@ class StatusUpdateApiTests(unittest.TestCase):
                 "adspower_group": "",
                 "extension_category": "Snapchat Extensions",
                 "continuous_mode_enabled": True,
+                "keep_profile_open_after_signup": True,
             })
 
         self.assertTrue(resp["ok"])
@@ -167,6 +168,7 @@ class StatusUpdateApiTests(unittest.TestCase):
         self.assertEqual(captured["adspower_group"], "")
         self.assertEqual(captured["extension_category"], "Snapchat Extensions")
         self.assertTrue(captured["continuous_mode_enabled"])
+        self.assertTrue(captured["keep_profile_open_after_signup"])
 
 
 if __name__ == "__main__":

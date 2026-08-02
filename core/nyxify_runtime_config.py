@@ -72,6 +72,7 @@ DEFAULTS = {
     "push_adspower_id_enabled": True,
     "full_auto_mode_enabled": False,
     "continuous_mode_enabled": False,
+    "keep_profile_open_after_signup": False,
     # Turning off the profile's Chrome extensions during account creation is now
     # opt-in and OFF by default (users asked to stop disabling extensions while
     # the Snapchat account is being created).
@@ -196,6 +197,10 @@ def load_nyxify_config():
             raw.get("continuous_mode_enabled"),
             DEFAULTS["continuous_mode_enabled"],
         ),
+        "keep_profile_open_after_signup": _safe_bool(
+            raw.get("keep_profile_open_after_signup"),
+            DEFAULTS["keep_profile_open_after_signup"],
+        ),
         "disable_extensions_enabled": _safe_bool(
             raw.get("disable_extensions_enabled"),
             DEFAULTS["disable_extensions_enabled"],
@@ -275,6 +280,10 @@ def save_nyxify_config(updates):
         "continuous_mode_enabled": _safe_bool(
             updates.get("continuous_mode_enabled"),
             current["continuous_mode_enabled"],
+        ),
+        "keep_profile_open_after_signup": _safe_bool(
+            updates.get("keep_profile_open_after_signup"),
+            current["keep_profile_open_after_signup"],
         ),
         "disable_extensions_enabled": _safe_bool(
             updates.get("disable_extensions_enabled"),

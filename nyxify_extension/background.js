@@ -91,6 +91,7 @@ function normalizeConfig(config) {
     pushAdspowerIdEnabled: safeConfig.pushAdspowerIdEnabled !== false,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
     continuousModeEnabled: safeConfig.continuousModeEnabled === true,
+    keepProfileOpenAfterSignup: safeConfig.keepProfileOpenAfterSignup === true,
     autoFillRow: safeConfig.autoFillRow === true,
     autoFillAccountTarget: normalizePositiveInteger(safeConfig.autoFillAccountTarget, 0),
     lockG5: safeConfig.lockG5 === true,
@@ -120,6 +121,7 @@ function extensionConfigFromRunnerConfig(runnerConfig, baseConfig = {}) {
     pushAdspowerIdEnabled: runner.push_adspower_id_enabled !== false,
     fullAutoModeEnabled: runner.full_auto_mode_enabled === true,
     continuousModeEnabled: runner.continuous_mode_enabled === true,
+    keepProfileOpenAfterSignup: runner.keep_profile_open_after_signup === true,
   });
 }
 
@@ -139,6 +141,7 @@ function runnerConfigPayloadFromExtensionConfig(config, replaceBlocked = false) 
     push_adspower_id_enabled: safe.pushAdspowerIdEnabled,
     full_auto_mode_enabled: safe.fullAutoModeEnabled,
     continuous_mode_enabled: safe.continuousModeEnabled,
+    keep_profile_open_after_signup: safe.keepProfileOpenAfterSignup,
   };
   // The runner ignores blocked_proxies unless this flag says the caller is a
   // deliberate banned-list editor — so an incidental save can't wipe bans added

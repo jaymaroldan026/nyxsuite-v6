@@ -24,7 +24,8 @@ const syncStore = {
     tagOne: "Snapchat",
     adspowerTagsEnabled: true,
     fullAutoModeEnabled: false,
-    continuousModeEnabled: false
+    continuousModeEnabled: false,
+    keepProfileOpenAfterSignup: false
   }
 };
 const localStore = {};
@@ -94,7 +95,8 @@ const backendConfig = {
   proxy_checker_enabled: true,
   push_adspower_id_enabled: true,
   full_auto_mode_enabled: true,
-  continuous_mode_enabled: true
+  continuous_mode_enabled: true,
+  keep_profile_open_after_signup: true
 };
 
 const context = {
@@ -163,13 +165,17 @@ vm.runInContext(
     assert data["mapped"]["adspowerTagsEnabled"] is False
     assert data["mapped"]["fullAutoModeEnabled"] is True
     assert data["mapped"]["continuousModeEnabled"] is True
+    assert data["mapped"]["keepProfileOpenAfterSignup"] is True
     assert data["payload"]["tag_one"] == ""
     assert data["payload"]["adspower_tags_enabled"] is False
     assert data["payload"]["continuous_mode_enabled"] is True
+    assert data["payload"]["keep_profile_open_after_signup"] is True
     assert data["statusConfig"]["tagOne"] == ""
     assert data["statusConfig"]["adspowerTagsEnabled"] is False
     assert data["statusConfig"]["continuousModeEnabled"] is True
+    assert data["statusConfig"]["keepProfileOpenAfterSignup"] is True
     assert data["savedConfig"]["tagOne"] == ""
+    assert data["savedConfig"]["keepProfileOpenAfterSignup"] is True
     assert data["fetchedConfig"] is True
     assert data["storageSetCount"] >= 1
 
@@ -183,19 +189,25 @@ def test_nyxify_popup_and_options_expose_synced_runner_controls():
     assert 'id="popupProxyBlockerToggle"' in popup_html
     assert 'id="popupProxyCheckerToggle"' in popup_html
     assert 'id="popupContinuousModeToggle"' in popup_html
+    assert 'id="popupKeepProfileOpenToggle"' in popup_html
+    assert "Keep Profile Open" in popup_html
     assert 'id="popupPushAdspowerIdToggle"' not in popup_html
     assert 'id="popupAdspowerTagsToggle"' not in popup_html
     assert 'id="popupTagOne" class="input" type="text" placeholder="Optional tag"' in popup_html
 
     assert 'id="continuousModeToggle"' in options_html
+    assert 'id="keepProfileOpenToggle"' in options_html
     assert 'id="adspowerTagsToggle" type="checkbox" checked' not in options_html
     assert 'id="tagOne" class="input" type="text" placeholder="Optional tag"' in options_html
 
     assert 'const DEFAULT_TAG_ONE = "";' in options_js
     assert '["continuousModeToggle", "continuousModeEnabled"' in options_js
+    assert '["keepProfileOpenToggle", "keepProfileOpenAfterSignup"' in options_js
     assert "adspowerTagsEnabled: safeConfig.adspowerTagsEnabled === true" in options_js
     assert 'document.getElementById("continuousModeToggle").checked = config.continuousModeEnabled === true;' in options_js
+    assert 'document.getElementById("keepProfileOpenToggle").checked = config.keepProfileOpenAfterSignup === true;' in options_js
     assert 'continuousModeEnabled: document.getElementById("continuousModeToggle").checked' in options_js
+    assert 'keepProfileOpenAfterSignup: document.getElementById("keepProfileOpenToggle").checked' in options_js
 
     assert 'id="ncfg-proxy_blocker_enabled"' in dashboard_js
     assert 'id="ncfg-proxy_checker_enabled"' in dashboard_js

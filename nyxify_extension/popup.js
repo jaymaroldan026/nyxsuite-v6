@@ -31,6 +31,7 @@ function normalizePopupConfig(config) {
     proxyCheckerEnabled: safeConfig.proxyCheckerEnabled !== false,
     fullAutoModeEnabled: safeConfig.fullAutoModeEnabled === true,
     continuousModeEnabled: safeConfig.continuousModeEnabled === true,
+    keepProfileOpenAfterSignup: safeConfig.keepProfileOpenAfterSignup === true,
     autoFillRow: safeConfig.autoFillRow === true,
     lockG5: safeConfig.lockG5 === true,
     lockTV: safeConfig.lockTV === true,
@@ -322,6 +323,7 @@ function applyPopupStatusSnapshot(status) {
   setCheckboxValue("popupAdspowerTagsToggle", config.adspowerTagsEnabled === true);
   setCheckboxValue("popupFullAutoModeToggle", config.fullAutoModeEnabled === true);
   setCheckboxValue("popupContinuousModeToggle", config.continuousModeEnabled === true);
+  setCheckboxValue("popupKeepProfileOpenToggle", config.keepProfileOpenAfterSignup === true);
   setCheckboxValue("popupAutoFillRowToggle", config.autoFillRow === true);
   setProviderLockValue("lockG5", config.lockG5 === true);
   setProviderLockValue("lockTV", config.lockTV === true);
@@ -432,6 +434,7 @@ function savePopupSettings(options = {}) {
     proxyCheckerEnabled: getCheckedSetting("popupProxyCheckerToggle", "proxyCheckerEnabled", true),
     fullAutoModeEnabled: getCheckedSetting("popupFullAutoModeToggle", "fullAutoModeEnabled", false),
     continuousModeEnabled: getCheckedSetting("popupContinuousModeToggle", "continuousModeEnabled", false),
+    keepProfileOpenAfterSignup: getCheckedSetting("popupKeepProfileOpenToggle", "keepProfileOpenAfterSignup", false),
     autoFillRow: getCheckedSetting("popupAutoFillRowToggle", "autoFillRow", false),
     lockG5: getProviderLockSetting("lockG5", false),
     lockTV: getProviderLockSetting("lockTV", false),
@@ -768,6 +771,7 @@ chrome.runtime.sendMessage({ type: "NYXIFY_SET_ENABLED", enabled: true }, () => 
   ["popupProxyCheckerToggle", "proxyCheckerEnabled", "Proxy Checker enabled.", "Proxy Checker disabled."],
   ["popupFullAutoModeToggle", "fullAutoModeEnabled", "Full Auto Mode enabled.", "Full Auto Mode disabled."],
   ["popupContinuousModeToggle", "continuousModeEnabled", "Continuous Mode enabled.", "Continuous Mode disabled."],
+  ["popupKeepProfileOpenToggle", "keepProfileOpenAfterSignup", "Keep Profile Open enabled.", "Keep Profile Open disabled."],
   ["popupAutoFillRowToggle", "autoFillRow", "Auto-Fill Row enabled.", "Auto-Fill Row disabled."],
 ].forEach(([toggleId, configKey, enabledMessage, disabledMessage]) => {
   const toggle = document.getElementById(toggleId);
