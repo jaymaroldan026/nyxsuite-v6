@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.5.5 - Nyxify wrong-code verification recovery
+
+### Nyxify: recover rejected email and SMS OTP codes
+- Restored wrong-code detection for email and SMS verification after the
+  `v6.5.3` verification rollback.
+- When Snapchat shows a wrong-code error, Nyxify now returns only to the
+  verification email/phone entry step, requests a fresh email or number, and
+  submits a replacement code on the same account.
+- Recovery now checks whether the email/phone textbox is already visible before
+  clicking the verification back button, preventing repeated back clicks from
+  overshooting into the full signup form.
+
 ## 6.5.4 - Nyxify SMS phone-context fix
 
 ### Nyxify: click SnapBoard Check SMS after phone entry

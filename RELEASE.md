@@ -9,6 +9,17 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.5.5
+
+- Restored Nyxify wrong-code recovery for email and SMS verification: when
+  Snapchat shows "That's not the right code!", the verification phase now backs
+  up to the email/phone entry card, gets a fresh email or number, and submits a
+  replacement OTP on the same account.
+- The recovery helper now checks whether the email/phone textbox is already
+  visible before clicking Back, avoiding repeated back clicks that can return to
+  the full signup form.
+- The change is scoped to the post-"Agree and Continue" verification phase.
+
 ### NyxSuite v6.5.4
 
 - Fixed Nyxify phone verification after the `v6.5.3` rollback: after entering a
