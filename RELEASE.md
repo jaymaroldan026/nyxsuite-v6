@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.5.4
+
+- Fixed Nyxify phone verification after the `v6.5.3` rollback: after entering a
+  phone number, the runner now sends that same phone value with the SnapBoard
+  SMS bridge request, so the extension can click Check SMS instead of rejecting
+  the request and rotating numbers.
+- The signup verification phase remains on the restored `v6.2.0` flow; this
+  change only restores the required phone context at the runner-to-SnapBoard
+  bridge boundary.
+
 ### NyxSuite v6.5.3
 
 - Nyxify verification after a successful "Agree and Continue" handoff has been

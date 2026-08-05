@@ -1400,7 +1400,10 @@ async def process_task(task, store, adspower):
                 expected_email=str(email or "").strip(),
             )
 
+        last_verification_phone = ""
+
         async def phone_fetcher(force_new=False):
+            nonlocal last_verification_phone
             if not task_row_key:
                 logger.warning(f"Task {task_id} is missing row_key for phone retrieval.")
                 return ""
@@ -1417,19 +1420,22 @@ async def process_task(task, store, adspower):
                 force_new=force_new,
             )
             if phone:
+                last_verification_phone = str(phone or "").strip()
                 logger.info(f"Task {task_id}: fetched verification phone from SnapBoard.")
             return phone
 
         async def sms_fetcher(phone=""):
+            nonlocal last_verification_phone
             if not task_row_key:
                 logger.warning(f"Task {task_id} is missing row_key for SMS retrieval.")
                 return ""
+            expected_phone = str(phone or "").strip() or last_verification_phone
             store.update_task_state(task_id, last_step="fetching_sms_otp")
             logger.info(f"Task {task_id} requesting SMS OTP from SnapBoard bridge.")
             code = await _request_snapboard_sms(
                 task_row_key,
                 timeout_seconds=90,
-                expected_phone=str(phone or "").strip(),
+                expected_phone=expected_phone,
             )
             if code:
                 logger.info(f"Received SMS OTP for task {task_id} from SnapBoard bridge.")

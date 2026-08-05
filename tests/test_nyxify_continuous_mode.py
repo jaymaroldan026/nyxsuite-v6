@@ -331,6 +331,36 @@ class NyxifyContinuousModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(events.index("cookie_warmup"), events.index("clear_tabs"))
         self.assertLess(events.index("clear_tabs"), events.index("open_signup"))
 
+    async def test_sms_fetcher_reuses_last_phone_when_called_without_argument(self):
+        sms_requests = []
+
+        async def signup_side_effect(**kwargs):
+            phone = await kwargs["phone_fetcher"]()
+            self.assertEqual(phone, "+15551234567")
+            sms_code = await kwargs["sms_fetcher"]()
+            self.assertEqual(sms_code, "222222")
+            await kwargs["username_detected_callback"]("cleepink")
+            return {"final_username": "cleepink", "otp_entered": True}
+
+        async def request_phone(*_args, **_kwargs):
+            return "+15551234567"
+
+        async def request_sms(_row_key, timeout_seconds=90, expected_phone=""):
+            sms_requests.append({
+                "timeout_seconds": timeout_seconds,
+                "expected_phone": expected_phone,
+            })
+            return "222222"
+
+        with mock.patch.object(nyxify_runner, "_request_snapboard_phone", side_effect=request_phone), \
+                mock.patch.object(nyxify_runner, "_request_snapboard_sms", side_effect=request_sms):
+            await self._run_task(True, signup_side_effect=signup_side_effect)
+
+        self.assertEqual(sms_requests, [{
+            "timeout_seconds": 90,
+            "expected_phone": "+15551234567",
+        }])
+
     async def test_continuous_mode_renames_queues_nyx_and_does_not_close(self):
         store, adspower, handoffs = await self._run_task(True)
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.5.4 - Nyxify SMS phone-context fix
+
+### Nyxify: click SnapBoard Check SMS after phone entry
+- Nyxify now carries the last fetched verification phone into the SMS bridge
+  request even when the restored verification flow calls `sms_fetcher()` without
+  arguments.
+- This preserves the `v6.2.0` verification phase shape while still giving the
+  SnapBoard content script the expected phone value it requires before clicking
+  Check SMS.
+
 ## 6.5.3 - Nyxify verification phase rollback
 
 ### Nyxify: restore v6.2.0 email/phone verification behavior
