@@ -9,6 +9,16 @@ repo, and downloads the newest non-draft release asset matching
 
 ## Latest Release Notes
 
+### NyxSuite v6.5.3
+
+- Nyxify verification after a successful "Agree and Continue" handoff has been
+  restored to the stable `v6.2.0` behavior.
+- Email verification again uses the `v6.2.0` four-attempt email order budget,
+  while phone verification uses the `v6.2.0` two-number SMS path.
+- OTP and SMS provider calls use the older no-argument contract, matching the
+  stable verification phase and avoiding the newer SMS bridge pickup behavior
+  observed in the stuck run.
+
 ### NyxSuite v6.5.0
 
 - Nyxify phone/SMS verification now accepts already-entered or formatted phone

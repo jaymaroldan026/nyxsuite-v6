@@ -143,10 +143,6 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(await signup_flow._is_account_creation_blocked_visible(page))
 
-    async def test_wrong_verification_code_detected(self):
-        page = FakePage(text="That's not the right code!")
-        self.assertTrue(await signup_flow._is_wrong_verification_code_error_visible(page))
-
     async def test_polish_unable_to_process_error_detected_on_signup_form(self):
         page = FakePage(
             text="Przepraszamy, ale nie udało nam się przetworzyć Twojego polecenia.",
@@ -315,67 +311,6 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
 
         js_click.assert_awaited_once_with(mock.ANY, "button:has-text('Continue')")
 
-    async def test_email_verification_submit_fails_when_type_fails(self):
-        class FakeLocator:
-            @property
-            def first(self):
-                return self
-
-            async def is_visible(self):
-                return True
-
-        class FakeEmailPage:
-            def locator(self, _selector):
-                return FakeLocator()
-
-            async def wait_for_timeout(self, _ms):
-                return None
-
-        with mock.patch.object(signup_flow, "_humanized_type_only", mock.AsyncMock(return_value=False)), \
-            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)) as wait_enabled, \
-            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(return_value=None)), \
-            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
-            submitted = await signup_flow._fill_and_submit_verification_email(
-                FakeEmailPage(),
-                "fresh@example.com",
-                None,
-                "172",
-            )
-
-        self.assertFalse(submitted)
-        wait_enabled.assert_not_called()
-        js_click.assert_not_called()
-
-    async def test_email_verification_submit_fails_when_submit_disabled(self):
-        class FakeLocator:
-            @property
-            def first(self):
-                return self
-
-            async def is_visible(self):
-                return True
-
-        class FakeEmailPage:
-            def locator(self, _selector):
-                return FakeLocator()
-
-            async def wait_for_timeout(self, _ms):
-                return None
-
-        with mock.patch.object(signup_flow, "_humanized_type_only", mock.AsyncMock(return_value=True)), \
-            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=False)), \
-            mock.patch.object(signup_flow, "_human_pause", mock.AsyncMock(return_value=None)), \
-            mock.patch.object(signup_flow, "_js_click", mock.AsyncMock(return_value=True)) as js_click:
-            submitted = await signup_flow._fill_and_submit_verification_email(
-                FakeEmailPage(),
-                "fresh@example.com",
-                None,
-                "172",
-            )
-
-        self.assertFalse(submitted)
-        js_click.assert_not_called()
-
     async def test_phone_verification_submit_fails_when_click_fails(self):
         class FakeLocator:
             @property
@@ -460,62 +395,11 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["phone_entered"])
         self.assertTrue(result["sms_otp_entered"])
         self.assertEqual(result["final_username"], "cleaopala")
-        otp_fetcher.assert_awaited_once_with(email="kellyfrench8406123880@gmail.com")
+        otp_fetcher.assert_awaited_once()
         phone_fetcher.assert_awaited_once()
-        sms_fetcher.assert_awaited_once_with(phone="+15551234567")
+        sms_fetcher.assert_awaited_once()
         fill_phone.assert_awaited_once_with(page, "+15551234567", None, "172")
         self.assertEqual(type_otp.await_count, 2)
-
-    async def test_email_otp_wrong_code_orders_fresh_email_and_retries(self):
-        class FakeLocator:
-            @property
-            def first(self):
-                return self
-
-            async def is_visible(self):
-                return True
-
-            async def click(self):
-                return None
-
-        class FakeVerificationPage:
-            def locator(self, _selector):
-                return FakeLocator()
-
-            async def wait_for_timeout(self, _ms):
-                return None
-
-            async def bring_to_front(self):
-                return None
-
-        page = FakeVerificationPage()
-        otp_fetcher = mock.AsyncMock(return_value="111111")
-        steps = []
-
-        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
-            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(return_value="otp")), \
-            mock.patch.object(signup_flow, "_type_otp_code", mock.AsyncMock(return_value=True)) as type_otp, \
-            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
-            mock.patch.object(signup_flow, "_is_wrong_verification_code_error_visible", mock.AsyncMock(side_effect=[True, False]), create=True), \
-            mock.patch.object(signup_flow, "_recover_otp_via_back_and_new_email", mock.AsyncMock(return_value=("222222", page))) as recover_email, \
-            mock.patch.object(signup_flow, "_wait_for_stage_after_otp", mock.AsyncMock(return_value="welcome")), \
-            mock.patch.object(signup_flow, "_read_success_username", mock.AsyncMock(return_value="cleaopala")):
-            result = await signup_flow._handle_verification(
-                page,
-                "kellyfrench8406123880@gmail.com",
-                otp_fetcher,
-                None,
-                "172",
-                email_fetcher=mock.AsyncMock(return_value="fresh@example.com"),
-                progress_callback=lambda step: steps.append(step),
-            )
-
-        self.assertTrue(result["otp_entered"])
-        self.assertEqual(result["final_username"], "cleaopala")
-        otp_fetcher.assert_awaited_once_with(email="kellyfrench8406123880@gmail.com")
-        recover_email.assert_awaited_once()
-        self.assertEqual(type_otp.await_count, 2)
-        self.assertIn("retrying_otp", steps)
 
     async def test_phone_verification_retries_with_new_number_when_first_stays_on_phone_step(self):
         class FakeLocator:
@@ -578,66 +462,8 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
             mock.call(page, "+15550000000", None, "172"),
             mock.call(page, "+15551234567", None, "172"),
         ])
-        sms_fetcher.assert_awaited_once_with(phone="+15551234567")
+        sms_fetcher.assert_awaited_once()
         type_otp.assert_awaited_once()
-
-    async def test_sms_wrong_code_orders_fresh_number_and_retries(self):
-        class FakeLocator:
-            @property
-            def first(self):
-                return self
-
-            async def is_visible(self):
-                return True
-
-            async def click(self):
-                return None
-
-        class FakeVerificationPage:
-            def locator(self, _selector):
-                return FakeLocator()
-
-            async def wait_for_timeout(self, _ms):
-                return None
-
-            async def bring_to_front(self):
-                return None
-
-        page = FakeVerificationPage()
-        result = {
-            "reached_verification": True,
-            "otp_entered": True,
-            "phone_entered": False,
-            "sms_otp_entered": False,
-            "final_username": "",
-            "email": "kellyfrench8406123880@gmail.com",
-        }
-        steps = []
-
-        with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
-            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(return_value="otp")), \
-            mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=True)), \
-            mock.patch.object(signup_flow, "_type_otp_code", mock.AsyncMock(return_value=True)) as type_otp, \
-            mock.patch.object(signup_flow, "_wait_enabled", mock.AsyncMock(return_value=True)), \
-            mock.patch.object(signup_flow, "_is_wrong_verification_code_error_visible", mock.AsyncMock(side_effect=[True, False]), create=True), \
-            mock.patch.object(signup_flow, "_recover_sms_via_new_phone", mock.AsyncMock(return_value=("333333", page))) as recover_sms, \
-            mock.patch.object(signup_flow, "_wait_for_stage_after_otp", mock.AsyncMock(return_value="welcome")), \
-            mock.patch.object(signup_flow, "_read_success_username", mock.AsyncMock(return_value="cleaopala")):
-            out = await signup_flow._handle_optional_phone_sms_verification(
-                page,
-                mock.AsyncMock(return_value="+15551234567"),
-                mock.AsyncMock(return_value="222222"),
-                result,
-                None,
-                "172",
-                progress_callback=lambda step: steps.append(step),
-            )
-
-        self.assertTrue(out["sms_otp_entered"])
-        self.assertEqual(out["final_username"], "cleaopala")
-        recover_sms.assert_awaited_once()
-        self.assertEqual(type_otp.await_count, 2)
-        self.assertIn("retrying_otp", steps)
 
     async def test_phone_verification_rejected_after_replacement_exhausted(self):
         class FakeVerificationPage:
@@ -645,10 +471,10 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         page = FakeVerificationPage()
-        phone_fetcher = mock.AsyncMock(side_effect=["+15550000000", "+15551111111", "+15551234567"])
+        phone_fetcher = mock.AsyncMock(side_effect=["+15550000000", "+15551234567"])
 
         with mock.patch.object(signup_flow, "_resolve_active_signup_page", mock.AsyncMock(return_value=page)), \
-            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(side_effect=["phone", "phone", "phone"])), \
+            mock.patch.object(signup_flow, "_wait_for_signup_progress", mock.AsyncMock(side_effect=["phone", "phone"])), \
             mock.patch.object(signup_flow, "_fill_and_submit_phone_number", mock.AsyncMock(return_value=True)):
             with self.assertRaisesRegex(RuntimeError, "phone_verification_rejected"):
                 await signup_flow._handle_optional_phone_sms_verification(
@@ -671,7 +497,6 @@ class SignupDetectorTests(unittest.IsolatedAsyncioTestCase):
             phone_fetcher.await_args_list,
             [
                 mock.call(force_new=False),
-                mock.call(force_new=True),
                 mock.call(force_new=True),
             ],
         )

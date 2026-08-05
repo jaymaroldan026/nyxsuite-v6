@@ -28,13 +28,10 @@ SIGNUP_HARD_STALL_SECONDS = int(os.getenv("NYXIFY_SIGNUP_HARD_STALL_SECONDS", "2
 SIGNUP_MAX_REFRESH_ATTEMPTS = int(os.getenv("NYXIFY_SIGNUP_MAX_REFRESH_ATTEMPTS", "3"))
 # How many times to (re-)order a verification email from SnapBoard when it has
 # "no pending email order" before giving up and letting the runner retry.
-EMAIL_ORDER_MAX_ATTEMPTS = int(os.getenv("NYXIFY_EMAIL_ORDER_MAX_ATTEMPTS", "3"))
+EMAIL_ORDER_MAX_ATTEMPTS = int(os.getenv("NYXIFY_EMAIL_ORDER_MAX_ATTEMPTS", "4"))
 # Phone numbers can be rejected before Snapchat sends an SMS. When that happens
 # SnapBoard can issue a replacement number via its redo/force-new path.
-PHONE_VERIFICATION_MAX_ATTEMPTS = int(os.getenv("NYXIFY_PHONE_VERIFICATION_MAX_ATTEMPTS", "3"))
-WRONG_CODE_MAX_RECOVERY_ATTEMPTS = int(os.getenv("NYXIFY_WRONG_CODE_MAX_RECOVERY_ATTEMPTS", "2"))
-VERIFICATION_FORM_TO_OTP_TIMEOUT_MS = int(os.getenv("NYXIFY_VERIFICATION_FORM_TO_OTP_TIMEOUT_MS", "20000"))
-VERIFICATION_POST_OTP_TIMEOUT_MS = int(os.getenv("NYXIFY_VERIFICATION_POST_OTP_TIMEOUT_MS", "60000"))
+PHONE_VERIFICATION_MAX_ATTEMPTS = int(os.getenv("NYXIFY_PHONE_VERIFICATION_MAX_ATTEMPTS", "2"))
 SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PRE_CLEAR_MS", "250"))
 SIGNUP_FAST_SUBMIT_POST_CLEAR_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_POST_CLEAR_MS", "150"))
 SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS = int(os.getenv("NYXIFY_SIGNUP_FAST_SUBMIT_PAUSE_MIN_MS", "90"))
@@ -72,17 +69,6 @@ _USERNAME_INVALID_ERROR_MARKERS = [
     "letters and numbers with an optional hyphen",
     "optional hyphen, underscore, or period",
     "underscore, or period in between please",
-]
-
-_WRONG_VERIFICATION_CODE_ERROR_MARKERS = [
-    "that's not the right code",
-    "that is not the right code",
-    "not the right code",
-    "incorrect code",
-    "invalid code",
-    "wrong code",
-    "verification code is incorrect",
-    "code you entered is incorrect",
 ]
 
 _UNABLE_TO_PROCESS_ERROR_MARKERS = [
@@ -2215,46 +2201,16 @@ async def _fetch_phone_from_provider(phone_fetcher, force_new: bool, logger=None
     return ""
 
 
-async def _fetch_otp_from_provider(otp_fetcher, email: str = "") -> str:
-    if otp_fetcher is None:
-        return ""
-    try:
-        otp = otp_fetcher(email=str(email or "").strip())
-    except TypeError:
-        otp = otp_fetcher()
-    if asyncio.iscoroutine(otp):
-        otp = await otp
-    return str(otp or "").strip()
-
-
-async def _fetch_sms_from_provider(sms_fetcher, phone: str = "") -> str:
-    if sms_fetcher is None:
-        return ""
-    try:
-        code = sms_fetcher(phone=str(phone or "").strip())
-    except TypeError:
-        code = sms_fetcher()
-    if asyncio.iscoroutine(code):
-        code = await code
-    return str(code or "").strip()
-
-
 async def _fill_and_submit_verification_email(signup_page, email: str, logger=None, profile_id: str = "") -> bool:
     for email_sel in _EMAIL_INPUT_SELECTORS:
         try:
             loc = signup_page.locator(email_sel).first
             if await loc.is_visible():
-                typed = await _humanized_type_only(signup_page, email_sel, email, logger, f"[{profile_id}] email")
-                if not typed:
-                    return False
+                await _humanized_type_only(signup_page, email_sel, email, logger, f"[{profile_id}] email")
                 await signup_page.wait_for_timeout(400)
-                enabled = await _wait_enabled(signup_page, "button[type='submit']", timeout_ms=5000)
-                if not enabled:
-                    return False
+                await _wait_enabled(signup_page, "button[type='submit']", timeout_ms=5000)
                 await _human_pause(signup_page, 250, 800)
-                clicked = await _js_click(signup_page, "button[type='submit']")
-                if not clicked:
-                    return False
+                await _js_click(signup_page, "button[type='submit']")
                 await signup_page.wait_for_timeout(1200)
                 return True
         except Exception:
@@ -2302,11 +2258,6 @@ async def _is_email_already_verified_error_visible(page) -> bool:
         return False
 
 
-async def _is_wrong_verification_code_error_visible(page) -> bool:
-    """True when Snapchat rejects the entered email/SMS verification code."""
-    return await _page_has_visible_text(page, _WRONG_VERIFICATION_CODE_ERROR_MARKERS)
-
-
 async def _click_visible_verification_submit(signup_page, logger=None, profile_id: str = "") -> bool:
     for btn_sel in ["button[type='submit']", "button:has-text('Verify')", "button:has-text('Confirm')", "button:has-text('Continue')", "button:has-text('Next')"]:
         try:
@@ -2341,7 +2292,7 @@ async def _wait_for_stage_after_otp(
             signup_page,
             logger,
             profile_id,
-            timeout_ms=VERIFICATION_POST_OTP_TIMEOUT_MS if attempt == 0 else 15000,
+            timeout_ms=300000 if attempt == 0 else 15000,
             username_retry_provider=username_retry_provider,
             username_state=username_state,
             progress_callback=progress_callback,
@@ -2402,7 +2353,7 @@ async def _handle_optional_phone_sms_verification(
             signup_page,
             logger,
             profile_id,
-            timeout_ms=VERIFICATION_FORM_TO_OTP_TIMEOUT_MS,
+            timeout_ms=300000,
             username_retry_provider=username_retry_provider,
             username_state=username_state,
             progress_callback=progress_callback,
@@ -2437,7 +2388,10 @@ async def _handle_optional_phone_sms_verification(
         return result
 
     await _emit_signup_progress(progress_callback, "fetching_sms_otp", logger, profile_id)
-    sms_code = await _fetch_sms_from_provider(sms_fetcher, phone)
+    sms_code = sms_fetcher()
+    if asyncio.iscoroutine(sms_code):
+        sms_code = await sms_code
+    sms_code = str(sms_code or "").strip()
     if not sms_code:
         # The code never came through — rather than failing the account (which
         # deletes the profile and recreates it), go back, rotate to a fresh
@@ -2469,48 +2423,6 @@ async def _handle_optional_phone_sms_verification(
     if await _click_visible_verification_submit(signup_page, logger, profile_id):
         result["sms_otp_entered"] = True
         logger and logger.info(f"[{profile_id}] SMS OTP submitted.")
-        await signup_page.wait_for_timeout(1200)
-
-    wrong_sms_attempts = 0
-    while result.get("sms_otp_entered") and await _is_wrong_verification_code_error_visible(signup_page):
-        wrong_sms_attempts += 1
-        if wrong_sms_attempts > WRONG_CODE_MAX_RECOVERY_ATTEMPTS:
-            logger and logger.warning(
-                f"[{profile_id}] Snapchat rejected replacement SMS codes after "
-                f"{WRONG_CODE_MAX_RECOVERY_ATTEMPTS} recovery attempt(s)."
-            )
-            result["sms_otp_entered"] = False
-            break
-
-        logger and logger.warning(
-            f"[{profile_id}] Snapchat rejected the SMS OTP; ordering a fresh number "
-            f"({wrong_sms_attempts}/{WRONG_CODE_MAX_RECOVERY_ATTEMPTS})."
-        )
-        await _emit_signup_progress(progress_callback, "retrying_otp", logger, profile_id)
-        sms_code, signup_page = await _recover_sms_via_new_phone(
-            signup_page,
-            phone_fetcher,
-            sms_fetcher,
-            logger,
-            profile_id,
-            progress_callback=progress_callback,
-            max_attempts=1,
-        )
-        sms_code = str(sms_code or "").strip()
-        if not sms_code:
-            result["sms_otp_entered"] = False
-            break
-
-        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
-        await _type_otp_code(signup_page, _OTP_INPUT_SELECTORS, sms_code, logger, profile_id)
-        await signup_page.wait_for_timeout(500)
-        if await _click_visible_verification_submit(signup_page, logger, profile_id):
-            result["sms_otp_entered"] = True
-            logger and logger.info(f"[{profile_id}] Replacement SMS OTP submitted.")
-            await signup_page.wait_for_timeout(1200)
-        else:
-            result["sms_otp_entered"] = False
-            break
 
     if result.get("sms_otp_entered"):
         final_stage = await _wait_for_stage_after_otp(
@@ -2590,11 +2502,9 @@ async def _recover_otp_via_back_and_new_email(
         return "", signup_page
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
-        on_email_step = await _is_email_verification_step(signup_page)
-        if not on_email_step:
-            clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
-            if not clicked_back and not await _is_email_verification_step(signup_page):
-                return "", signup_page
+        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+        if not clicked_back and not await _is_email_verification_step(signup_page):
+            return "", signup_page
 
         # Wait for the email entry step to (re)appear before re-ordering.
         on_email_step = await _is_email_verification_step(signup_page)
@@ -2619,12 +2529,12 @@ async def _recover_otp_via_back_and_new_email(
             continue
 
         stage = await _wait_for_signup_progress(
-            signup_page, logger, profile_id, timeout_ms=VERIFICATION_FORM_TO_OTP_TIMEOUT_MS, progress_callback=progress_callback
+            signup_page, logger, profile_id, timeout_ms=120000, progress_callback=progress_callback
         )
         if stage != "otp":
             continue
         await _emit_signup_progress(progress_callback, "fetching_otp", logger, profile_id)
-        otp = await _fetch_otp_from_provider(otp_fetcher, new_email)
+        otp = await otp_fetcher()
         if otp:
             return str(otp), signup_page
     return "", signup_page
@@ -2654,11 +2564,9 @@ async def _recover_sms_via_new_phone(
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
         # Return to the phone-entry step so a fresh number can be submitted.
-        on_phone_step = await _is_phone_verification_step(signup_page)
-        if not on_phone_step:
-            clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
-            if not clicked_back and not await _is_phone_verification_step(signup_page):
-                return "", signup_page
+        clicked_back = await _click_verification_back_button(signup_page, logger, profile_id)
+        if not clicked_back and not await _is_phone_verification_step(signup_page):
+            return "", signup_page
 
         on_phone_step = await _is_phone_verification_step(signup_page)
         for _ in range(6):
@@ -2682,7 +2590,7 @@ async def _recover_sms_via_new_phone(
             continue
 
         stage = await _wait_for_signup_progress(
-            signup_page, logger, profile_id, timeout_ms=VERIFICATION_FORM_TO_OTP_TIMEOUT_MS, progress_callback=progress_callback
+            signup_page, logger, profile_id, timeout_ms=120000, progress_callback=progress_callback
         )
         if stage == "welcome":
             # The fresh number was enough on its own — no SMS step at all.
@@ -2690,7 +2598,10 @@ async def _recover_sms_via_new_phone(
         if stage != "otp":
             continue
         await _emit_signup_progress(progress_callback, "fetching_sms_otp", logger, profile_id)
-        sms_code = await _fetch_sms_from_provider(sms_fetcher, phone)
+        sms_code = sms_fetcher()
+        if asyncio.iscoroutine(sms_code):
+            sms_code = await sms_code
+        sms_code = str(sms_code or "").strip()
         if sms_code:
             return sms_code, signup_page
     return "", signup_page
@@ -2801,29 +2712,9 @@ async def _handle_verification(
     signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
     if stage == "email" and _is_valid_email(email):
         await _emit_signup_progress(progress_callback, "filling_email_verification", logger, profile_id)
-        submitted_email = await _fill_and_submit_verification_email(signup_page, email, logger, profile_id)
-        if not submitted_email:
-            logger and logger.warning(f"[{profile_id}] Could not submit verification email; requesting replacement.")
-            if email_fetcher is None:
-                return result
-            await _emit_signup_progress(progress_callback, "fetching_replacement_email", logger, profile_id)
-            replacement_email = await _fetch_email_from_provider(
-                email_fetcher,
-                force_new=True,
-                logger=logger,
-                profile_id=profile_id,
-            )
-            if not _is_valid_email(replacement_email):
-                return result
-            email = replacement_email
-            result["email"] = email
-            await _emit_signup_progress(progress_callback, "filling_email_verification", logger, profile_id)
-            submitted_email = await _fill_and_submit_verification_email(signup_page, email, logger, profile_id)
-            if not submitted_email:
-                logger and logger.warning(f"[{profile_id}] Could not submit replacement verification email.")
-                return result
+        await _fill_and_submit_verification_email(signup_page, email, logger, profile_id)
 
-        for replacement_attempt in range(1, 3):
+        for replacement_attempt in range(1, 4):
             signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
             if not await _is_email_already_verified_error_visible(signup_page):
                 break
@@ -2836,7 +2727,7 @@ async def _handle_verification(
 
             logger and logger.warning(
                 f"[{profile_id}] Snapchat rejected verification email {email!r} as already verified; "
-                f"requesting replacement email ({replacement_attempt}/2)."
+                f"requesting replacement email ({replacement_attempt}/3)."
             )
             await _emit_signup_progress(progress_callback, "fetching_replacement_email", logger, profile_id)
             replacement_email = await _fetch_email_from_provider(
@@ -2870,7 +2761,7 @@ async def _handle_verification(
             signup_page,
             logger,
             profile_id,
-            timeout_ms=VERIFICATION_FORM_TO_OTP_TIMEOUT_MS,
+            timeout_ms=None,
             username_retry_provider=username_retry_provider,
             username_state=username_state,
             progress_callback=progress_callback,
@@ -2889,7 +2780,7 @@ async def _handle_verification(
     result["reached_verification"] = True
     logger and logger.info(f"[{profile_id}] OTP field visible. Fetching from SnapBoard.")
     await _emit_signup_progress(progress_callback, "fetching_otp", logger, profile_id)
-    otp = await _fetch_otp_from_provider(otp_fetcher, email)
+    otp = await otp_fetcher()
     if not otp:
         logger and logger.warning(
             f"[{profile_id}] Could not retrieve OTP from SnapBoard; trying back + fresh-email recovery."
@@ -2918,48 +2809,6 @@ async def _handle_verification(
     if await _click_visible_verification_submit(signup_page, logger, profile_id):
         result["otp_entered"] = True
         logger and logger.info(f"[{profile_id}] OTP submitted.")
-        await signup_page.wait_for_timeout(1200)
-
-    wrong_otp_attempts = 0
-    while result.get("otp_entered") and await _is_wrong_verification_code_error_visible(signup_page):
-        wrong_otp_attempts += 1
-        if wrong_otp_attempts > WRONG_CODE_MAX_RECOVERY_ATTEMPTS:
-            logger and logger.warning(
-                f"[{profile_id}] Snapchat rejected replacement email OTP codes after "
-                f"{WRONG_CODE_MAX_RECOVERY_ATTEMPTS} recovery attempt(s)."
-            )
-            result["otp_entered"] = False
-            break
-
-        logger and logger.warning(
-            f"[{profile_id}] Snapchat rejected the email OTP; ordering a fresh email "
-            f"({wrong_otp_attempts}/{WRONG_CODE_MAX_RECOVERY_ATTEMPTS})."
-        )
-        await _emit_signup_progress(progress_callback, "retrying_otp", logger, profile_id)
-        otp, signup_page = await _recover_otp_via_back_and_new_email(
-            signup_page,
-            otp_fetcher,
-            email_fetcher,
-            logger,
-            profile_id,
-            progress_callback=progress_callback,
-            max_attempts=1,
-        )
-        otp = str(otp or "").strip()
-        if not otp:
-            result["otp_entered"] = False
-            break
-
-        signup_page = await _resolve_active_signup_page(signup_page, logger, profile_id)
-        await _type_otp_code(signup_page, otp_selectors, otp, logger, profile_id)
-        await signup_page.wait_for_timeout(500)
-        if await _click_visible_verification_submit(signup_page, logger, profile_id):
-            result["otp_entered"] = True
-            logger and logger.info(f"[{profile_id}] Replacement email OTP submitted.")
-            await signup_page.wait_for_timeout(1200)
-        else:
-            result["otp_entered"] = False
-            break
 
     if result["otp_entered"]:
         final_stage = await _wait_for_stage_after_otp(

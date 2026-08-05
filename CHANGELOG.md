@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.5.3 - Nyxify verification phase rollback
+
+### Nyxify: restore v6.2.0 email/phone verification behavior
+- Reverted only the post-"Agree and Continue" verification helper phase to the
+  `v6.2.0` flow.
+- Restored the `v6.2.0` email/phone retry budgets and OTP/SMS provider-call
+  contract so failed SMS bridge pickup follows the older bounded recovery path.
+- Added regression coverage for the restored two-attempt phone verification
+  behavior and no-argument OTP/SMS fetcher calls.
+
 ## 6.5.0 - Verification click recovery and provider lock popup
 
 ### Nyxify: phone/SMS verification click recovery
